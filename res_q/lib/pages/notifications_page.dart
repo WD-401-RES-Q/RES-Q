@@ -7,18 +7,18 @@ class NotificationsPage extends StatelessWidget {
   // sample data — replace with real notifications later
   List<Map<String, String>> _sampleNotifications() => [
     {
-      'image': 'assets/images/notice1.png',
+      'image': 'assets/images/NOTIF-1.png',
       'date': 'OCT 12 2025',
       'desc':
           'As we celebrate Fiestang La Naval, may our city be filled with joy, unity, and gratitude. Let us honor the traditions and culture that shape Angeles city and...',
     },
     {
-      'image': 'assets/images/notice2.png',
+      'image': 'assets/images/NOTIF-2.png',
       'date': '2025-11-23',
       'desc': 'Flood advisory issued for low-lying areas.',
     },
     {
-      'image': 'assets/images/notice3.png',
+      'image': 'assets/images/NOTIF-3.png',
       'date': '2025-11-20',
       'desc': 'Fire contained — avoid the industrial park.',
     },

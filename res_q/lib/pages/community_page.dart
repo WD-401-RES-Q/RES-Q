@@ -16,7 +16,7 @@ class _CommunityPageState extends State<CommunityPage> {
   List<Map<String, String>> _sampleReports() => [
     // sample data for reports (can also change the status like verified, under review and flagged)
     {
-      'image': 'assets/images/report1.png',
+      'image': 'assets/images/COMMUNITY-IMAGE-1.png',
       'date': 'NOV 24. 2025',
       'time': '9:12 AM',
       'title': 'Pothole forming',
@@ -27,7 +27,7 @@ class _CommunityPageState extends State<CommunityPage> {
       'comments': '5',
     },
     {
-      'image': 'assets/images/report2.png',
+      'image': 'assets/images/COMMUNITY-IMAGE-2.png',
       'date': 'NOV 23. 2025',
       'time': '6:40 PM',
       'title': 'Minor Flooding',
@@ -38,7 +38,7 @@ class _CommunityPageState extends State<CommunityPage> {
       'comments': '8',
     },
     {
-      'image': 'assets/images/report3.png',
+      'image': 'assets/images/COMMUNITY-IMAGE-3.png',
       'date': 'NOV 22. 2025',
       'time': '2:05 PM',
       'title': 'Small Fire',
