@@ -4,7 +4,13 @@ import 'package:google_fonts/google_fonts.dart';
 class NotificationsPage extends StatelessWidget {
   const NotificationsPage({super.key});
 
-  // sample data — replace with real notifications later
+  // OFFICIAL COLORS
+  static const appBlue = Color(0xFF004FC6);
+  static const appRed = Color(0xFFD60000);
+  static const appBlack = Color(0xFF212121);
+  static const appWhite = Color(0xFFF7F8F3);
+
+  // sample data
   List<Map<String, String>> _sampleNotifications() => [
     {
       'image': 'assets/images/NOTIF-1.png',
@@ -14,12 +20,12 @@ class NotificationsPage extends StatelessWidget {
     },
     {
       'image': 'assets/images/NOTIF-2.png',
-      'date': '2025-11-23',
+      'date': 'NOV 23 2025',
       'desc': 'Flood advisory issued for low-lying areas.',
     },
     {
       'image': 'assets/images/NOTIF-3.png',
-      'date': '2025-11-20',
+      'date': 'NOV 20 2025',
       'desc': 'Fire contained — avoid the industrial park.',
     },
   ];
@@ -28,107 +34,120 @@ class NotificationsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final items = _sampleNotifications();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Title
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8.0),
-          child: Center(
-            child: RichText(
-              textAlign: TextAlign.center,
-              text: TextSpan(
-                style: GoogleFonts.poppins(
-                  fontSize: 40,
-                  fontWeight: FontWeight.w700,
+    return Container(
+      color: appWhite, // background using official off-white
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ───────── TITLE ─────────
+            Center(
+              child: RichText(
+                textAlign: TextAlign.center,
+                text: TextSpan(
+                  style: GoogleFonts.poppins(
+                    fontSize: 40,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  children: const [
+                    TextSpan(
+                      text: 'N',
+                      style: TextStyle(color: appBlue),
+                    ),
+                    TextSpan(
+                      text: 'O',
+                      style: TextStyle(color: appRed),
+                    ),
+                    TextSpan(
+                      text: 'TIFICATION',
+                      style: TextStyle(color: appBlue),
+                    ),
+                  ],
                 ),
-                children: [
-                  TextSpan(
-                    text: 'N',
-                    style: TextStyle(color: Colors.blue),
-                  ),
-                  TextSpan(
-                    text: 'O',
-                    style: TextStyle(color: Colors.red),
-                  ),
-                  TextSpan(
-                    text: 'TIFICATION',
-                    style: TextStyle(color: Colors.blue),
-                  ),
-                ],
               ),
             ),
-          ),
-        ),
 
-        const SizedBox(height: 8),
+            const SizedBox(height: 12),
 
-        // Notifications list
-        Expanded(
-          child: ListView.separated(
-            itemCount: items.length,
-            separatorBuilder: (context, index) => const SizedBox(height: 10),
-            itemBuilder: (context, index) {
-              final it = items[index];
-              return Center(
-                child: Container(
-                  width: 343,
-                  height: 303,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border.all(color: Colors.black),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  clipBehavior: Clip.hardEdge,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // full-width image at top
-                      SizedBox(
-                        width: double.infinity,
-                        height: 160,
-                        child: ClipRRect(
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(10),
-                            topRight: Radius.circular(10),
+            // ───────── LIST ─────────
+            Expanded(
+              child: ListView.separated(
+                itemCount: items.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 16),
+                itemBuilder: (context, index) {
+                  final it = items[index];
+
+                  return Center(
+                    child: Container(
+                      width: 343,
+                      height: 303,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: appBlack.withOpacity(0.2)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.12),
+                            blurRadius: 12,
+                            spreadRadius: 1,
+                            offset: const Offset(0, 6),
                           ),
-                          child: Image.asset(
-                            it['image']!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (c, e, s) => const DecoratedBox(
-                              decoration: BoxDecoration(color: Colors.grey),
-                              child: Center(child: Icon(Icons.image, size: 48)),
+                        ],
+                      ),
+                      clipBehavior: Clip.hardEdge,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // top image
+                          SizedBox(
+                            width: double.infinity,
+                            height: 160,
+                            child: Image.asset(it['image']!, fit: BoxFit.cover),
+                          ),
+
+                          const SizedBox(height: 12),
+
+                          // date
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12.0,
+                            ),
+                            child: Text(
+                              it['date']!,
+                              style: GoogleFonts.poppins(
+                                fontSize: 14,
+                                color: appBlack,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                        child: Text(
-                          it['date']!,
-                          style: GoogleFonts.poppins(
-                            fontSize: 14,
-                            color: Colors.black,
+
+                          const SizedBox(height: 8),
+
+                          // description
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12.0,
+                            ),
+                            child: Text(
+                              it['desc']!,
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                color: appBlack.withOpacity(0.9),
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
-                      const SizedBox(height: 8),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                        child: Text(
-                          it['desc']!,
-                          style: GoogleFonts.poppins(fontSize: 10),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
