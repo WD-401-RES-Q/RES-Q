@@ -30,9 +30,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
   flutter_svg: ^2.0.7   
-
+  flutter_map: ^6.0.0      
+  latlong2: ^0.9.0         
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -70,6 +70,17 @@ flutter:
     - assets/images/NOTIF-1.png
     - assets/images/NOTIF-2.png
     - assets/images/NOTIF-3.png
+    - assets/icons/EARTHQUAKE-ICON.png
+    - assets/icons/CRASH-ICON.png
+    - assets/icons/FIRE-ICON.png
+    - assets/icons/FLOOD-ICON.png
+    - assets/icons/AMBULANCE-ICON.png
+    - assets/icons/ROAD-ICON.png
+    - assets/icons/PHONE-ICON.png
+    - assets/icons/CALLING-ICON.svg
+
+
+
 
 
   # An image asset can refer to one or more resolution-specific "variants", see

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'pages/main_page.dart';
-import 'pages/loading_screen.dart';   // <-- ADD THIS IMPORT
+import 'pages/loading_screen.dart';  
 
 void main() {
   runApp(const MyApp());

@@ -5,6 +5,8 @@ import 'community_page.dart';
 import 'map_page.dart';
 import 'notifications_page.dart';
 import 'profile_page.dart';
+import 'emergency_call_screen.dart'; 
+
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -17,44 +19,12 @@ class _MainPageState extends State<MainPage> {
   int _currentIndex = 0;
 
   List<Widget> get _pages => [
-    _homeContent(),
+    const _HomePageContent(),
     const CommunityPage(),
     const MapPage(),
     const NotificationsPage(),
     const ProfilePage(),
   ];
-
-  static Widget _homeContent() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        // Logo
-        SizedBox(
-          height: 50,
-          child: SvgPicture.asset(
-            "assets/icons/RESQ-LOGO.svg",
-            fit: BoxFit.contain,
-            placeholderBuilder: (context) => const Icon(
-              Icons.image,
-              size: 64,
-              color: Colors.blue,
-            ),
-          ),
-        ),
-        const SizedBox(height: 20),
-        Builder(
-          builder: (context) => Text(
-            "SELECT THE TYPE OF INCIDENT YOU WANT TO REPORT",
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-        ),
-        const SizedBox(height: 30),
-        const Expanded(child: SizedBox.shrink()),
-        const SizedBox(height: 10),
-      ],
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -100,82 +70,113 @@ class _MainPageState extends State<MainPage> {
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: _buildCurrentPage(context),
+          child: _pages[_currentIndex],
         ),
       ),
     );
   }
+}
 
-  Widget _buildCurrentPage(BuildContext context) {
-    if (_currentIndex == 0) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // Logo
-          SizedBox(
-            height: 25,
-            child: SvgPicture.asset(
-              "assets/icons/RESQ-LOGO.svg",
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) => const Icon(
-                Icons.image_not_supported,
-                size: 64,
-                color: Colors.blue,
+class _HomePageContent extends StatelessWidget {
+  const _HomePageContent();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // Logo
+        SizedBox(
+          height: 20,
+          child: SvgPicture.asset(
+            "assets/icons/RESQ-LOGO.svg",
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) => const Icon(
+              Icons.image_not_supported,
+              size: 64,
+              color: Colors.blue,
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          "SELECT THE TYPE OF INCIDENT YOU WANT TO REPORT",
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                fontSize: 14,
+              ),
+        ),
+        const SizedBox(height: 4),
+        // Container wrapping all cards
+        Container(
+          width: 320,
+          height: 360,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: GridView.count(
+            crossAxisCount: 2, // 2 columns
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
+            physics: const NeverScrollableScrollPhysics(),
+            childAspectRatio: 1.35, // Make cards taller to fit the container
+            children: [
+              _incidentCard(context, "EARTHQUAKE", "assets/icons/EARTHQUAKE-ICON.png"),
+              _incidentCard(context, "FLOOD", "assets/icons/FLOOD-ICON.png"),
+              _incidentCard(context, "FIRE", "assets/icons/FIRE-ICON.png"),
+              _incidentCard(context, "MEDICAL", "assets/icons/AMBULANCE-ICON.png"), 
+              _incidentCard(context, "VEHICULAR", "assets/icons/CRASH-ICON.png"), 
+              _incidentCard(context, "ROAD OBSTRUCTION", "assets/icons/ROAD-ICON.png"),
+            ],
+          ),
+        ),
+
+        // const Spacer(), // This was preventing the container from expanding vertically
+
+        // Emergency Button
+        SizedBox(
+          width: 240,
+          height: 67,
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFD60000),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
               ),
             ),
-          ),
-
-          const SizedBox(height: 8),
-
-          Text(
-            "SELECT THE TYPE OF INCIDENT YOU WANT TO REPORT",
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              fontSize: 16,
-            ),
-          ),
-
-          const SizedBox(height: 8),
-
-          // Container wrapping all 4 cards
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(15),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withOpacity(0.1),
-                  spreadRadius: 2,
-                  blurRadius: 5,
-                  offset: const Offset(0, 3),
+            onPressed: () {
+              print("Emergency call button pressed");
+              Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => const EmergencyCallScreen()),
+              );
+            },
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  "EMERGENCY CALL",
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Image.asset(
+                  'assets/icons/PHONE-ICON.png', // NOTE: Update with your icon pat
+                  height: 40,
                 ),
               ],
             ),
-            child: GridView.count(
-              crossAxisCount: 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              physics: const NeverScrollableScrollPhysics(),
-              shrinkWrap: true,
-              childAspectRatio: 1.5, // Make cards wider/flatter
-              children: [
-                _incidentCard(context, "EARTHQUAKE", "assets/images/earthquake.png"),
-                _incidentCard(context, "FLOOD", "assets/images/flood.png"),
-                _incidentCard(context, "FIRE", "assets/images/fire.png"),
-                _incidentCard(context, "OTHER", "assets/images/other.png"),
-              ],
-            ),
           ),
+        ),
 
-          const SizedBox(height: 15),
-        ],
-      );
-    }
-
-    return _pages[_currentIndex];
+        const SizedBox(height: 8),
+      ],
+    );
   }
-
   Widget _incidentCard(BuildContext context, String title, String imgPath) {
     return Material(
       color: Colors.transparent,
@@ -200,36 +201,26 @@ class _MainPageState extends State<MainPage> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Circular background with icon
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: Image.asset(
-                    imgPath,
-                    width: 24,
-                    height: 24,
-                    fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Icon(
-                        Icons.warning,
-                        color: Colors.white,
-                        size: 24,
-                      );
-                    },
-                  ),
-                ),
+              // Icon without circular background
+              Image.asset(
+                imgPath,
+                width: 70, // Increased icon size
+                height: 70, // Increased icon size
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) {
+                  return const Icon(
+                    Icons.warning,
+                    color: Colors.white,
+                    size: 32,
+                  );
+                },
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
 
               Text(
                 title,
                 style: GoogleFonts.poppins(
-                  fontSize: 10,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: Colors.white,
                 ),
