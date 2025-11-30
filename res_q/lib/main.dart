@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'pages/main_page.dart';
-import 'pages/loading_screen.dart';  
+import 'pages/loading_screen.dart';
+// auth pages
+import 'pages/auth/login_page.dart';
+import 'pages/auth/registration_page.dart';
+import 'pages/auth/forgot_password_page.dart';
+import 'pages/auth/otp_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -54,7 +59,13 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const LoadingScreen(),   // <-- SHOW LOADING SCREEN FIRST
+      home: const LoadingScreen(), // <-- SHOW LOADING SCREEN FIRST
+      routes: {
+        '/login': (context) => const LoginPage(),
+        '/register': (context) => const RegistrationPage(),
+        '/forgot': (context) => const ForgotPasswordPage(),
+        '/otp': (context) => const OTPPage(),
+      },
     );
   }
 }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'main_page.dart'; // <-- fixed
+import 'auth/login_page.dart';
 
 class LoadingScreen extends StatefulWidget {
   const LoadingScreen({super.key});
@@ -14,11 +14,11 @@ class _LoadingScreenState extends State<LoadingScreen> {
   void initState() {
     super.initState();
 
-    Future.delayed(const Duration(seconds: 5), () {
+    Future.delayed(const Duration(seconds: 3), () {
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const MainPage()), // <-- fixed
+        MaterialPageRoute(builder: (context) => const LoginPage()),
       );
     });
   }
@@ -40,10 +40,7 @@ class _LoadingContent extends StatelessWidget {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        SvgPicture.asset(
-          'assets/icons/RESQ-LOGO.svg',
-          height: 100,
-        ),
+        SvgPicture.asset('assets/icons/RESQ-LOGO.svg', height: 100),
         const SizedBox(height: 20),
         const Text(
           "EVERY SECOND COUNTS",
