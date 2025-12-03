@@ -58,7 +58,7 @@ class _OTPPageState extends State<OTPPage> {
     if (!mounted) return;
 
     // TODO: replace with real verification
-    Navigator.pushReplacementNamed(context, '/login');
+    Navigator.pushReplacementNamed(context, '/main');
   }
 
   void _resend() {

@@ -32,7 +32,8 @@ dependencies:
     sdk: flutter
   flutter_svg: ^2.0.7   
   flutter_map: ^6.0.0      
-  latlong2: ^0.9.0         
+  latlong2: ^0.9.0      
+  flutter_polyline_points: ^3.1.0
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -67,20 +68,28 @@ flutter:
     - assets/images/COMMUNITY-IMAGE-1.png
     - assets/images/COMMUNITY-IMAGE-2.png
     - assets/images/COMMUNITY-IMAGE-3.png
+    - assets/icons/CALLING-ICON.svg
     - assets/images/NOTIF-1.png
     - assets/images/NOTIF-2.png
     - assets/images/NOTIF-3.png
-    - assets/icons/EARTHQUAKE-ICON.png
-    - assets/icons/CRASH-ICON.png
-    - assets/icons/FIRE-ICON.png
-    - assets/icons/FLOOD-ICON.png
-    - assets/icons/AMBULANCE-ICON.png
-    - assets/icons/ROAD-ICON.png
     - assets/icons/PHONE-ICON.png
-    - assets/icons/CALLING-ICON.svg
-
-
-
+    - assets/icons/NAV-PROFILE-ICON.svg
+    - assets/icons/FINAL-OTHERS-ICON.png
+    - assets/icons/FINAL-EARTHQUAKE-ICON.png
+    - assets/icons/FINAL-FIRE-ICON.png
+    - assets/icons/FINAL-FLOOD-ICON.png
+    - assets/icons/FINAL-ROAD-ICON.png
+    - assets/icons/FINAL-CRASH-ICON.png
+    - assets/icons/NAV-COMMUNITY-ICON-WHITE.png
+    - assets/icons/NAV-NOTIFICATIONS-ICON-WHITE.png
+    - assets/icons/NAV-MAPS-ICON-WHITE.png
+    - assets/icons/NAV-PROFILE-ICON-WHITE.png
+    - assets/icons/NAV-HOMEPAGE-ICON-WHITE.png
+    - assets/icons/NAV-COMMUNITY-ICON-YELLOW.png
+    - assets/icons/NAV-NOTIFICATIONS-ICON-YELLOW.png
+    - assets/icons/NAV-MAPS-ICON-YELLOW.png
+    - assets/icons/NAV-PROFILE-ICON-YELLOW.png
+    - assets/icons/NAV-HOMEPAGE-ICON-YELLOW.png
 
 
   # An image asset can refer to one or more resolution-specific "variants", see

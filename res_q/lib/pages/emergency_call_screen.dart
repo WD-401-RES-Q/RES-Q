@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'main_page.dart';  
+import 'home_page.dart';  
 
 
 class EmergencyCallScreen extends StatelessWidget {
@@ -12,17 +12,17 @@ class EmergencyCallScreen extends StatelessWidget {
       backgroundColor: Colors.white,
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(20.0),
+          padding: const EdgeInsets.symmetric(vertical: 100.0),
           child: Column(
             children: [
               // Top icon - same size as main_page.dart
               SvgPicture.asset(
                 'assets/icons/RESQ-LOGO.svg', // Replace with your logo path
-                height: 30, // Adjust this to match your main_page icon size
+                height: 70, // Adjust this to match your main_page icon size
               ),
               const SizedBox(height: 40),
               
-              // Big PNG at the center
+              // CENTER SVG
               Expanded(
                 child: Center(
                   child: SvgPicture.asset(
@@ -36,7 +36,7 @@ class EmergencyCallScreen extends StatelessWidget {
               
               // Text below the image
               const Text(
-                'STAY CALM.\nCURRENTLY CONTACTING ACDRRMO...',
+                'STAY CALM. CURRENTLY CONTACTING ACDRRMO...',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 18,
@@ -51,7 +51,7 @@ class EmergencyCallScreen extends StatelessWidget {
               // End Call button
              SizedBox(
               width: 250,
-              height: 50,
+              height: 70,
               child: ElevatedButton(
                 onPressed: () {
                   Navigator.pushAndRemoveUntil(
@@ -61,8 +61,7 @@ class EmergencyCallScreen extends StatelessWidget {
                   );
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
+                  backgroundColor: const Color(0xFFAC1B22),                  foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -70,7 +69,7 @@ class EmergencyCallScreen extends StatelessWidget {
                 child: const Text(
                   'END CALL',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 24,
                     fontWeight: FontWeight.bold,
                   ),
                 ),

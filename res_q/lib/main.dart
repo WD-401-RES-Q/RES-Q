@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'pages/main_page.dart';
+import 'pages/home_page.dart';
 import 'pages/loading_screen.dart';
 // auth pages
 import 'pages/auth/login_page.dart';
@@ -65,6 +65,7 @@ class MyApp extends StatelessWidget {
         '/register': (context) => const RegistrationPage(),
         '/forgot': (context) => const ForgotPasswordPage(),
         '/otp': (context) => const OTPPage(),
+        '/main': (context) => const MainPage(),
       },
     );
   }
