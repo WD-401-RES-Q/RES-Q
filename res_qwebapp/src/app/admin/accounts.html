@@ -1,0 +1,182 @@
+<section class="admin-page accounts-page">
+  <header class="page-header">
+    <h1>Verified Accounts</h1>
+  </header>
+
+  <div class="accounts-layout">
+    <!-- TABLE SECTION -->
+    <div class="accounts-table-wrapper">
+      <table class="accounts-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Birthdate</th>
+            <th>Phone</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          <tr *ngFor="let acc of accounts">
+            <td>{{ acc.name }}</td>
+            <td>{{ acc.birthdate }}</td>
+            <td>{{ acc.phone }}</td>
+            <td>
+              <button class="btn btn-view" (click)="select(acc)">View</button>
+              <button class="btn btn-ban" (click)="ban(acc)">Ban</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- DETAILS PANEL -->
+    <div class="account-details" *ngIf="selected as acc">
+      <h2>Account Details</h2>
+
+      <p><strong>Full Name:</strong> {{ acc.name }}</p>
+      <p><strong>Gender:</strong> {{ acc.gender }}</p>
+      <p><strong>Address:</strong> {{ acc.address }}</p>
+      <p><strong>Birthdate:</strong> {{ acc.birthdate }}</p>
+      <p><strong>Phone:</strong> {{ acc.phone }}</p>
+
+      <div class="id-preview">
+        <p><strong>Image of Valid ID:</strong></p>
+        <img [src]="acc.validIdUrl" alt="Valid ID" />
+      </div>
+
+      <button class="btn btn-ban" (click)="ban(acc)">Ban Account</button>
+    </div>
+  </div>
+</section>
+
+<style>
+  .accounts-page {
+    padding: 20px;
+  }
+
+  /* Header Title */
+  .page-header h1 {
+    margin: 0 0 20px;
+    font-size: 28px;
+    font-family: "Poppins", sans-serif;
+    font-weight: 700;
+    color: #212121;
+  }
+
+  /* Layout Grid */
+  .accounts-layout {
+    display: grid;
+    grid-template-columns: 2fr 1.2fr;
+    gap: 24px;
+  }
+
+  /* Table Container */
+  .accounts-table-wrapper {
+    background: #ffffff;
+    border-radius: 14px;
+    border: 1px solid #e2e8f0;
+    padding: 24px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  }
+
+  /* TABLE */
+  .accounts-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 15px;
+    font-family: "Quicksand", sans-serif;
+  }
+
+  .accounts-table th {
+    padding: 14px 12px;
+    text-align: left;
+    background: #f7fafc;
+    font-weight: 600;
+    font-size: 14px;
+  }
+
+  .accounts-table td {
+    padding: 18px 12px;
+    border-bottom: 1px solid #eee;
+    vertical-align: middle;
+  }
+
+  .accounts-table tr:last-child td {
+    border-bottom: none;
+  }
+
+/* ACTION BUTTONS */
+.btn {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: none;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: "Poppins", sans-serif;
+  margin-bottom: 6px;
+  display: block;
+  width: 100%;
+}
+
+/* VIEW = Yellow */
+.btn-view {
+  background-color: #ffc806;
+  color: #212121;
+}
+
+.btn-view:hover {
+  background-color: #e5b400;
+}
+
+/* BAN = Red */
+.btn-ban {
+  background-color: #ac1b22;
+  color: white;
+}
+
+.btn-ban:hover {
+  background-color: #8f161c;
+}
+
+
+  /* ACCOUNT DETAILS CARD */
+  .account-details {
+    background: #ffffff;
+    border-radius: 14px;
+    border: 1px solid #e2e8f0;
+    padding: 26px 24px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+    font-size: 15px;
+    font-family: "Quicksand", sans-serif;
+  }
+
+  .account-details h2 {
+    margin-top: 0;
+    font-size: 24px;
+    font-family: "Poppins", sans-serif;
+    margin-bottom: 18px;
+  }
+
+  .account-details p {
+    margin: 10px 0;
+    font-size: 15px;
+  }
+
+  /* ID PREVIEW */
+  .id-preview img {
+    margin-top: 10px;
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    border: 1px solid #dcdcdc;
+  }
+
+  /* RESPONSIVE */
+  @media (max-width: 960px) {
+    .accounts-layout {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

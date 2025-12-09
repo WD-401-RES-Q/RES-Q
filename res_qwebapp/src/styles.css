@@ -1,0 +1,167 @@
+/* ==========================================================
+   GLOBAL FONT SYSTEM
+   ========================================================== */
+
+/* Default text font */
+body, p, span, td, th, option, select, input, button, label {
+  font-family: 'Quicksand', sans-serif !important;
+  font-weight: 500;
+  color: #212121;
+}
+
+/* Headings use POPPINS */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Poppins', sans-serif !important;
+  font-weight: 700;
+  color: #212121;
+}
+
+/* Titles inside cards */
+.summary-title,
+.cat-title,
+.page-header h1,
+.page-header h2,
+.stat-label {
+  font-family: 'Poppins', sans-serif !important;
+  font-weight: 600;
+}
+
+/* Card values */
+.summary-value,
+.cat-value,
+.stat-value {
+  font-family: 'Quicksand', sans-serif !important;
+  font-weight: 600;
+  color: #212121;
+}
+
+/* Buttons */
+button,
+.btn {
+  font-family: 'Poppins', sans-serif !important;
+  font-weight: 600;
+}
+
+/* Sidebar */
+.sidebar a {
+  font-family: 'Poppins', sans-serif !important;
+}
+
+/* ==========================================================
+   THEME COLORS (RED + YELLOW)
+   ========================================================== */
+
+:root {
+  --resq-red: #AC1B22;
+  --resq-yellow: #FFC806;
+  --resq-light: #F7F8F3;
+  --text-dark: #212121;
+}
+
+/* Background override */
+body {
+  background: var(--resq-light);
+}
+
+/* Buttons (default styles if no override in components) */
+.btn-approve {
+  background-color: var(--resq-yellow) !important;
+  color: #212121 !important;
+}
+
+.btn-reject,
+.btn-ban {
+  background-color: var(--resq-red) !important;
+  color: white !important;
+}
+
+.btn-approve:hover {
+  background-color: #e5b400 !important;
+}
+
+.btn-reject:hover,
+.btn-ban:hover {
+  background-color: #8f161c !important;
+}
+
+/* ==========================================================
+   GLOBAL CARD + CONTAINER RADIUS
+   ========================================================== */
+
+.card,
+.table-container,
+.accounts-table-wrapper,
+.account-details,
+.pending-card,
+.report-card,
+.reports-card,
+.category-card,
+.summary-card,
+.unverified-page .accounts-table-wrapper,
+.flagged-page .report-card,
+.approved-page .report-card,
+.pending-page .pending-card {
+  border-radius: 10px !important;
+  overflow: hidden;
+}
+
+/* Images inside any card */
+.card img,
+.pending-card img,
+.report-card img,
+.category-card img,
+.id-thumb,
+.report-image img {
+  border-radius: 10px !important;
+}
+
+/* For table containers */
+.accounts-table-wrapper,
+.accounts-table {
+  border-radius: 10px !important;
+  overflow: hidden;
+}
+
+/* ==========================================================
+   SIDEBAR ACTIVE INDICATOR (RED UNDERLINE)
+   ========================================================== */
+
+.sidebar a.active {
+  position: relative;
+  font-weight: 700 !important;
+}
+
+.sidebar a.active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -6px;
+  width: fit-content;
+  height: 3px;
+  background-color: var(--resq-yellow);
+  border-radius: 50px;
+}
+
+/* Sidebar hover */
+.sidebar a:hover {
+  opacity: 0.85;
+}
+
+/* ==========================================================
+   TABLE CLEANUP (GLOBAL CONSISTENCY)
+   ========================================================== */
+
+table {
+  border-collapse: collapse;
+}
+
+table th {
+  background: #f7fafc;
+  font-family: 'Poppins', sans-serif !important;
+  font-weight: 600;
+}
+
+table td {
+  font-family: 'Quicksand', sans-serif !important;
+  font-weight: 500;
+}

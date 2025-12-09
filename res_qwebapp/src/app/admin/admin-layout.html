@@ -1,0 +1,20 @@
+<div class="admin-root">
+  <aside class="sidebar">
+    <div class="brand">RES-Q Admin</div>
+    <nav>
+      <ul>
+        <li><a routerLink="dashboard" routerLinkActive="active">Dashboard</a></li>
+        <li><a routerLink="pending-reports" routerLinkActive="active">Pending Reports<span class="badge">5</span></a></li>
+        <li><a routerLink="approved-reports" routerLinkActive="active">Approved Reports</a></li>
+        <li><a routerLink="flagged-reports" routerLinkActive="active">Flagged Reports<span class="badge">3</span></a></li>
+        <li><a routerLink="accounts" routerLinkActive="active">Accounts</a></li>
+        <li><a routerLink="unverified-accounts" routerLinkActive="active">Unverified Accounts<span class="badge">8</span></a></li>
+        <li><a routerLink="settings" routerLinkActive="active">Settings</a></li>
+      </ul>
+    </nav>
+  </aside>
+
+  <main class="admin-content">
+    <router-outlet></router-outlet>
+  </main>
+</div>

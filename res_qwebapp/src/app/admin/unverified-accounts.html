@@ -1,0 +1,156 @@
+<section class="admin-page unverified-page">
+  <header class="page-header">
+    <h1>Unverified Accounts</h1>
+  </header>
+
+  <div class="accounts-table-wrapper">
+    <table class="accounts-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Gender</th>
+          <th>Address</th>
+          <th>Birthdate</th>
+          <th>Phone</th>
+          <th>Valid ID</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        <tr *ngFor="let acc of accounts">
+          <td>{{ acc.name }}</td>
+          <td>{{ acc.gender }}</td>
+          <td>{{ acc.address }}</td>
+          <td>{{ acc.birthdate }}</td>
+          <td>{{ acc.phone }}</td>
+
+          <td>
+            <img [src]="acc.validIdUrl" alt="Valid ID" class="id-thumb" />
+          </td>
+
+          <td>
+            <div class="action-buttons">
+              <button class="btn btn-approve" (click)="approve(acc)">
+                Approve
+              </button>
+
+              <button class="btn btn-reject" (click)="reject(acc)">
+                Reject
+              </button>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<style>
+  .unverified-page {
+    padding: 20px;
+  }
+
+  .page-header h1 {
+    margin: 0 0 16px;
+    font-size: 22px;
+    font-weight: 700;
+    color: #212121;
+  }
+
+  /* TABLE WRAPPER */
+  .accounts-table-wrapper {
+    background: #ffffff;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    padding: 20px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  }
+
+  /* TABLE */
+  .accounts-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    font-family: "Quicksand", sans-serif;
+  }
+
+  .accounts-table th,
+  .accounts-table td {
+    padding: 16px 14px;
+    border-bottom: 1px solid #e2e8f0;
+    vertical-align: middle;
+  }
+
+  .accounts-table th {
+    background: #f7fafc;
+    font-weight: 600;
+  }
+
+  .accounts-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  /* ID THUMB */
+  .id-thumb {
+    width: 100px;
+    height: auto;
+    border-radius: 6px;
+    border: 1px solid #dcdcdc;
+  }
+
+  /* ACTION BUTTON WRAPPER */
+  .action-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: max-content;
+  }
+
+  /* BUTTON BASE */
+  .btn {
+    padding: 10px 18px;
+    border-radius: 6px;
+    border: none;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: "Poppins", sans-serif;
+    color: #fff;
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    white-space: nowrap; /* FIX: prevent text from disappearing */
+    min-width: 110px; /* FIX: ensure text fits */
+  }
+
+  /* APPROVE */
+  .btn-approve {
+    background-color: #ffc806; /* yellow */
+    color: #212121;
+  }
+
+  .btn-approve:hover {
+    background-color: #e5b400;
+  }
+
+  /* REJECT */
+  .btn-reject {
+    background-color: #ac1b22; /* red */
+  }
+
+  .btn-reject:hover {
+    background-color: #8f161c;
+  }
+
+  /* RESPONSIVE */
+  @media (max-width: 768px) {
+    .accounts-table td {
+      padding: 12px 10px;
+    }
+
+    .id-thumb {
+      width: 80px;
+    }
+  }
+</style>

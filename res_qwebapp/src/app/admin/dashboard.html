@@ -1,0 +1,272 @@
+<section class="admin-page dashboard-page">
+  <!-- HEADER -->
+  <header class="dash-header">
+    <h1>Dashboard</h1>
+  </header>
+
+  <!-- TOP SUMMARY CARDS -->
+  <section class="summary-row">
+    <div class="summary-card">
+      <div class="summary-title">TOTAL REPORTS</div>
+      <div class="summary-value">{{ totalReports }}</div>
+    </div>
+
+    <div class="summary-card">
+      <div class="summary-title">APPROVED &amp; RESOLVED</div>
+      <div class="summary-value">{{ approvedReports }}</div>
+    </div>
+
+    <div class="summary-card">
+      <div class="summary-title">FLAGGED REPORTS</div>
+      <div class="summary-value">{{ flaggedReports }}</div>
+    </div>
+  </section>
+
+  <!-- CATEGORY CARDS WITH ICONS -->
+  <section class="category-row">
+    <div class="category-card cat-medical">
+      <div class="cat-icon-wrap">
+        <fa-icon [icon]="faMedical" class="cat-icon"></fa-icon>
+      </div>
+      <div class="cat-text">
+        <div class="cat-title">MEDICAL EMERGENCIES</div>
+        <div class="cat-value">{{ medicalEmergencies }}</div>
+      </div>
+    </div>
+
+    <div class="category-card cat-vehicular">
+      <div class="cat-icon-wrap">
+        <fa-icon [icon]="faVehicular" class="cat-icon"></fa-icon>
+      </div>
+      <div class="cat-text">
+        <div class="cat-title">VEHICULAR EMERGENCIES</div>
+        <div class="cat-value">{{ vehicularEmergencies }}</div>
+      </div>
+    </div>
+
+    <div class="category-card cat-fire">
+      <div class="cat-icon-wrap">
+        <fa-icon [icon]="faFire" class="cat-icon"></fa-icon>
+      </div>
+      <div class="cat-text">
+        <div class="cat-title">FIRE EMERGENCIES</div>
+        <div class="cat-value">{{ fireEmergencies }}</div>
+      </div>
+    </div>
+
+    <div class="category-card cat-road">
+      <div class="cat-icon-wrap">
+        <fa-icon [icon]="faRoad" class="cat-icon"></fa-icon>
+      </div>
+      <div class="cat-text">
+        <div class="cat-title">ROAD OBSTRUCTION</div>
+        <div class="cat-value">{{ roadObstructions }}</div>
+      </div>
+    </div>
+
+    <div class="category-card cat-hazard">
+      <div class="cat-icon-wrap">
+        <fa-icon [icon]="faHazard" class="cat-icon"></fa-icon>
+      </div>
+      <div class="cat-text">
+        <div class="cat-title">NATURAL HAZARDS</div>
+        <div class="cat-value">{{ naturalHazards }}</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TOTAL REPORTS CHART AREA -->
+  <section class="reports-section">
+    <div class="reports-header">
+      <h2>TOTAL REPORTS:</h2>
+
+      <div class="time-filter">
+        <select (change)="onTimeRangeChange($any($event.target).value)">
+          <option
+            *ngFor="let range of timeRanges"
+            [selected]="range === selectedTimeRange"
+            [value]="range"
+          >
+            {{ range }}
+          </option>
+        </select>
+      </div>
+    </div>
+
+    <div class="reports-card">
+      <canvas
+        baseChart
+        [data]="lineChartData"
+        [options]="lineChartOptions"
+        chartType="line">
+      </canvas>
+    </div>
+  </section>
+</section>
+
+<style>
+  .dashboard-page {
+    padding: 20px;
+  }
+
+  .dash-header h1 {
+    margin: 0 0 18px;
+    font-size: 28px;
+    font-weight: 700;
+    color: #212121;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  /* TOP SUMMARY ROW */
+  .summary-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .summary-card {
+    background: #ffffff;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    padding: 18px 20px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+    text-align: center;
+  }
+
+  .summary-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #666666;
+    margin-bottom: 8px;
+    font-family: 'Quicksand', sans-serif;
+  }
+
+  .summary-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: #212121;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  /* CATEGORY CARDS ROW */
+  .category-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 26px;
+  }
+
+  .category-card {
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    color: #ffffff;
+    min-height: 72px;
+    gap: 12px;
+  }
+
+  .cat-icon-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .cat-icon {
+    font-size: 28px;
+  }
+
+  .cat-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .cat-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  .cat-value {
+    font-size: 18px;
+    font-weight: 700;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  /* Brand color blocks (using your palette + helpers) */
+  .cat-medical {
+    background: #00a458;
+  }
+
+  .cat-vehicular {
+    background: #f09002;
+  }
+
+  .cat-fire {
+    background: #ac1b22;
+  }
+
+  .cat-road {
+    background: #ffc806;
+    color: #212121;
+  }
+
+  .cat-hazard {
+    background: rgb(60, 131, 237);
+  }
+
+  /* TOTAL REPORTS AREA */
+  .reports-section {
+    margin-top: 4px;
+  }
+
+  .reports-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .reports-header h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    color: #212121;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  .time-filter select {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid #cbd5e1;
+    font-size: 14px;
+    background: #ffffff;
+    outline: none;
+    font-family: 'Quicksand', sans-serif;
+  }
+
+  .reports-card {
+    background: #ffffff;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    padding: 18px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+  }
+
+  @media (max-width: 1024px) {
+    .summary-row,
+    .category-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 768px) {
+    .summary-row,
+    .category-row {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

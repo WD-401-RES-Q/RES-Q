@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../main_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -38,8 +39,10 @@ class _LoginPageState extends State<LoginPage> {
 
     if (!mounted) return;
 
-    // TODO: replace with real login. For now, go to OTP verification step
-    Navigator.pushReplacementNamed(context, '/otp');
+    // TODO: replace with real login
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainPage()));
   }
 
   InputDecoration _inputDecoration(String label, {Widget? prefixIcon}) {

@@ -1,0 +1,118 @@
+/* ROOT LAYOUT */
+.admin-root {
+  display: flex;
+  min-height: 100vh;
+  background: #F7F8F3;
+}
+
+/* FIXED SIDEBAR */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+
+  width: 240px;
+  height: 100vh;
+
+  background: #AC1B22; /* 🔴 MAIN COLOR */
+  color: #fff;
+
+  padding: 28px 18px;
+  box-sizing: border-box;
+
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* BRAND TITLE */
+.sidebar .brand {
+  font-size: 22px;
+  font-weight: 700;
+  font-family: 'Poppins', sans-serif;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+/* NAVIGATION LIST */
+.sidebar ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* LINKS */
+.sidebar a {
+  display: inline-block;
+  padding: 12px 14px;
+
+  font-size: 16px;
+  font-weight: 400;
+
+  color: rgba(255, 255, 255, 0.95);
+  text-decoration: none;
+
+  border-radius: 6px;
+  transition: all 0.18s ease-in-out;
+  position: relative;
+}
+
+/* BADGE */
+.sidebar a .badge {
+  position: absolute;
+  top: 4px;
+  right: -12px;
+  
+  width: 24px;
+  height: 24px;
+  
+  background-color: #FFC806;
+  color: #212121;
+  
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* HOVER */
+.sidebar a:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ACTIVE LINK */
+.sidebar a.active {
+  background: none !important;
+  color: #FFC806;
+  font-weight: 700;
+  display: inline-block; /* important: shrink element to text width */
+  padding-left: 0;       /* remove extra width affecting underline */
+}
+
+/* Adjust hover to avoid shifting text */
+.sidebar a:hover {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+
+/* MAIN CONTENT */
+.admin-content {
+  margin-left: 240px;
+  flex: 1;
+  padding: 32px;
+  background: #F7F8F3;
+  min-height: 100vh;
+}
+
+.admin-page h2, 
+.admin-page h1 {
+  margin-top: 0;
+  color: #212121;
+}
