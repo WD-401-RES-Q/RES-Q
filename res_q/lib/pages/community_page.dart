@@ -10,8 +10,8 @@ class CommunityPage extends StatefulWidget {
 
 class _CommunityPageState extends State<CommunityPage> {
   // Brand colors
-  static const appBlue = Color(0xFF004FC6);
-  static const appRed = Color(0xFFD60000);
+  static const appBlue = Color(0xFFAC1B22);
+  static const appRed = Color(0xFFFFC806);
   static const appGreen = Color(0xFF00A458);
   static const appYellow = Color(0xFFF5F520);
   static const appBlack = Color(0xFF212121);
@@ -576,7 +576,7 @@ class _CommunityPageState extends State<CommunityPage> {
                   height: 40,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   decoration: BoxDecoration(
-                    color: appRed,
+                    color: appBlue,
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: DropdownButtonHideUnderline(

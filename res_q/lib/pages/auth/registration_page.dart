@@ -10,8 +10,8 @@ class RegistrationPage extends StatefulWidget {
 
 class _RegistrationPageState extends State<RegistrationPage> {
   // Brand colors
-  static const appBlue = Color(0xFF004FC6);
-  static const appRed = Color(0xFFD60000);
+  static const appBlue = Color(0xFFAC1B22);
+  static const appRed = Color(0xFFFFC806);
   static const appGreen = Color(0xFF00A458);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
@@ -267,7 +267,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                             child: ElevatedButton(
                               onPressed: _uploadPhoto,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: appGreen,
+                                backgroundColor: appRed,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(4),
                                 ),

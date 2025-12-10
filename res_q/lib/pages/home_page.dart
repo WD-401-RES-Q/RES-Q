@@ -7,6 +7,7 @@ import 'map_page.dart';
 import 'notifications_page.dart';
 import 'profile_page.dart';
 import 'emergency_call_screen.dart';
+import 'semi-admin/admin-map_page.dart';
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -21,7 +22,8 @@ class _MainPageState extends State<MainPage> {
   List<Widget> get _pages => [
         const _HomePageContent(),
         const CommunityPage(),
-        const MapPage(),
+        //const MapPage(),
+        const AdminMapPage(),
         const NotificationsPage(),
         const ProfilePage(),
       ];
@@ -29,7 +31,7 @@ class _MainPageState extends State<MainPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Color(0xFFF7F8F3),
       bottomNavigationBar: Container(
         height: 70,
         decoration: const BoxDecoration(

@@ -23,7 +23,7 @@ class ProfilePage extends StatelessWidget {
                   children: [
                     Container(
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0052CC),
+                        color: const Color(0xFFAC1B22),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: IconButton(
@@ -49,15 +49,15 @@ class ProfilePage extends StatelessWidget {
                             children: const [
                               TextSpan(
                                 text: 'PR',
-                                style: TextStyle(color: Color(0xFF0052CC)),
+                                style: TextStyle(color: Color(0xFFAC1B22)),
                               ),
                               TextSpan(
                                 text: 'O',
-                                style: TextStyle(color: Color(0xFFE53935)),
+                                style: TextStyle(color: Color(0xFFFFC806)),
                               ),
                               TextSpan(
                                 text: 'FILE',
-                                style: TextStyle(color: Color(0xFF0052CC)),
+                                style: TextStyle(color: Color(0xFFAC1B22)),
                               ),
                             ],
                           ),

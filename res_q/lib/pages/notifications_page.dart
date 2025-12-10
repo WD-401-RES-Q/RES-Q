@@ -5,8 +5,8 @@ class NotificationsPage extends StatelessWidget {
   const NotificationsPage({super.key});
 
   // OFFICIAL COLORS
-  static const appBlue = Color(0xFF004FC6);
-  static const appRed = Color(0xFFD60000);
+  static const appBlue = Color(0xFFAC1B22);
+  static const appRed = Color(0xFFFFC806);
   static const appBlack = Color(0xFF212121);
   static const appWhite = Color(0xFFF7F8F3);
 

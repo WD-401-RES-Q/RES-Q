@@ -9,7 +9,7 @@ class EmergencyCallScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Color(0xFFF7F8F3),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 100.0),
