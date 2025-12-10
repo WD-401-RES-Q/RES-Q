@@ -57,7 +57,7 @@ class _LoadingContent extends StatelessWidget {
           width: 40,
           child: CircularProgressIndicator(
             strokeWidth: 4,
-            valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFFC806)),
           ),
         ),
       ],
