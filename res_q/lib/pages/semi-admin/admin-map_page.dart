@@ -78,53 +78,105 @@ class _AdminMapPageState extends State<AdminMapPage> {
     _incidentMarkers.addAll([
       Marker(
         point: const LatLng(15.1450, 120.5887),
-        width: 40,
-        height: 40,
+        width: 50,
+        height: 50,
         child: GestureDetector(
           onTap: () => _showIncidentInfo('Fire Incident', 'Reported 10 mins ago'),
-          child: const Icon(
-            Icons.local_fire_department,
-            color: Colors.red,
-            size: 40,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.local_fire_department,
+              color: Colors.red,
+              size: 32,
+            ),
           ),
         ),
       ),
       Marker(
         point: const LatLng(15.1500, 120.5950),
-        width: 40,
-        height: 40,
+        width: 50,
+        height: 50,
         child: GestureDetector(
           onTap: () => _showIncidentInfo('Road Obstruction', 'Reported 25 mins ago'),
-          child: const Icon(
-            Icons.warning,
-            color: Colors.orange,
-            size: 40,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.warning,
+              color: Colors.orange,
+              size: 32,
+            ),
           ),
         ),
       ),
       Marker(
         point: const LatLng(15.1400, 120.5800),
-        width: 40,
-        height: 40,
+        width: 50,
+        height: 50,
         child: GestureDetector(
           onTap: () => _showIncidentInfo('Medical Emergency', 'Reported 5 mins ago'),
-          child: const Icon(
-            Icons.medical_services,
-            color: Colors.yellow,
-            size: 40,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.medical_services,
+              color: Colors.yellow,
+              size: 32,
+            ),
           ),
         ),
       ),
       Marker(
         point: const LatLng(15.1550, 120.5850),
-        width: 40,
-        height: 40,
+        width: 50,
+        height: 50,
         child: GestureDetector(
           onTap: () => _showIncidentInfo('Flood Warning', 'Reported 1 hour ago'),
-          child: const Icon(
-            Icons.water,
-            color: Colors.blue,
-            size: 40,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.water,
+              color: Colors.blue,
+              size: 32,
+            ),
           ),
         ),
       ),

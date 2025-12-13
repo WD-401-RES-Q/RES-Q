@@ -7,6 +7,7 @@ import 'map_page.dart';
 import 'notifications_page.dart';
 import 'profile_page.dart';
 import 'emergency_call_screen.dart';
+import 'report_form_screen.dart';
 import 'semi-admin/admin-map_page.dart';
 
 class MainPage extends StatefulWidget {
@@ -278,7 +279,13 @@ class _HomePageContent extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         onTap: () {
           print("$title card tapped");
-          // TODO: Navigate to incident report form
+          // Navigate to report form screen with incident type
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => ReportFormScreen(incidentType: title),
+            ),
+          );
         },
         child: Container(
           decoration: BoxDecoration(
