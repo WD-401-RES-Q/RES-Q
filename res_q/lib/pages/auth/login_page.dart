@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-//import '../main_page.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../home_page.dart';
-
+import '../semi-admin/semi_admin_main_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -25,6 +25,14 @@ class _LoginPageState extends State<LoginPage> {
   bool _loading = false;
   bool _obscure = true;
 
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _seedSemiAdminsIfEmpty();
+  }
+
   @override
   void dispose() {
     _usernameCtl.dispose();
@@ -36,15 +44,231 @@ class _LoginPageState extends State<LoginPage> {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 400));
-    setState(() => _loading = false);
 
-    if (!mounted) return;
+    try {
+      final username = _usernameCtl.text.trim();
+      final password = _passCtl.text;
 
-    // TODO: replace with real login
-    Navigator.of(
-      context,
-    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainPage()));
+      // Check semi-admins first
+      final semiAdminQuery = await _firestore
+          .collection('semi_admins')
+          .where('username', isEqualTo: username)
+          .limit(1)
+          .get();
+
+      if (semiAdminQuery.docs.isNotEmpty) {
+        final semiAdminData = semiAdminQuery.docs.first.data();
+        final storedPassword = semiAdminData['password'] as String?;
+
+        if (storedPassword != null && storedPassword == password) {
+          setState(() => _loading = false);
+          if (!mounted) return;
+
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const SemiAdminMainPage()),
+          );
+          return;
+        } else {
+          setState(() => _loading = false);
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Invalid password'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      }
+
+      // Check pending first (block login if still pending)
+      final pendingQuery = await _firestore
+          .collection('pending_users')
+          .where('username', isEqualTo: username)
+          .limit(1)
+          .get();
+
+      if (pendingQuery.docs.isNotEmpty) {
+        setState(() => _loading = false);
+        if (!mounted) return;
+
+        _showPendingApprovalDialog();
+        return;
+      }
+
+      // Check approved users collection (only approved can log in)
+      final approvedQuery = await _firestore
+          .collection('approved_users')
+          .where('username', isEqualTo: username)
+          .limit(1)
+          .get();
+
+      if (approvedQuery.docs.isNotEmpty) {
+        final userData = approvedQuery.docs.first.data();
+        final storedPassword = userData['password'] as String?;
+        final accountStatus = userData['accountStatus'] as String?;
+
+        // Must be explicitly approved
+        if (accountStatus != null && accountStatus != 'approved') {
+          setState(() => _loading = false);
+          if (!mounted) return;
+          _showPendingApprovalDialog();
+          return;
+        }
+
+        if (storedPassword != null && storedPassword == password) {
+          setState(() => _loading = false);
+          if (!mounted) return;
+
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const MainPage()),
+          );
+          return;
+        } else {
+          setState(() => _loading = false);
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Invalid password'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      }
+
+      // User not found
+      setState(() => _loading = false);
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('User not found'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } catch (e) {
+      setState(() => _loading = false);
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Login error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  /// Seed 5 semi-admin users if collection is empty. Runs on init.
+  Future<void> _seedSemiAdminsIfEmpty() async {
+    debugPrint('🔍 Checking if semi_admins collection exists...');
+    try {
+      final existing = await _firestore
+          .collection('semi_admins')
+          .limit(1)
+          .get();
+
+      if (existing.docs.isNotEmpty) {
+        debugPrint('✓ semi_admins collection already exists. Skipping seed.');
+        return;
+      }
+
+      debugPrint('📝 semi_admins collection empty. Starting seed...');
+
+      final seedUsers = [
+        {
+          'username': 'semiadmin1',
+          'fullName': 'Semi Admin One',
+          'password': 'semi1234',
+        },
+        {
+          'username': 'semiadmin2',
+          'fullName': 'Semi Admin Two',
+          'password': 'semi1234',
+        },
+        {
+          'username': 'semiadmin3',
+          'fullName': 'Semi Admin Three',
+          'password': 'semi1234',
+        },
+        {
+          'username': 'semiadmin4',
+          'fullName': 'Semi Admin Four',
+          'password': 'semi1234',
+        },
+        {
+          'username': 'semiadmin5',
+          'fullName': 'Semi Admin Five',
+          'password': 'semi1234',
+        },
+      ];
+
+      final batch = _firestore.batch();
+      for (final user in seedUsers) {
+        final ref = _firestore
+            .collection('semi_admins')
+            .doc(user['username'] as String);
+        batch.set(ref, user);
+      }
+      await batch.commit();
+      debugPrint('✅ Successfully seeded 5 semi-admin users to Firestore!');
+    } catch (e) {
+      debugPrint('❌ Failed to seed semi_admins: $e');
+      debugPrint('Stack trace: ${StackTrace.current}');
+    }
+  }
+
+  void _showPendingApprovalDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.pending_actions, size: 64, color: appRed),
+              const SizedBox(height: 16),
+              Text(
+                'Account Pending Approval',
+                style: GoogleFonts.poppins(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: appBlack,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Your account is currently pending admin approval. Please wait up to 48 hours for an administrator to review and approve your account.',
+                style: GoogleFonts.poppins(fontSize: 14, color: appBlack),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appBlue,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Text(
+                    'OK',
+                    style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   InputDecoration _inputDecoration(String label, {Widget? prefixIcon}) {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'auth/login_page.dart';
+import '../services/location_service.dart';
 
 class LoadingScreen extends StatefulWidget {
   const LoadingScreen({super.key});
@@ -13,7 +14,14 @@ class _LoadingScreenState extends State<LoadingScreen> {
   @override
   void initState() {
     super.initState();
+    _initializeApp();
+  }
 
+  void _initializeApp() async {
+    // Request location permission
+    await LocationService.requestLocationPermission();
+
+    // Wait 3 seconds then navigate
     Future.delayed(const Duration(seconds: 3), () {
       if (!mounted) return;
       Navigator.pushReplacement(

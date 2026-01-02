@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class OTPPage extends StatefulWidget {
   const OTPPage({super.key});
@@ -17,6 +19,24 @@ class _OTPPageState extends State<OTPPage> {
 
   final TextEditingController _otpCtl = TextEditingController();
   bool _loading = false;
+
+  String? _verificationId;
+  String? _phoneNumber;
+  Map<String, dynamic>? _userData;
+
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final args = ModalRoute.of(context)?.settings.arguments as Map?;
+    if (args != null) {
+      _verificationId = args['verificationId'] as String?;
+      _phoneNumber = args['phoneNumber'] as String?;
+      _userData = args['userData'] as Map<String, dynamic>?;
+    }
+  }
 
   @override
   void dispose() {
@@ -44,28 +64,214 @@ class _OTPPageState extends State<OTPPage> {
 
   Future<void> _verify() async {
     final code = _otpCtl.text.trim();
-    if (code.length < 4) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Enter the OTP code')));
+    if (code.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter the 6-digit OTP code')),
+      );
+      return;
+    }
+
+    if (_verificationId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Verification ID not found')),
+      );
       return;
     }
 
     setState(() => _loading = true);
-    await Future.delayed(const Duration(milliseconds: 600));
-    setState(() => _loading = false);
 
-    if (!mounted) return;
+    try {
+      // Create phone auth credential
+      PhoneAuthCredential credential = PhoneAuthProvider.credential(
+        verificationId: _verificationId!,
+        smsCode: code,
+      );
 
-    // TODO: replace with real verification
-    Navigator.pushReplacementNamed(context, '/main');
+      // Sign in with credential
+      await _auth.signInWithCredential(credential);
+
+      // Save user data to Firestore with pending status
+      await _saveUserData();
+
+      if (!mounted) return;
+      setState(() => _loading = false);
+
+      // Show success dialog with approval info
+      await _showApprovalPendingDialog();
+
+      if (!mounted) return;
+      // Navigate to login page
+      Navigator.pushReplacementNamed(context, '/login');
+    } on FirebaseAuthException catch (e) {
+      setState(() => _loading = false);
+
+      String errorMessage = 'Verification failed';
+      if (e.code == 'invalid-verification-code') {
+        errorMessage = 'Invalid OTP code. Please try again.';
+      } else if (e.code == 'session-expired') {
+        errorMessage = 'OTP expired. Please request a new code.';
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMessage),
+            backgroundColor: appBlue,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        _otpCtl.clear();
+      }
+    } catch (e) {
+      setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+        _otpCtl.clear();
+      }
+    }
   }
 
-  void _resend() {
-    // TODO: hook to real resend endpoint
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('OTP resent (mock)')));
+  Future<void> _saveUserData() async {
+    try {
+      final user = _auth.currentUser;
+      print('DEBUG: Saving user data. User ID: ${user?.uid}');
+
+      if (user != null && _userData != null) {
+        print('DEBUG: User data: $_userData');
+
+        // Store newly verified users in a pending collection for admin review
+        await _firestore.collection('pending_users').doc(user.uid).set({
+          'fullName': _userData!['fullName'],
+          'username': _userData!['username'],
+          'email': _userData!['email'],
+          'password': _userData!['password'],
+          'contactNumber': _userData!['contactNumber'],
+          'address': _userData!['address'],
+          'dateOfBirth': _userData!['dateOfBirth'],
+          'idPhotoPath': _userData!['idPhotoPath'],
+          'role': 'user',
+          'accountStatus': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        print('DEBUG: Successfully saved to pending_users collection');
+
+        // Sign the phone-auth session out so only approved accounts can log in later
+        await _auth.signOut();
+        print('DEBUG: User signed out after pending save');
+      } else {
+        print('DEBUG: ERROR - user is null or userData is null');
+      }
+    } catch (e) {
+      print('DEBUG: Error in _saveUserData: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> _showApprovalPendingDialog() async {
+    return showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.pending_actions, size: 64, color: appRed),
+              const SizedBox(height: 16),
+              Text(
+                'Registration Successful!',
+                style: GoogleFonts.poppins(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: appBlack,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Your account has been created and is pending admin approval. You will be able to login within 48 hours once an administrator approves your account.',
+                style: GoogleFonts.poppins(fontSize: 14, color: appBlack),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appBlue,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Text(
+                    'OK',
+                    style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _resend() async {
+    if (_phoneNumber == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Phone number not found')));
+      return;
+    }
+
+    setState(() => _loading = true);
+
+    try {
+      await _auth.verifyPhoneNumber(
+        phoneNumber: _phoneNumber!,
+        timeout: const Duration(seconds: 60),
+        verificationCompleted: (PhoneAuthCredential credential) async {},
+        verificationFailed: (FirebaseAuthException e) {
+          setState(() => _loading = false);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Failed to resend OTP: ${e.message}')),
+            );
+          }
+        },
+        codeSent: (String verificationId, int? resendToken) {
+          setState(() {
+            _loading = false;
+            _verificationId = verificationId;
+          });
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('OTP resent successfully')),
+            );
+          }
+        },
+        codeAutoRetrievalTimeout: (String verificationId) {
+          setState(() => _verificationId = verificationId);
+        },
+      );
+    } catch (e) {
+      setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
   }
 
   @override

@@ -1,14 +1,20 @@
-import { Component } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FirestoreService } from '../firestore.service';
+import { Subscription, Observable } from 'rxjs';
 
 interface Account {
-  id: number;
-  name: string;
-  gender: string;
+  id: string;
+  fullName: string;
+  username: string;
+  email: string;
   address: string;
-  birthdate: string;
-  phone: string;
-  validIdUrl: string;
+  dateOfBirth: string;
+  contactNumber: string;
+  idPhotoPath: string;
+  accountStatus: string;
+  approvedAt?: any;
+  approvedBy?: string;
 }
 
 @Component({
@@ -17,36 +23,82 @@ interface Account {
   imports: [CommonModule],
   templateUrl: './accounts.html',
 })
-export class AccountsComponent {
-  accounts: Account[] = [
-    {
-      id: 1,
-      name: 'Juan Dela Cruz',
-      gender: 'Male',
-      address: 'Angeles City',
-      birthdate: 'Oct 09, 1997',
-      phone: '0917 123 4567',
-      validIdUrl: 'assets/images/license.png',  
-    },
-    {
-      id: 2,
-      name: 'Maria Santos',
-      gender: 'Female',
-      address: 'Mabalacat City',
-      birthdate: 'Apr 21, 1999',
-      phone: '0918 987 6543',
-      validIdUrl: 'assets/images/license2.jpg',   
-    },
-  ];
+export class AccountsComponent implements OnInit, OnDestroy {
+  accounts$: Observable<any[]>;
+  isLoading$: Observable<boolean>;
+  accounts: Account[] = [];
+  selected: Account | null = null;
+  private subscription?: Subscription;
 
-  selected: Account | null = this.accounts[0];
+  constructor(private firestoreService: FirestoreService) {
+    console.log('AccountsComponent constructor called');
+    // Expose the observables directly
+    this.accounts$ = this.firestoreService.approvedUsers$;
+    this.isLoading$ = this.firestoreService.isLoading$;
+  }
+
+  ngOnInit() {
+    console.log('=== ACCOUNTS COMPONENT INIT ===');
+    console.log('Component instance created at:', new Date().toISOString());
+    
+    // Subscribe only to handle selection logic
+    this.subscription = this.accounts$.subscribe(
+      (users) => {
+        console.log('=== APPROVED USERS DATA RECEIVED IN COMPONENT ===');
+        console.log('Users count:', users.length);
+        
+        this.accounts = users as Account[];
+        
+        // Select first account if none selected
+        if (this.accounts.length > 0 && !this.selected) {
+          this.selected = this.accounts[0];
+          console.log('Auto-selected first account:', this.selected?.fullName);
+        }
+        
+        // Clear selection if selected account no longer exists
+        if (this.selected && !this.accounts.find(acc => acc.id === this.selected!.id)) {
+          this.selected = this.accounts.length > 0 ? this.accounts[0] : null;
+          console.log('Selection updated');
+        }
+      },
+      (error) => {
+        console.error('=== ERROR IN APPROVED USERS SUBSCRIPTION ===', error);
+      }
+    );
+    
+    console.log('Subscription to approvedUsers$ established');
+  }
+
+  ngOnDestroy() {
+    console.log('AccountsComponent ngOnDestroy called');
+    if (this.subscription) {
+      this.subscription.unsubscribe();
+    }
+  }
 
   select(account: Account) {
     this.selected = account;
   }
 
-  ban(account: Account) {
+  getApprovedDate(account: Account): Date | null {
+    if (!account.approvedAt) return null;
+    // Handle both Firestore Timestamp and already converted Date
+    if (account.approvedAt.toDate) {
+      return account.approvedAt.toDate();
+    }
+    if (account.approvedAt instanceof Date) {
+      return account.approvedAt;
+    }
+    return null;
+  }
+
+  async ban(account: Account) {
+    if (!confirm(`Are you sure you want to ban ${account.fullName}?`)) {
+      return;
+    }
+    
     console.log('Ban account', account);
-    alert(`Banned account: ${account.name}`);
+    alert(`Banned account: ${account.fullName}`);
+    // TODO: Implement ban functionality
   }
 }

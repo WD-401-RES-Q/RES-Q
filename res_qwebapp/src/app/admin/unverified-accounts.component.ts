@@ -1,51 +1,139 @@
-import { Component } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { FirestoreService } from '../firestore.service';
+import { Subscription, Observable } from 'rxjs';
 
 interface UnverifiedAccount {
-  id: number;
-  name: string;
-  gender: string;
+  id: string;
+  fullName: string;
+  username: string;
+  email: string;
   address: string;
-  birthdate: string;
-  phone: string;
-  validIdUrl: string;
+  dateOfBirth: string;
+  contactNumber: string;
+  idPhotoPath: string;
+  createdAt: any;
+  accountStatus: string;
 }
 
 @Component({
   selector: 'app-unverified-accounts',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   templateUrl: './unverified-accounts.html',
 })
-export class UnverifiedAccountsComponent {
-  accounts: UnverifiedAccount[] = [
-    {
-      id: 1,
-      name: 'Patrick Dela Cruz',
-      gender: 'Male',
-      address: 'Angeles City',
-      birthdate: 'Jan 20, 2001',
-      phone: '0917 000 0001',
-      validIdUrl: 'assets/images/license.png',
-    },
-    {
-      id: 2,
-      name: 'Karla Mendoza',
-      gender: 'Female',
-      address: 'Mabalacat City',
-      birthdate: 'May 10, 2000',
-      phone: '0917 000 0002',
-      validIdUrl: 'assets/images/license2.jpg',
-    },
-  ];
+export class UnverifiedAccountsComponent implements OnInit, OnDestroy {
+  accounts$: Observable<any[]>;
+  isLoading$: Observable<boolean>;
+  accounts: UnverifiedAccount[] = [];
+  adminUsername = 'admin'; // TODO: Get from auth service
+  
+  // Result Modal state
+  showModal = false;
+  modalTitle = '';
+  modalMessage = '';
+  modalType: 'success' | 'error' = 'success';
 
-  approve(acc: UnverifiedAccount) {
-    console.log('Approve account', acc);
-    alert(`Approved account: ${acc.name}`);
+  // Confirmation Modal state
+  showConfirmModal = false;
+  confirmAction: 'approve' | 'reject' | null = null;
+  selectedAccount: UnverifiedAccount | null = null;
+  rejectionReason = '';
+
+  private subscription?: Subscription;
+
+  constructor(private firestoreService: FirestoreService) {
+    console.log('UnverifiedAccountsComponent constructor called');
+    // Expose the observables directly for the template
+    this.accounts$ = this.firestoreService.pendingUsers$;
+    this.isLoading$ = this.firestoreService.isLoading$;
   }
 
-  reject(acc: UnverifiedAccount) {
-    console.log('Reject account', acc);
-    alert(`Rejected account: ${acc.name}`);
+  ngOnInit() {
+    console.log('=== UNVERIFIED ACCOUNTS COMPONENT INIT ===');
+    console.log('Component instance created at:', new Date().toISOString());
+    
+    // Subscribe to update local array
+    this.subscription = this.accounts$.subscribe(
+      (users) => {
+        console.log('=== PENDING USERS DATA RECEIVED IN COMPONENT ===');
+        console.log('Users count:', users.length);
+        
+        this.accounts = users as UnverifiedAccount[];
+        console.log('Component accounts array updated:', this.accounts.length);
+      },
+      (error) => {
+        console.error('=== ERROR IN PENDING USERS SUBSCRIPTION ===', error);
+      }
+    );
+    
+    console.log('Subscription to pendingUsers$ established');
+  }
+
+  ngOnDestroy() {
+    console.log('UnverifiedAccountsComponent ngOnDestroy called');
+    if (this.subscription) {
+      this.subscription.unsubscribe();
+    }
+  }
+
+  openApproveConfirm(acc: UnverifiedAccount) {
+    this.selectedAccount = acc;
+    this.confirmAction = 'approve';
+    this.showConfirmModal = true;
+  }
+
+  openRejectConfirm(acc: UnverifiedAccount) {
+    this.selectedAccount = acc;
+    this.confirmAction = 'reject';
+    this.rejectionReason = '';
+    this.showConfirmModal = true;
+  }
+
+  closeConfirmModal() {
+    this.showConfirmModal = false;
+    this.selectedAccount = null;
+    this.confirmAction = null;
+    this.rejectionReason = '';
+  }
+
+  async confirmApprove() {
+    if (!this.selectedAccount) return;
+
+    try {
+      await this.firestoreService.approvePendingUser(this.selectedAccount, this.adminUsername);
+      this.closeConfirmModal();
+      this.showModalMessage('Success', `${this.selectedAccount.fullName} has been approved successfully!`, 'success');
+    } catch (error: any) {
+      this.closeConfirmModal();
+      this.showModalMessage('Approval Failed', `Error: ${error.message || 'Unknown error occurred'}`, 'error');
+    }
+  }
+
+  async confirmReject() {
+    if (!this.selectedAccount || !this.rejectionReason.trim()) {
+      return;
+    }
+
+    try {
+      await this.firestoreService.rejectPendingUser(this.selectedAccount, this.adminUsername, this.rejectionReason);
+      this.closeConfirmModal();
+      this.showModalMessage('Rejected', `${this.selectedAccount.fullName} has been rejected.`, 'success');
+    } catch (error: any) {
+      this.closeConfirmModal();
+      this.showModalMessage('Rejection Failed', `Error: ${error.message || 'Unknown error occurred'}`, 'error');
+    }
+  }
+
+  showModalMessage(title: string, message: string, type: 'success' | 'error') {
+    this.modalTitle = title;
+    this.modalMessage = message;
+    this.modalType = type;
+    this.showModal = true;
+  }
+
+  closeModal() {
+    this.showModal = false;
   }
 }

@@ -1,26 +1,38 @@
 <section class="admin-page accounts-page">
   <header class="page-header">
-    <h1>Verified Accounts</h1>
+    <h1>Verified Accounts ({{ accounts.length }})</h1>
   </header>
 
-  <div class="accounts-layout">
+  <div *ngIf="isLoading$ | async" class="empty-state">
+    <p>Loading verified accounts...</p>
+  </div>
+
+  <div *ngIf="(!(isLoading$ | async)) && accounts.length === 0" class="empty-state">
+    <p>No approved accounts yet.</p>
+  </div>
+
+  <div *ngIf="accounts.length > 0" class="accounts-layout">
     <!-- TABLE SECTION -->
     <div class="accounts-table-wrapper">
       <table class="accounts-table">
         <thead>
           <tr>
             <th>Name</th>
-            <th>Birthdate</th>
+            <th>Username</th>
+            <th>Email</th>
             <th>Phone</th>
+            <th>Approved Date</th>
             <th>Actions</th>
           </tr>
         </thead>
 
         <tbody>
           <tr *ngFor="let acc of accounts">
-            <td>{{ acc.name }}</td>
-            <td>{{ acc.birthdate }}</td>
-            <td>{{ acc.phone }}</td>
+            <td>{{ acc.fullName }}</td>
+            <td>@{{ acc.username }}</td>
+            <td>{{ acc.email }}</td>
+            <td>{{ acc.contactNumber }}</td>
+            <td>{{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'short') : 'N/A' }}</td>
             <td>
               <button class="btn btn-view" (click)="select(acc)">View</button>
               <button class="btn btn-ban" (click)="ban(acc)">Ban</button>
@@ -34,15 +46,18 @@
     <div class="account-details" *ngIf="selected as acc">
       <h2>Account Details</h2>
 
-      <p><strong>Full Name:</strong> {{ acc.name }}</p>
-      <p><strong>Gender:</strong> {{ acc.gender }}</p>
+      <p><strong>Full Name:</strong> {{ acc.fullName }}</p>
+      <p><strong>Username:</strong> @{{ acc.username }}</p>
+      <p><strong>Email:</strong> {{ acc.email }}</p>
       <p><strong>Address:</strong> {{ acc.address }}</p>
-      <p><strong>Birthdate:</strong> {{ acc.birthdate }}</p>
-      <p><strong>Phone:</strong> {{ acc.phone }}</p>
+      <p><strong>Birthdate:</strong> {{ acc.dateOfBirth }}</p>
+      <p><strong>Phone:</strong> {{ acc.contactNumber }}</p>
+      <p><strong>Approved By:</strong> {{ acc.approvedBy || 'N/A' }}</p>
+      <p><strong>Approved On:</strong> {{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'medium') : 'N/A' }}</p>
 
-      <div class="id-preview">
-        <p><strong>Image of Valid ID:</strong></p>
-        <img [src]="acc.validIdUrl" alt="Valid ID" />
+      <div class="id-preview" *ngIf="acc.idPhotoPath">
+        <p><strong>Valid ID Status:</strong></p>
+        <span class="id-badge">✓ Uploaded</span>
       </div>
 
       <button class="btn btn-ban" (click)="ban(acc)">Ban Account</button>
@@ -56,8 +71,12 @@
   }
 
   /* Header Title */
+  .page-header {
+    margin-bottom: 20px;
+  }
+
   .page-header h1 {
-    margin: 0 0 20px;
+    margin: 0;
     font-size: 28px;
     font-family: "Poppins", sans-serif;
     font-weight: 700;
