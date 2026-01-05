@@ -1,11 +1,24 @@
 <section class="admin-page dashboard-page">
-  <!-- HEADER -->
+  <!-- HEADER WITH PRINT BUTTON -->
   <header class="dash-header">
     <h1>Dashboard</h1>
+    <button class="print-btn" (click)="printToPDF()" title="Export as PDF">
+      <fa-icon [icon]="faPrint" class="print-icon"></fa-icon>
+      Print Report
+    </button>
   </header>
 
-  <!-- TOP SUMMARY CARDS -->
-  <section class="summary-row">
+  <!-- PAGE 1: SUMMARY SECTION -->
+  <section id="pdf-summary" class="pdf-page">
+    <div class="pdf-header">
+      <h2>EMERGENCY RESPONSE SYSTEM - DASHBOARD REPORT</h2>
+      <p class="report-date">Report Generated: {{ currentDate | date: 'MMMM dd, yyyy - HH:mm:ss' }}</p>
+    </div>
+
+    <div class="pdf-section-title">Executive Summary</div>
+
+    <!-- TOP SUMMARY CARDS -->
+    <section class="summary-row">
     <div class="summary-card">
       <div class="summary-title">TOTAL REPORTS</div>
       <div class="summary-value">{{ totalReports }}</div>
@@ -22,15 +35,17 @@
     </div>
   </section>
 
+  <div class="pdf-section-title">Emergency Categories Breakdown</div>
+
   <!-- CATEGORY CARDS WITH ICONS -->
   <section class="category-row">
-    <div class="category-card cat-medical">
+    <div class="category-card cat-other">
       <div class="cat-icon-wrap">
-        <fa-icon [icon]="faMedical" class="cat-icon"></fa-icon>
+        <fa-icon [icon]="faOther" class="cat-icon"></fa-icon>
       </div>
       <div class="cat-text">
-        <div class="cat-title">MEDICAL EMERGENCIES</div>
-        <div class="cat-value">{{ medicalEmergencies }}</div>
+        <div class="cat-title">OTHER EMERGENCIES</div>
+        <div class="cat-value">{{ otherEmergencies }}</div>
       </div>
     </div>
 
@@ -74,11 +89,34 @@
       </div>
     </div>
   </section>
+  </section>
+
+  <!-- PAGE 2: ANALYTICS SECTION -->
+  <section id="pdf-analytics" class="pdf-page">
+    <div class="pdf-header">
+      <h2>ANALYTICS AND TRENDS</h2>
+      <p class="report-date">Time Period: {{ selectedTimeRange }}</p>
+    </div>
 
   <!-- TOTAL REPORTS CHART AREA -->
   <section class="reports-section">
     <div class="reports-header">
-      <h2>TOTAL REPORTS:</h2>
+      <div class="header-left">
+        <h1>Analytics</h1>
+      </div>
+
+      <div class="header-filters">
+        <div class="category-filter">
+        <select (change)="onCategoryChange($any($event.target).value)">
+          <option
+            *ngFor="let category of categories"
+            [selected]="category === selectedCategory"
+            [value]="category"
+          >
+            {{ category }}
+          </option>
+        </select>
+      </div>
 
       <div class="time-filter">
         <select (change)="onTimeRangeChange($any($event.target).value)">
@@ -91,18 +129,24 @@
           </option>
         </select>
       </div>
+      </div>
     </div>
 
     <div class="reports-card">
       <canvas
         baseChart
-        [data]="lineChartData"
-        [options]="lineChartOptions"
-        chartType="line">
+        [data]="barChartData"
+        [options]="barChartOptions"
+        chartType="bar">
       </canvas>
     </div>
   </section>
-</section>
+  </section>
+
+  <div class="pdf-footer">
+    <p>Page 2 of 2</p>
+  </div>
+  </section>
 
 <style>
   .dashboard-page {
@@ -115,6 +159,13 @@
     font-weight: 700;
     color: #212121;
     font-family: 'Poppins', sans-serif;
+  }
+
+  .dash-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
   }
 
   /* TOP SUMMARY ROW */
@@ -197,7 +248,7 @@
   }
 
   /* Brand color blocks (using your palette + helpers) */
-  .cat-medical {
+  .cat-other {
     background: #00a458;
   }
 
@@ -226,8 +277,18 @@
   .reports-header {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
     margin-bottom: 10px;
+  }
+
+  .header-left {
+    flex: 1;
+  }
+
+  .header-filters {
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
 
   .reports-header h2 {
@@ -238,6 +299,7 @@
     font-family: 'Poppins', sans-serif;
   }
 
+  .category-filter select,
   .time-filter select {
     padding: 6px 10px;
     border-radius: 8px;
@@ -246,6 +308,150 @@
     background: #ffffff;
     outline: none;
     font-family: 'Quicksand', sans-serif;
+  }
+
+  .print-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    background: #AC1B22;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: 'Poppins', sans-serif;
+    cursor: pointer;
+    transition: background 0.3s ease;
+    white-space: nowrap;
+  }
+
+  .print-btn:hover {
+    background: #8b1619;
+  }
+
+  .print-btn:active {
+    background: #6a1014;
+  }
+
+  .print-icon {
+    font-size: 16px;
+  }
+
+  /* Formal Document Styling */
+  .pdf-header {
+    display: none;
+  }
+
+  .pdf-header h2 {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: #1a1a1a;
+    letter-spacing: 0.5px;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  .report-date {
+    margin: 0;
+    font-size: 12px;
+    color: #555555;
+    font-family: 'Quicksand', sans-serif;
+  }
+
+  .pdf-section-title {
+    display: none;
+  }
+
+  .pdf-section-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1a1a1a;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin: 20px 0 16px 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #cccccc;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  .pdf-footer {
+    display: none;
+  }
+
+  .pdf-footer {
+    text-align: center;
+    font-size: 10px;
+    color: #888888;
+    padding-top: 12px;
+    border-top: 1px solid #cccccc;
+    margin-top: 20px;
+    font-family: 'Quicksand', sans-serif;
+  }
+
+  .pdf-page {
+    page-break-after: always;
+  }
+
+  .reports-header h1 {
+    margin: 0 0 20px;
+    font-size: 24px;
+    font-weight: 700;
+    color: #212121;
+    font-family: 'Poppins', sans-serif;
+  }
+
+  @media print {
+    .header-filters,
+    .print-btn,
+    .dash-header {
+      display: none;
+    }
+
+    .pdf-header {
+      display: block;
+      text-align: center;
+      border-bottom: 2px solid #1a1a1a;
+      padding-bottom: 12px;
+      margin-bottom: 24px;
+    }
+
+    .pdf-section-title {
+      display: block;
+    }
+
+    .pdf-footer {
+      display: block;
+    }
+
+    .dashboard-page {
+      padding: 20px 40px;
+      background: #ffffff;
+    }
+
+    .summary-card {
+      background: #f9f9f9;
+      border-radius: 4px;
+      border: 1px solid #d0d0d0;
+      box-shadow: none;
+    }
+
+    .category-card {
+      border-radius: 4px;
+      border: 2px solid;
+    }
+
+    .summary-card,
+    .category-card,
+    .reports-card {
+      page-break-inside: avoid;
+    }
+
+    .pdf-page {
+      page-break-before: always;
+      margin-top: 20px;
+    }
   }
 
   .reports-card {

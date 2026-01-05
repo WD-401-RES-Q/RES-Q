@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../home_page.dart';
 import '../semi-admin/semi_admin_main_page.dart';
+import '../../services/user_session.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -15,7 +16,6 @@ class _LoginPageState extends State<LoginPage> {
   // Brand colors
   static const appBlue = Color(0xFFAC1B22);
   static const appRed = Color(0xFFFFC806);
-  static const appGreen = Color(0xFF00A458);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
 
@@ -24,13 +24,21 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _passCtl = TextEditingController();
   bool _loading = false;
   bool _obscure = true;
+  bool _initializing = true;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   @override
   void initState() {
     super.initState();
-    _seedSemiAdminsIfEmpty();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    await _seedSemiAdminsIfEmpty();
+    if (mounted) {
+      setState(() => _initializing = false);
+    }
   }
 
   @override
@@ -42,6 +50,15 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_initializing) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Initializing... Please wait a moment.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
 
     setState(() => _loading = true);
 
@@ -50,17 +67,24 @@ class _LoginPageState extends State<LoginPage> {
       final password = _passCtl.text;
 
       // Check semi-admins first
+      debugPrint('🔍 Checking semi_admins for username: $username');
       final semiAdminQuery = await _firestore
           .collection('semi_admins')
           .where('username', isEqualTo: username)
           .limit(1)
           .get();
 
+      debugPrint(
+        '📊 Semi-admin query returned ${semiAdminQuery.docs.length} documents',
+      );
+
       if (semiAdminQuery.docs.isNotEmpty) {
         final semiAdminData = semiAdminQuery.docs.first.data();
         final storedPassword = semiAdminData['password'] as String?;
+        debugPrint('✓ Semi-admin found. Validating password...');
 
         if (storedPassword != null && storedPassword == password) {
+          debugPrint('✅ Semi-admin login successful!');
           setState(() => _loading = false);
           if (!mounted) return;
 
@@ -69,6 +93,7 @@ class _LoginPageState extends State<LoginPage> {
           );
           return;
         } else {
+          debugPrint('❌ Semi-admin password mismatch');
           setState(() => _loading = false);
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
@@ -80,6 +105,9 @@ class _LoginPageState extends State<LoginPage> {
           return;
         }
       }
+      debugPrint(
+        'ℹ️ Username not found in semi_admins, checking other collections...',
+      );
 
       // Check pending first (block login if still pending)
       final pendingQuery = await _firestore
@@ -117,6 +145,7 @@ class _LoginPageState extends State<LoginPage> {
         }
 
         if (storedPassword != null && storedPassword == password) {
+          UserSession.setUserData(userData);
           setState(() => _loading = false);
           if (!mounted) return;
 
@@ -137,14 +166,17 @@ class _LoginPageState extends State<LoginPage> {
         }
       }
 
-      // User not found
+      // User not found in any collection
       setState(() => _loading = false);
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('User not found'),
+        SnackBar(
+          content: Text(
+            'User "$username" not found. For semi-admin: semiadmin1-5 / semi1234',
+          ),
           backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
         ),
       );
     } catch (e) {
@@ -178,26 +210,31 @@ class _LoginPageState extends State<LoginPage> {
           'username': 'semiadmin1',
           'fullName': 'Semi Admin One',
           'password': 'semi1234',
+          'role': 'semi-admin',
         },
         {
           'username': 'semiadmin2',
           'fullName': 'Semi Admin Two',
           'password': 'semi1234',
+          'role': 'semi-admin',
         },
         {
           'username': 'semiadmin3',
           'fullName': 'Semi Admin Three',
           'password': 'semi1234',
+          'role': 'semi-admin',
         },
         {
           'username': 'semiadmin4',
           'fullName': 'Semi Admin Four',
           'password': 'semi1234',
+          'role': 'semi-admin',
         },
         {
           'username': 'semiadmin5',
           'fullName': 'Semi Admin Five',
           'password': 'semi1234',
+          'role': 'semi-admin',
         },
       ];
 

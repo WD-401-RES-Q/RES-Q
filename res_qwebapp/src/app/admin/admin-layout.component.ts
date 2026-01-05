@@ -2,6 +2,7 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { FirestoreService } from '../firestore.service';
+import { AuthService } from '../services/auth.service';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
@@ -17,7 +18,10 @@ export class AdminLayoutComponent implements OnInit {
   flaggedReportsCount$!: Observable<number>;
   unverifiedAccountsCount$!: Observable<number>;
 
-  constructor(private firestoreService: FirestoreService) {}
+  constructor(
+    private firestoreService: FirestoreService,
+    public authService: AuthService
+  ) {}
 
   ngOnInit() {
     // Map observables to counts
@@ -29,5 +33,9 @@ export class AdminLayoutComponent implements OnInit {
     // For now, use placeholder values
     this.pendingReportsCount$ = new Observable(observer => observer.next(0));
     this.flaggedReportsCount$ = new Observable(observer => observer.next(0));
+  }
+
+  logout() {
+    this.authService.logout();
   }
 }

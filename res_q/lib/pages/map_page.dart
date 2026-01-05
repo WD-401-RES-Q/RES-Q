@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+
+import '../widgets/bottom_nav_bar.dart';
 
 class MapPage extends StatefulWidget {
   const MapPage({super.key});
@@ -14,14 +17,14 @@ class MapPage extends StatefulWidget {
 
 class _MapPageState extends State<MapPage> {
   final MapController _mapController = MapController();
-  
+
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
   final double _initialZoom = 14.0;
 
   // Sample incident markers
   final List<Marker> _incidentMarkers = [];
-  
+
   // Route related variables
   LatLng? _userLocation;
   LatLng? _destination;
@@ -34,9 +37,11 @@ class _MapPageState extends State<MapPage> {
   double _estimatedDistance = 0.0;
   String _estimatedTime = '';
   int _currentStepIndex = 0;
-  
+
   // Simulate moving along route
   Timer? _trackingTimer;
+
+  int _navIndex = 2;
 
   @override
   void initState() {
@@ -44,6 +49,7 @@ class _MapPageState extends State<MapPage> {
     _addSampleMarkers();
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
+    _loadReportsFromFirestore();
   }
 
   @override
@@ -59,7 +65,8 @@ class _MapPageState extends State<MapPage> {
         width: 40,
         height: 40,
         child: GestureDetector(
-          onTap: () => _showIncidentInfo('Fire Incident', 'Reported 10 mins ago'),
+          onTap: () =>
+              _showIncidentInfo('Fire Incident', 'Reported 10 mins ago'),
           child: const Icon(
             Icons.local_fire_department,
             color: Colors.red,
@@ -72,12 +79,9 @@ class _MapPageState extends State<MapPage> {
         width: 40,
         height: 40,
         child: GestureDetector(
-          onTap: () => _showIncidentInfo('Road Obstruction', 'Reported 25 mins ago'),
-          child: const Icon(
-            Icons.warning,
-            color: Colors.orange,
-            size: 40,
-          ),
+          onTap: () =>
+              _showIncidentInfo('Road Obstruction', 'Reported 25 mins ago'),
+          child: const Icon(Icons.warning, color: Colors.orange, size: 40),
         ),
       ),
       Marker(
@@ -85,7 +89,8 @@ class _MapPageState extends State<MapPage> {
         width: 40,
         height: 40,
         child: GestureDetector(
-          onTap: () => _showIncidentInfo('Medical Emergency', 'Reported 5 mins ago'),
+          onTap: () =>
+              _showIncidentInfo('Medical Emergency', 'Reported 5 mins ago'),
           child: const Icon(
             Icons.medical_services,
             color: Colors.yellow,
@@ -98,12 +103,9 @@ class _MapPageState extends State<MapPage> {
         width: 40,
         height: 40,
         child: GestureDetector(
-          onTap: () => _showIncidentInfo('Flood Warning', 'Reported 1 hour ago'),
-          child: const Icon(
-            Icons.water,
-            color: Colors.blue,
-            size: 40,
-          ),
+          onTap: () =>
+              _showIncidentInfo('Flood Warning', 'Reported 1 hour ago'),
+          child: const Icon(Icons.water, color: Colors.blue, size: 40),
         ),
       ),
     ]);
@@ -143,7 +145,7 @@ class _MapPageState extends State<MapPage> {
 
   void _setDestinationFromIncident(String incidentType) {
     LatLng destination;
-    
+
     switch (incidentType) {
       case 'Fire Incident':
         destination = const LatLng(15.1450, 120.5887);
@@ -160,14 +162,14 @@ class _MapPageState extends State<MapPage> {
       default:
         destination = const LatLng(15.1450, 120.5887);
     }
-    
+
     _destination = destination;
     _calculateRoute();
   }
 
   Future<void> _calculateRoute() async {
     if (_userLocation == null || _destination == null) return;
-    
+
     setState(() {
       _isRouting = true;
       _routeInstructions = 'Calculating route...';
@@ -179,12 +181,12 @@ class _MapPageState extends State<MapPage> {
     try {
       // Simulated route points (in real app, use OSRM or Google Directions API)
       _routePoints = _generateSimulatedRoute(_userLocation!, _destination!);
-      
+
       // Calculate distance
       final distance = _calculateDistance(_routePoints);
       _estimatedDistance = distance;
       _estimatedTime = _calculateEstimatedTime(distance);
-      
+
       // Add markers
       _routeMarkers.addAll([
         Marker(
@@ -200,21 +202,22 @@ class _MapPageState extends State<MapPage> {
           child: const Icon(Icons.flag, color: Colors.red, size: 40),
         ),
       ]);
-      
+
       // Add route polyline
-      _routePolylines.add(Polyline(
-        points: _routePoints,
-        color: const Color(0xFF4285F4),
-        strokeWidth: 5.0,
-        isDotted: false,
-      ));
-      
+      _routePolylines.add(
+        Polyline(
+          points: _routePoints,
+          color: const Color(0xFF4285F4),
+          strokeWidth: 5.0,
+          isDotted: false,
+        ),
+      );
+
       // Generate route instructions
       _generateRouteInstructions();
-      
+
       // Zoom to fit route
       _zoomToRoute();
-      
     } catch (e) {
       print('Error calculating route: $e');
       _routeInstructions = 'Failed to calculate route';
@@ -229,24 +232,28 @@ class _MapPageState extends State<MapPage> {
     // Generate a simple curved route
     final points = <LatLng>[];
     const segments = 20;
-    
+
     for (int i = 0; i <= segments; i++) {
       final t = i / segments;
       final lat = start.latitude + (end.latitude - start.latitude) * t;
       final lng = start.longitude + (end.longitude - start.longitude) * t;
-      
+
       // Add slight curve
       final curve = 0.001 * sin(t * pi);
       points.add(LatLng(lat + curve, lng + curve));
     }
-    
+
     return points;
   }
 
   double _calculateDistance(List<LatLng> points) {
     double totalDistance = 0.0;
     for (int i = 0; i < points.length - 1; i++) {
-      totalDistance += const Distance().as(LengthUnit.Kilometer, points[i], points[i + 1]);
+      totalDistance += const Distance().as(
+        LengthUnit.Kilometer,
+        points[i],
+        points[i + 1],
+      );
     }
     return totalDistance;
   }
@@ -262,7 +269,8 @@ class _MapPageState extends State<MapPage> {
   }
 
   void _generateRouteInstructions() {
-    _routeInstructions = '''
+    _routeInstructions =
+        '''
 Route calculated successfully!
 
 📏 Distance: ${_estimatedDistance.toStringAsFixed(2)} km
@@ -279,54 +287,51 @@ Route calculated successfully!
 
   void _zoomToRoute() {
     if (_routePoints.isEmpty) return;
-    
+
     double minLat = _routePoints.first.latitude;
     double maxLat = _routePoints.first.latitude;
     double minLng = _routePoints.first.longitude;
     double maxLng = _routePoints.first.longitude;
-    
+
     for (final point in _routePoints) {
       if (point.latitude < minLat) minLat = point.latitude;
       if (point.latitude > maxLat) maxLat = point.latitude;
       if (point.longitude < minLng) minLng = point.longitude;
       if (point.longitude > maxLng) maxLng = point.longitude;
     }
-    
-    final center = LatLng(
-      (minLat + maxLat) / 2,
-      (minLng + maxLng) / 2,
-    );
-    
+
+    final center = LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2);
+
     // Calculate zoom level based on bounds
     final latDiff = maxLat - minLat;
     final lngDiff = maxLng - minLng;
     final maxDiff = max(latDiff, lngDiff);
     final zoom = 14 - maxDiff.abs() * 10;
-    
+
     _mapController.move(center, zoom.clamp(10.0, 16.0).toDouble());
   }
 
   void _startTracking() {
     if (_routePoints.isEmpty || _userLocation == null) return;
-    
+
     setState(() {
       _isTracking = true;
       _currentStepIndex = 0;
     });
-    
+
     int pointIndex = 0;
-    
+
     _trackingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
       if (pointIndex < _routePoints.length - 1) {
         setState(() {
           _userLocation = _routePoints[pointIndex];
           pointIndex++;
-          
+
           // Update current step
           if (pointIndex % 5 == 0 && _currentStepIndex < 3) {
             _currentStepIndex++;
           }
-          
+
           // Move map to follow user
           _mapController.move(_userLocation!, _mapController.camera.zoom);
         });
@@ -368,6 +373,82 @@ Route calculated successfully!
     }
   }
 
+  Future<void> _loadReportsFromFirestore() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('reports')
+          .where('location', isNotEqualTo: null)
+          .get();
+
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        final location = data['location'] as GeoPoint?;
+        if (location != null) {
+          final point = LatLng(location.latitude, location.longitude);
+          final incidentType = data['incidentType'] as String? ?? 'Unknown';
+
+          _incidentMarkers.add(
+            Marker(
+              point: point,
+              width: 40,
+              height: 40,
+              child: GestureDetector(
+                onTap: () => _showIncidentInfo(
+                  incidentType,
+                  'Reported by ${data['name'] ?? 'Unknown'}',
+                ),
+                child: Icon(
+                  _getIconForIncidentType(incidentType),
+                  color: _getColorForIncidentType(incidentType),
+                  size: 40,
+                ),
+              ),
+            ),
+          );
+        }
+      }
+
+      if (mounted) setState(() {});
+      print('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+    } catch (e) {
+      print('❌ Failed to load reports: $e');
+    }
+  }
+
+  IconData _getIconForIncidentType(String type) {
+    switch (type.toUpperCase()) {
+      case 'FIRE':
+        return Icons.local_fire_department;
+      case 'FLOOD':
+        return Icons.water;
+      case 'EARTHQUAKE':
+        return Icons.warning;
+      case 'VEHICULAR':
+        return Icons.car_crash;
+      case 'ROAD OBSTRUCTION':
+        return Icons.block;
+      default:
+        return Icons.report_problem;
+    }
+  }
+
+  Color _getColorForIncidentType(String type) {
+    switch (type.toUpperCase()) {
+      case 'FIRE':
+        return Colors.red;
+      case 'FLOOD':
+        return Colors.blue;
+      case 'EARTHQUAKE':
+        return Colors.orange;
+      case 'VEHICULAR':
+        return Colors.purple;
+      case 'ROAD OBSTRUCTION':
+        return Colors.amber;
+      default:
+        return Colors.grey;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -396,24 +477,17 @@ Route calculated successfully!
                 userAgentPackageName: 'com.resq.emergency_app',
                 maxZoom: 19,
               ),
-              
+
               // Route polyline
               if (_routePolylines.isNotEmpty)
-                PolylineLayer(
-                  polylines: _routePolylines,
-                ),
-              
+                PolylineLayer(polylines: _routePolylines),
+
               // Incident markers
-              MarkerLayer(
-                markers: _incidentMarkers,
-              ),
-              
+              MarkerLayer(markers: _incidentMarkers),
+
               // Route markers (user location and destination)
-              if (_routeMarkers.isNotEmpty)
-                MarkerLayer(
-                  markers: _routeMarkers,
-                ),
-              
+              if (_routeMarkers.isNotEmpty) MarkerLayer(markers: _routeMarkers),
+
               // User location marker when tracking
               if (_userLocation != null && _isTracking)
                 MarkerLayer(
@@ -430,7 +504,7 @@ Route calculated successfully!
                     ),
                   ],
                 ),
-              
+
               // Attribution (required for OSM)
               RichAttributionWidget(
                 attributions: [
@@ -442,7 +516,7 @@ Route calculated successfully!
               ),
             ],
           ),
-          
+
           // Custom Navigation Bar at the top
           Positioned(
             top: 0,
@@ -462,7 +536,10 @@ Route calculated successfully!
               child: SafeArea(
                 bottom: false,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -494,18 +571,25 @@ Route calculated successfully!
                           ),
                           // Filter button
                           IconButton(
-                            icon: const Icon(Icons.filter_list, color: Colors.white),
+                            icon: const Icon(
+                              Icons.filter_list,
+                              color: Colors.white,
+                            ),
                             onPressed: () {
                               _showFilterDialog();
                             },
                           ),
                           // Refresh button
                           IconButton(
-                            icon: const Icon(Icons.refresh, color: Colors.white),
+                            icon: const Icon(
+                              Icons.refresh,
+                              color: Colors.white,
+                            ),
                             onPressed: () {
                               setState(() {
                                 _incidentMarkers.clear();
                                 _addSampleMarkers();
+                                _loadReportsFromFirestore();
                               });
                             },
                           ),
@@ -517,7 +601,7 @@ Route calculated successfully!
               ),
             ),
           ),
-          
+
           // Route information card (top right)
           if (_routeInstructions.isNotEmpty && !_isRouting)
             Positioned(
@@ -583,9 +667,16 @@ Route calculated successfully!
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.navigation, color: Colors.white, size: 20),
+                              Icon(
+                                Icons.navigation,
+                                color: Colors.white,
+                                size: 20,
+                              ),
                               SizedBox(width: 8),
-                              Text('START NAVIGATION', style: TextStyle(color: Colors.white)),
+                              Text(
+                                'START NAVIGATION',
+                                style: TextStyle(color: Colors.white),
+                              ),
                             ],
                           ),
                         )
@@ -601,7 +692,10 @@ Route calculated successfully!
                             children: [
                               Icon(Icons.stop, color: Colors.white, size: 20),
                               SizedBox(width: 8),
-                              Text('STOP TRACKING', style: TextStyle(color: Colors.white)),
+                              Text(
+                                'STOP TRACKING',
+                                style: TextStyle(color: Colors.white),
+                              ),
                             ],
                           ),
                         ),
@@ -610,10 +704,10 @@ Route calculated successfully!
                 ),
               ),
             ),
-          
+
           // Floating action button for current location
           Positioned(
-            bottom: 20,
+            bottom: 100,
             right: 16,
             child: Column(
               children: [
@@ -629,17 +723,20 @@ Route calculated successfully!
                     onPressed: () {
                       // Simulate emergency stop
                       _stopTracking();
-                      _showIncidentInfo('Emergency Stop', 'Emergency responder has stopped en route');
+                      _showIncidentInfo(
+                        'Emergency Stop',
+                        'Emergency responder has stopped en route',
+                      );
                     },
                     child: const Icon(Icons.emergency, color: Colors.white),
                   ),
               ],
             ),
           ),
-          
+
           // Legend card
           Positioned(
-            bottom: 20,
+            bottom: 100,
             left: 16,
             child: Card(
               elevation: 4,
@@ -657,12 +754,24 @@ Route calculated successfully!
                       ),
                     ),
                     const SizedBox(height: 8),
-                    _legendItem(Icons.local_fire_department, Colors.red, 'Fire'),
+                    _legendItem(
+                      Icons.local_fire_department,
+                      Colors.red,
+                      'Fire',
+                    ),
                     _legendItem(Icons.warning, Colors.orange, 'Road Incident'),
                     _legendItem(Icons.water, Colors.blue, 'Flood'),
-                    _legendItem(Icons.medical_services, Colors.yellow, 'Medical'),
+                    _legendItem(
+                      Icons.medical_services,
+                      Colors.yellow,
+                      'Medical',
+                    ),
                     const Divider(height: 16),
-                    _legendItem(Icons.location_on, Colors.blue, 'Your Location'),
+                    _legendItem(
+                      Icons.location_on,
+                      Colors.blue,
+                      'Your Location',
+                    ),
                     _legendItem(Icons.flag, Colors.red, 'Destination'),
                     _legendItem(Icons.route, Color(0xFF4285F4), 'Route'),
                   ],
@@ -670,10 +779,10 @@ Route calculated successfully!
               ),
             ),
           ),
-          
+
           // Zoom controls
           Positioned(
-            bottom: 100,
+            bottom: 200,
             right: 16,
             child: Column(
               children: [
@@ -705,7 +814,7 @@ Route calculated successfully!
               ],
             ),
           ),
-          
+
           // Loading overlay for route calculation
           if (_isRouting)
             Positioned.fill(
@@ -718,6 +827,18 @@ Route calculated successfully!
             ),
         ],
       ),
+      bottomNavigationBar: BottomNavBar(
+        currentIndex: _navIndex,
+        onTap: (index) {
+          setState(() {
+            _navIndex = index;
+          });
+          // Navigate back to MainPage if not already on the selected tab
+          if (index != 2) {
+            Navigator.pushReplacementNamed(context, '/main');
+          }
+        },
+      ),
     );
   }
 
@@ -729,10 +850,7 @@ Route calculated successfully!
         children: [
           Icon(icon, color: color, size: 16),
           const SizedBox(width: 8),
-          Text(
-            label,
-            style: const TextStyle(fontSize: 12),
-          ),
+          Text(label, style: const TextStyle(fontSize: 12)),
         ],
       ),
     );
@@ -805,7 +923,10 @@ Route calculated successfully!
                 title: const Text('Fire'),
                 value: true,
                 onChanged: (bool? value) {},
-                secondary: const Icon(Icons.local_fire_department, color: Colors.red),
+                secondary: const Icon(
+                  Icons.local_fire_department,
+                  color: Colors.red,
+                ),
               ),
               CheckboxListTile(
                 title: const Text('Flood'),
@@ -817,7 +938,10 @@ Route calculated successfully!
                 title: const Text('Medical'),
                 value: true,
                 onChanged: (bool? value) {},
-                secondary: const Icon(Icons.medical_services, color: Colors.yellow),
+                secondary: const Icon(
+                  Icons.medical_services,
+                  color: Colors.yellow,
+                ),
               ),
               CheckboxListTile(
                 title: const Text('Vehicular'),

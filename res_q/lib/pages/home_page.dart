@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../widgets/bottom_nav_bar.dart';
 
 import 'community_page.dart';
-import 'map_page.dart';
 import 'notifications_page.dart';
 import 'profile_page.dart';
 import 'emergency_call_screen.dart';
@@ -11,107 +11,35 @@ import 'report_form_screen.dart';
 import 'semi-admin/admin-map_page.dart';
 
 class MainPage extends StatefulWidget {
-  const MainPage({super.key});
+  final int initialIndex;
+
+  const MainPage({super.key, this.initialIndex = 0});
 
   @override
   State<MainPage> createState() => _MainPageState();
 }
 
 class _MainPageState extends State<MainPage> {
-  int _currentIndex = 0;
+  late int _currentIndex = widget.initialIndex;
 
   List<Widget> get _pages => [
-        const _HomePageContent(),
-        const CommunityPage(),
-        //const MapPage(),
-        const AdminMapPage(),
-        const NotificationsPage(),
-        const ProfilePage(),
-      ];
+    const _HomePageContent(),
+    const CommunityPage(),
+    //const MapPage(),
+    const AdminMapPage(),
+    const NotificationsPage(),
+    const ProfilePage(),
+  ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Color(0xFFF7F8F3),
-      bottomNavigationBar: Container(
-        height: 70,
-        decoration: const BoxDecoration(
-          color: Color(0xFFAC1B22),
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(10),
-            topRight: Radius.circular(10),
-          ),
-        ),
-        child: SafeArea(
-          top: false,
-          child: BottomNavigationBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            type: BottomNavigationBarType.fixed,
-            selectedItemColor: const Color(0xFFFFC806),
-            unselectedItemColor: Colors.white,
-            selectedFontSize: 10,
-            unselectedFontSize: 10,
-            currentIndex: _currentIndex,
-            onTap: (i) => setState(() => _currentIndex = i),
-            items: [
-              BottomNavigationBarItem(
-                icon: Image.asset(
-                  _currentIndex == 0
-                      ? "assets/icons/NAV-HOMEPAGE-ICON-YELLOW.png"
-                      : "assets/icons/NAV-HOMEPAGE-ICON-WHITE.png",
-                  width: 40,
-                  height: 40,
-                ),
-                label: "HOME",
-              ),
-              BottomNavigationBarItem(
-                icon: Image.asset(
-                  _currentIndex == 1
-                      ? "assets/icons/NAV-COMMUNITY-ICON-YELLOW.png"
-                      : "assets/icons/NAV-COMMUNITY-ICON-WHITE.png",
-                  width: 40,
-                  height: 40,
-                ),
-                label: "COMMUNITY",
-              ),
-              BottomNavigationBarItem(
-                icon: Image.asset(
-                  _currentIndex == 2
-                      ? "assets/icons/NAV-MAPS-ICON-YELLOW.png"
-                      : "assets/icons/NAV-MAPS-ICON-WHITE.png",
-                  width: 40,
-                  height: 40,
-                ),
-                label: "MAP",
-              ),
-              BottomNavigationBarItem(
-                icon: Image.asset(
-                  _currentIndex == 3
-                      ? "assets/icons/NAV-NOTIFICATIONS-ICON-YELLOW.png"
-                      : "assets/icons/NAV-NOTIFICATIONS-ICON-WHITE.png",
-                  width: 40,
-                  height: 40,
-                ),
-                label: "NOTIFICATION",
-              ),
-              BottomNavigationBarItem(
-                icon: Image.asset(
-                  _currentIndex == 4
-                      ? "assets/icons/NAV-PROFILE-ICON-YELLOW.png"
-                      : "assets/icons/NAV-PROFILE-ICON-WHITE.png",
-                  width: 40,
-                  height: 40,
-                ),
-                label: "PROFILE",
-              ),
-            ],
-          ),
-        ),
+      bottomNavigationBar: BottomNavBar(
+        currentIndex: _currentIndex,
+        onTap: (i) => setState(() => _currentIndex = i),
       ),
-      body: SafeArea(
-        child: _pages[_currentIndex],
-      ),
+      body: SafeArea(child: _pages[_currentIndex]),
     );
   }
 }
@@ -254,10 +182,10 @@ class _HomePageContent extends StatelessWidget {
                             height: 60,
                             errorBuilder: (context, error, stackTrace) =>
                                 const Icon(
-                              Icons.phone,
-                              color: Colors.white,
-                              size: 60,
-                            ),
+                                  Icons.phone,
+                                  color: Colors.white,
+                                  size: 60,
+                                ),
                           ),
                         ],
                       ),

@@ -7,12 +7,16 @@ import { FlaggedReportsComponent } from './admin/flagged-reports.component';
 import { AccountsComponent } from './admin/accounts.component';
 import { UnverifiedAccountsComponent } from './admin/unverified-accounts.component';
 import { SettingsComponent } from './admin/settings.component';
+import { AdminLoginComponent } from './admin/login.component';
+import { authGuard } from './guards/auth.guard';
 
 export const routes: Routes = [
-  { path: '', redirectTo: 'admin', pathMatch: 'full' },
+  { path: '', redirectTo: 'admin/login', pathMatch: 'full' },
+  { path: 'admin/login', component: AdminLoginComponent },
   {
     path: 'admin',
     component: AdminLayoutComponent,
+    canActivate: [authGuard],
     children: [
       { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
       { path: 'dashboard', component: DashboardComponent },

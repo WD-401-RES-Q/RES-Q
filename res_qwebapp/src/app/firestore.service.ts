@@ -25,16 +25,28 @@ export class FirestoreService {
   // Use BehaviorSubject with initial empty array - always has a value
   private pendingUsersSubject = new BehaviorSubject<any[]>([]);
   private approvedUsersSubject = new BehaviorSubject<any[]>([]);
+  private pendingReportsSubject = new BehaviorSubject<any[]>([]);
+  private approvedReportsSubject = new BehaviorSubject<any[]>([]);
+  private reportsSubject = new BehaviorSubject<any[]>([]);
+  private flaggedReportsSubject = new BehaviorSubject<any[]>([]);
   
   // Track loading state
   private isLoadingSubject = new BehaviorSubject<boolean>(true);
   
   public pendingUsers$: Observable<any[]> = this.pendingUsersSubject.asObservable();
   public approvedUsers$: Observable<any[]> = this.approvedUsersSubject.asObservable();
+  public pendingReports$: Observable<any[]> = this.pendingReportsSubject.asObservable();
+  public approvedReports$: Observable<any[]> = this.approvedReportsSubject.asObservable();
+  public reports$: Observable<any[]> = this.reportsSubject.asObservable();
+  public flaggedReports$: Observable<any[]> = this.flaggedReportsSubject.asObservable();
   public isLoading$: Observable<boolean> = this.isLoadingSubject.asObservable();
   
   private pendingUsersUnsubscribe?: Unsubscribe;
   private approvedUsersUnsubscribe?: Unsubscribe;
+  private pendingReportsUnsubscribe?: Unsubscribe;
+  private approvedReportsUnsubscribe?: Unsubscribe;
+  private reportsUnsubscribe?: Unsubscribe;
+  private flaggedReportsUnsubscribe?: Unsubscribe;
 
   constructor(private ngZone: NgZone) {
     console.log('=== FIRESTORE SERVICE CONSTRUCTOR ===');
@@ -88,6 +100,24 @@ export class FirestoreService {
       console.log('Initial approved users loaded:', approvedUsers.length);
       this.ngZone.run(() => {
         this.approvedUsersSubject.next(approvedUsers);
+      });
+
+      // Load all reports once (seed streams before listeners fire)
+      const reportsRef = collection(db, 'reports');
+      const reportsSnapshot = await getDocs(reportsRef);
+      const reports = reportsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      this.ngZone.run(() => {
+        this.reportsSubject.next(reports);
+        // Seed filtered subjects too for immediate UI without waiting on snapshots
+        const pendingSeed = reports.filter((r: any) => (r.status ?? '').toString().toLowerCase() === 'pending');
+        const approvedSeed = reports.filter((r: any) => {
+          const s = (r.status ?? '').toString().toLowerCase();
+          return s === 'approved' || s === 'resolved';
+        });
+        const flaggedSeed = reports.filter((r: any) => (r.status ?? '').toString().toLowerCase() === 'flagged');
+        this.pendingReportsSubject.next(pendingSeed);
+        this.approvedReportsSubject.next(approvedSeed);
+        this.flaggedReportsSubject.next(flaggedSeed);
       });
       
       console.log('=== INITIAL DATA LOADED AND EMITTED ===');
@@ -184,6 +214,78 @@ export class FirestoreService {
           });
         }
       );
+
+      // Pending reports listener (status == Pending)
+      const pendingReportsQuery = query(collection(db, 'reports'), where('status', '==', 'Pending'));
+      this.pendingReportsUnsubscribe = onSnapshot(
+        pendingReportsQuery,
+        (snapshot) => {
+          this.ngZone.run(() => {
+            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            this.pendingReportsSubject.next(reports);
+          });
+        },
+        (error) => {
+          console.error('=== PENDING REPORTS LISTENER ERROR ===', error);
+          this.ngZone.run(() => {
+            this.pendingReportsSubject.next([]);
+          });
+        }
+      );
+
+      // Approved reports listener (status == Approved)
+      const approvedReportsQuery = query(collection(db, 'reports'), where('status', '==', 'Approved'));
+      this.approvedReportsUnsubscribe = onSnapshot(
+        approvedReportsQuery,
+        (snapshot) => {
+          this.ngZone.run(() => {
+            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            this.approvedReportsSubject.next(reports);
+          });
+        },
+        (error) => {
+          console.error('=== APPROVED REPORTS LISTENER ERROR ===', error);
+          this.ngZone.run(() => {
+            this.approvedReportsSubject.next([]);
+          });
+        }
+      );
+
+      // All reports listener (no filter)
+      const reportsRef = collection(db, 'reports');
+      this.reportsUnsubscribe = onSnapshot(
+        reportsRef,
+        (snapshot) => {
+          this.ngZone.run(() => {
+            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            this.reportsSubject.next(reports);
+          });
+        },
+        (error) => {
+          console.error('=== REPORTS LISTENER ERROR ===', error);
+          this.ngZone.run(() => {
+            this.reportsSubject.next([]);
+          });
+        }
+      );
+
+      // Flagged reports listener (status == Flagged)
+      const flaggedReportsQuery = query(collection(db, 'reports'), where('status', '==', 'Flagged'));
+      this.flaggedReportsUnsubscribe = onSnapshot(
+        flaggedReportsQuery,
+        (snapshot) => {
+          this.ngZone.run(() => {
+            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            this.flaggedReportsSubject.next(reports);
+          });
+        },
+        (error) => {
+          console.error('=== FLAGGED REPORTS LISTENER ERROR ===', error);
+          this.ngZone.run(() => {
+            this.flaggedReportsSubject.next([]);
+          });
+        }
+      );
       
       console.log('=== LISTENERS SETUP COMPLETE ===');
       console.log('Both listeners are now active and waiting for snapshots');
@@ -223,6 +325,51 @@ export class FirestoreService {
     const q = query(collection(db, collectionName), where(field, operator, value));
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  }
+
+  // Listen to documents with a filter (real-time)
+  listenToCollectionWhere(
+    collectionName: string,
+    field: string,
+    operator: any,
+    value: any,
+    callback: (docs: any[]) => void,
+    onError?: (error: any) => void,
+  ): Unsubscribe {
+    const q = query(collection(db, collectionName), where(field, operator, value));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        this.ngZone.run(() => callback(docs));
+      },
+      (error) => {
+        console.error(`Snapshot error for ${collectionName} where ${field} ${operator} ${value}:`, error);
+        if (onError) {
+          this.ngZone.run(() => onError(error));
+        }
+      }
+    );
+  }
+
+  // Clean up listeners (call on app destroy if needed)
+  disposeReportListeners() {
+    if (this.pendingReportsUnsubscribe) {
+      this.pendingReportsUnsubscribe();
+      this.pendingReportsUnsubscribe = undefined;
+    }
+    if (this.approvedReportsUnsubscribe) {
+      this.approvedReportsUnsubscribe();
+      this.approvedReportsUnsubscribe = undefined;
+    }
+    if (this.reportsUnsubscribe) {
+      this.reportsUnsubscribe();
+      this.reportsUnsubscribe = undefined;
+    }
+    if (this.flaggedReportsUnsubscribe) {
+      this.flaggedReportsUnsubscribe();
+      this.flaggedReportsUnsubscribe = undefined;
+    }
   }
 
   // Add a document to a collection

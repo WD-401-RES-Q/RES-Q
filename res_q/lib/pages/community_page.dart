@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
+import '../services/user_session.dart';
 
 class CommunityPage extends StatefulWidget {
   const CommunityPage({super.key});
@@ -19,46 +22,85 @@ class _CommunityPageState extends State<CommunityPage> {
 
   String _selectedFilter = 'All';
   String _selectedCategory = 'All';
+  List<Map<String, dynamic>> _reports = [];
 
-  // Reports with mutable engagement fields
-  final List<Map<String, dynamic>> _reports = [
-    {
-      'image': 'assets/images/COMMUNITY-IMAGE-1.png',
-      'date': 'NOV 24. 2025',
-      'time': '9:12 AM',
-      'title': 'Pothole forming',
-      'desc': 'Large pothole forming near 5th Avenue.',
-      'greenFlags': 3,
-      'redFlags': 0,
-      'status': 'Verified',
-      'comments': 5,
-      'userVote': 'none', // 'none' | 'green' | 'red'
-    },
-    {
-      'image': 'assets/images/COMMUNITY-IMAGE-2.png',
-      'date': 'NOV 23. 2025',
-      'time': '6:40 PM',
-      'title': 'Minor Flooding',
-      'desc': 'Minor flooding along Riverside Drive.',
-      'greenFlags': 0,
-      'redFlags': 0,
-      'status': 'Under Review',
-      'comments': 8,
-      'userVote': 'none',
-    },
-    {
-      'image': 'assets/images/COMMUNITY-IMAGE-3.png',
-      'date': 'NOV 22. 2025',
-      'time': '2:05 PM',
-      'title': 'Small Fire',
-      'desc': 'Small fire reported behind the warehouse.',
-      'greenFlags': 0,
-      'redFlags': 4,
-      'status': 'Flagged',
-      'comments': 2,
-      'userVote': 'none',
-    },
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _loadReportsFromFirestore();
+    _ensureCommentsCollectionExists(); // Initialize comments collection
+  }
+
+  /// Ensure the comments collection exists by creating a marker document if needed
+  Future<void> _ensureCommentsCollectionExists() async {
+    try {
+      // Check if collection exists by trying to get a single document
+      final snapshot = await FirebaseFirestore.instance
+          .collection('comments')
+          .limit(1)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        // Collection is empty or doesn't exist, create a marker document
+        debugPrint('📝 Creating comments collection with marker document...');
+        await FirebaseFirestore.instance
+            .collection('comments')
+            .doc('_marker')
+            .set({
+              'initialized': true,
+              'createdAt': Timestamp.now(),
+              'note': 'Marker document for collection initialization',
+            });
+        debugPrint('✅ Comments collection initialized');
+      } else {
+        debugPrint('✅ Comments collection already exists');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Could not initialize comments collection: $e');
+    }
+  }
+
+  Future<void> _loadReportsFromFirestore() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('reports')
+          .orderBy('reportedAt', descending: true)
+          .get();
+
+      final reports = snapshot.docs.map((doc) {
+        final data = doc.data();
+        final reportedAt = (data['reportedAt'] as Timestamp).toDate();
+        final dateFormat = DateFormat('MMM dd. yyyy');
+        final timeFormat = DateFormat('h:mm a');
+
+        return {
+          'id': doc.id,
+          'image': data['mediaUrl'] ?? '',
+          'date': dateFormat.format(reportedAt).toUpperCase(),
+          'time': timeFormat.format(reportedAt).toUpperCase(),
+          'title': data['incidentType'] ?? 'Unknown',
+          'desc': data['details'] ?? 'No description provided.',
+          'greenFlags': data['greenFlags'] ?? 0,
+          'redFlags': data['redFlags'] ?? 0,
+          'status': data['status'] ?? 'Pending',
+          'comments': data['comments'] ?? 0,
+          'commentsList': <Map<String, dynamic>>[],
+          'userVote': 'none',
+          'name': data['name'] ?? 'Unknown',
+          'mediaType': data['mediaType'] ?? 'photo',
+        };
+      }).toList();
+
+      setState(() {
+        _reports = reports;
+      });
+
+      debugPrint('✅ Loaded ${reports.length} reports from Firestore');
+    } catch (e) {
+      debugPrint('❌ Failed to load reports: $e');
+      setState(() {});
+    }
+  }
 
   static const List<String> _categories = [
     'All',
@@ -68,6 +110,34 @@ class _CommunityPageState extends State<CommunityPage> {
     'Fire',
     'Other',
   ];
+
+  List<Map<String, dynamic>> _getVisibleReports() {
+    return _reports.where((report) {
+      final status = (report['status'] as String? ?? '').toLowerCase();
+      final category = (report['title'] as String? ?? '').toLowerCase();
+
+      bool matchesFilter;
+      switch (_selectedFilter) {
+        case 'Verified':
+          matchesFilter = status == 'approved' || status == 'verified';
+          break;
+        case 'Under Review':
+          matchesFilter = status == 'pending' || status == 'under review';
+          break;
+        case 'Unverified':
+          matchesFilter = status == 'flagged' || status == 'unverified';
+          break;
+        default:
+          matchesFilter = true;
+      }
+
+      final matchesCategory =
+          _selectedCategory == 'All' ||
+          category == _selectedCategory.toLowerCase();
+
+      return matchesFilter && matchesCategory;
+    }).toList();
+  }
 
   // ───────────────── DIALOG HELPERS ─────────────────
 
@@ -398,95 +468,21 @@ class _CommunityPageState extends State<CommunityPage> {
   // ───────────────── COMMENTS BOTTOM SHEET ─────────────────
 
   void _openComments(int index) {
-    final controller = TextEditingController();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            top: 16,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => _CommentsPage(report: _reports[index]),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[400],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Comments (${_reports[index]['comments']})',
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  color: appBlack,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                maxLines: 3,
-                decoration: InputDecoration(
-                  hintText: 'Write a comment...',
-                  hintStyle: GoogleFonts.poppins(fontSize: 13),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerRight,
-                child: ElevatedButton(
-                  onPressed: () {
-                    if (controller.text.trim().isNotEmpty) {
-                      setState(() {
-                        _reports[index]['comments']++;
-                      });
-                    }
-                    Navigator.pop(context);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: appBlue,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  child: Text(
-                    'Post',
-                    style: GoogleFonts.poppins(
-                      color: Colors.white,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+        )
+        .then((_) => setState(() {}));
   }
 
   // ───────────────── UI ─────────────────
 
   @override
   Widget build(BuildContext context) {
+    final visibleReports = _getVisibleReports();
+
     return Container(
       color: appOffWhite,
       child: Padding(
@@ -549,12 +545,12 @@ class _CommunityPageState extends State<CommunityPage> {
                           child: Text('Verified'),
                         ),
                         DropdownMenuItem(
-                          value: 'Recent',
-                          child: Text('Recent'),
+                          value: 'Under Review',
+                          child: Text('Under Review'),
                         ),
                         DropdownMenuItem(
-                          value: 'Popular',
-                          child: Text('Popular'),
+                          value: 'Unverified',
+                          child: Text('Unverified'),
                         ),
                       ],
                       onChanged: (v) => setState(
@@ -636,10 +632,18 @@ class _CommunityPageState extends State<CommunityPage> {
             // REPORT LIST
             Expanded(
               child: ListView.separated(
-                itemCount: _reports.length,
+                itemCount: visibleReports.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 14),
                 itemBuilder: (context, index) {
-                  final report = _reports[index];
+                  final report = visibleReports[index];
+                  final statusLower = (report['status'] as String? ?? '')
+                      .toLowerCase();
+                  final sourceIndex = _reports.indexWhere(
+                    (item) => item['id'] == report['id'],
+                  );
+                  final int reportIndex = sourceIndex == -1
+                      ? index
+                      : sourceIndex;
                   final vote = report['userVote'] as String;
                   final bool greenSelected = vote == 'green';
                   final bool redSelected = vote == 'red';
@@ -697,9 +701,12 @@ class _CommunityPageState extends State<CommunityPage> {
                                     width: 10,
                                     height: 10,
                                     decoration: BoxDecoration(
-                                      color: report['status'] == 'Verified'
+                                      color:
+                                          statusLower == 'approved' ||
+                                              statusLower == 'verified'
                                           ? appGreen
-                                          : report['status'] == 'Flagged'
+                                          : statusLower == 'flagged' ||
+                                                statusLower == 'unverified'
                                           ? appRed
                                           : appYellow,
                                       shape: BoxShape.circle,
@@ -711,9 +718,12 @@ class _CommunityPageState extends State<CommunityPage> {
                                     style: GoogleFonts.poppins(
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
-                                      color: report['status'] == 'Verified'
+                                      color:
+                                          statusLower == 'approved' ||
+                                              statusLower == 'verified'
                                           ? appGreen
-                                          : report['status'] == 'Flagged'
+                                          : statusLower == 'flagged' ||
+                                                statusLower == 'unverified'
                                           ? appRed
                                           : appYellow,
                                     ),
@@ -785,7 +795,7 @@ class _CommunityPageState extends State<CommunityPage> {
                             children: [
                               // GREEN FLAG + count
                               InkWell(
-                                onTap: () => _onGreenFlagPressed(index),
+                                onTap: () => _onGreenFlagPressed(reportIndex),
                                 borderRadius: BorderRadius.circular(8),
                                 child: Container(
                                   decoration: BoxDecoration(
@@ -825,7 +835,7 @@ class _CommunityPageState extends State<CommunityPage> {
 
                               // RED FLAG + count
                               InkWell(
-                                onTap: () => _onRedFlagPressed(index),
+                                onTap: () => _onRedFlagPressed(reportIndex),
                                 borderRadius: BorderRadius.circular(8),
                                 child: Container(
                                   decoration: BoxDecoration(
@@ -865,7 +875,7 @@ class _CommunityPageState extends State<CommunityPage> {
 
                               // COMMENTS
                               InkWell(
-                                onTap: () => _openComments(index),
+                                onTap: () => _openComments(reportIndex),
                                 borderRadius: BorderRadius.circular(8),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -906,5 +916,713 @@ class _CommunityPageState extends State<CommunityPage> {
         ),
       ),
     );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMMENTS PAGE (Full Screen)
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _CommentsPage extends StatefulWidget {
+  final Map<String, dynamic> report;
+
+  const _CommentsPage({required this.report});
+
+  @override
+  State<_CommentsPage> createState() => _CommentsPageState();
+}
+
+class _CommentsPageState extends State<_CommentsPage> {
+  static const appBlue = Color(0xFFAC1B22);
+  static const appRed = Color(0xFFFFC806);
+  static const appGreen = Color(0xFF00A458);
+  static const appBlack = Color(0xFF212121);
+  static const appOffWhite = Color(0xFFF7F8F3);
+
+  final TextEditingController _commentController = TextEditingController();
+  String _commentFilter = 'All Comments';
+  List<Map<String, dynamic>> _comments = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadComments();
+  }
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadComments() async {
+    try {
+      final reportId = widget.report['id']?.toString() ?? '';
+
+      debugPrint(
+        '📥 Loading comments from nested collection for reportId: $reportId',
+      );
+
+      // Load from nested comments collection
+      final snapshot = await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .collection('comments')
+          .orderBy('timestamp', descending: true)
+          .get();
+
+      debugPrint(
+        '✅ Loaded ${snapshot.docs.length} comments from nested collection',
+      );
+
+      final comments = snapshot.docs.map((doc) {
+        final data = doc.data();
+        final timestamp = (data['timestamp'] as Timestamp).toDate();
+
+        return {
+          'id': doc.id,
+          'text': data['text'] ?? '',
+          'author': data['author'] ?? 'Anonymous',
+          'timestamp': timestamp,
+          'greenFlags': data['greenFlags'] ?? 0,
+          'redFlags': data['redFlags'] ?? 0,
+          'userVote': 'none',
+          // Report credentials
+          'reportId': data['reportId'] ?? '',
+          'reportTitle': data['reportTitle'] ?? '',
+          'reportCategory': data['reportCategory'] ?? '',
+          'reportStatus': data['reportStatus'] ?? '',
+          'reportDate': data['reportDate'] ?? '',
+          'reportTime': data['reportTime'] ?? '',
+          'reportedBy': data['reportedBy'] ?? '',
+        };
+      }).toList();
+
+      setState(() {
+        _comments = comments;
+        _loading = false;
+      });
+
+      debugPrint('✅ Loaded ${comments.length} comments from Firestore');
+    } catch (e) {
+      debugPrint('❌ Failed to load comments: $e');
+      setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _postComment() async {
+    if (_commentController.text.trim().isEmpty) return;
+
+    try {
+      debugPrint('=== POSTING COMMENT ===');
+      debugPrint('Report data: ${widget.report}');
+
+      // Safely extract report data
+      final reportId = widget.report['id']?.toString() ?? '';
+      final reportTitle = widget.report['title']?.toString() ?? '';
+      final reportStatus = widget.report['status']?.toString() ?? '';
+      final reportDate = widget.report['date']?.toString() ?? '';
+      final reportTime = widget.report['time']?.toString() ?? '';
+      final reportedBy = widget.report['name']?.toString() ?? '';
+
+      if (reportId.isEmpty) {
+        debugPrint('❌ ERROR: reportId is empty! Cannot post comment.');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Error: Report ID is missing'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      debugPrint('📝 Posting comment with report credentials:');
+      debugPrint('  - reportId: $reportId');
+      debugPrint('  - reportTitle: $reportTitle');
+      debugPrint('  - reportStatus: $reportStatus');
+      debugPrint('  - reportedBy: $reportedBy');
+
+      // Get the current user's name from UserSession
+      final userName =
+          UserSession.currentUserData?['fullName'] as String? ??
+          UserSession.currentUserData?['username'] as String? ??
+          'Anonymous';
+
+      final newComment = {
+        'text': _commentController.text.trim(),
+        'author': userName,
+        'timestamp': Timestamp.now(),
+        'greenFlags': 0,
+        'redFlags': 0,
+        // Report credentials
+        'reportId': reportId,
+        'reportTitle': reportTitle,
+        'reportCategory': reportTitle,
+        'reportStatus': reportStatus,
+        'reportDate': reportDate,
+        'reportTime': reportTime,
+        'reportedBy': reportedBy,
+      };
+
+      debugPrint('📤 Comment data structure: $newComment');
+      debugPrint('🔐 Saving to nested comments collection...');
+
+      // Save to nested comments collection (for display in UI)
+      final savedDocRef = await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .collection('comments')
+          .add(newComment);
+
+      debugPrint(
+        '✅ Comment saved to nested collection with ID: ${savedDocRef.id}',
+      );
+
+      // Also save to root-level comments collection (for easy admin access)
+      debugPrint('🔐 Also saving to root comments collection...');
+      try {
+        await FirebaseFirestore.instance
+            .collection('comments')
+            .doc(savedDocRef.id)
+            .set(newComment);
+        debugPrint('✅ Comment also saved to root collection');
+      } catch (rootError) {
+        debugPrint('⚠️ Warning: Could not save to root collection: $rootError');
+        // Don't fail if root collection save fails
+      }
+
+      // Try to update report document with new comment count
+      // If this fails due to permissions, it won't block the comment from being saved
+      try {
+        await FirebaseFirestore.instance
+            .collection('reports')
+            .doc(reportId)
+            .update({'comments': FieldValue.increment(1)});
+        debugPrint('✅ Report comment count incremented');
+      } catch (updateError) {
+        debugPrint('⚠️ Warning: Could not update comment count: $updateError');
+        // Don't fail the entire operation if count update fails
+      }
+
+      _commentController.clear();
+
+      // Reload comments
+      await _loadComments();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Comment posted successfully'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Failed to post comment: $e');
+      debugPrint('Stack trace: ${StackTrace.current}');
+      debugPrint('Error type: ${e.runtimeType}');
+      if (mounted) {
+        // Show detailed error in dialog
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Error Posting Comment'),
+            content: Text(
+              'Failed to save comment to Firestore:\n\n$e\n\nPlease check:\n1. Internet connection\n2. Firestore rules are deployed\n3. Firebase is initialized',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _onCommentGreenFlag(int commentIndex) async {
+    final comment = _comments[commentIndex];
+    final vote = comment['userVote'] as String;
+
+    try {
+      int newGreenCount = comment['greenFlags'] as int;
+      int newRedCount = comment['redFlags'] as int;
+      String newVote = vote;
+
+      if (vote == 'green') {
+        // Unvote
+        newGreenCount = (newGreenCount > 0) ? newGreenCount - 1 : 0;
+        newVote = 'none';
+      } else {
+        // Vote green
+        if (vote == 'red' && newRedCount > 0) {
+          newRedCount--;
+        }
+        newGreenCount++;
+        newVote = 'green';
+      }
+
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(widget.report['id'] as String)
+          .collection('comments')
+          .doc(comment['id'] as String)
+          .update({'greenFlags': newGreenCount, 'redFlags': newRedCount});
+
+      setState(() {
+        comment['greenFlags'] = newGreenCount;
+        comment['redFlags'] = newRedCount;
+        comment['userVote'] = newVote;
+      });
+    } catch (e) {
+      debugPrint('❌ Failed to update comment vote: $e');
+    }
+  }
+
+  Future<void> _onCommentRedFlag(int commentIndex) async {
+    final comment = _comments[commentIndex];
+    final vote = comment['userVote'] as String;
+
+    try {
+      int newGreenCount = comment['greenFlags'] as int;
+      int newRedCount = comment['redFlags'] as int;
+      String newVote = vote;
+
+      if (vote == 'red') {
+        // Unvote
+        newRedCount = (newRedCount > 0) ? newRedCount - 1 : 0;
+        newVote = 'none';
+      } else {
+        // Vote red
+        if (vote == 'green' && newGreenCount > 0) {
+          newGreenCount--;
+        }
+        newRedCount++;
+        newVote = 'red';
+      }
+
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(widget.report['id'] as String)
+          .collection('comments')
+          .doc(comment['id'] as String)
+          .update({'greenFlags': newGreenCount, 'redFlags': newRedCount});
+
+      setState(() {
+        comment['greenFlags'] = newGreenCount;
+        comment['redFlags'] = newRedCount;
+        comment['userVote'] = newVote;
+      });
+    } catch (e) {
+      debugPrint('❌ Failed to update comment vote: $e');
+    }
+  }
+
+  List<Map<String, dynamic>> _getFilteredComments() {
+    switch (_commentFilter) {
+      case 'Recent':
+        final sorted = List<Map<String, dynamic>>.from(_comments);
+        sorted.sort((a, b) {
+          final aTime = a['timestamp'] as DateTime;
+          final bTime = b['timestamp'] as DateTime;
+          return bTime.compareTo(aTime);
+        });
+        return sorted;
+      case 'Popular':
+        final sorted = List<Map<String, dynamic>>.from(_comments);
+        sorted.sort((a, b) {
+          final aScore = (a['greenFlags'] as int) - (a['redFlags'] as int);
+          final bScore = (b['greenFlags'] as int) - (b['redFlags'] as int);
+          return bScore.compareTo(aScore);
+        });
+        return sorted;
+      default:
+        return _comments;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredComments = _getFilteredComments();
+
+    return Scaffold(
+      backgroundColor: appOffWhite,
+      appBar: AppBar(
+        backgroundColor: appBlue,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'Comments (${widget.report['comments']})',
+          style: GoogleFonts.poppins(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
+        ),
+      ),
+      body: Column(
+        children: [
+          // REPORT DETAILS HEADER
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Report: ${widget.report['title']}',
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: appBlack,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Status: ${widget.report['status']}',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                    Text(
+                      'By: ${widget.report['name']}',
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+
+          // FILTER BAR
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Text(
+                  'Filter:',
+                  style: GoogleFonts.poppins(fontSize: 13, color: appBlack),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  height: 36,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: _commentFilter,
+                      dropdownColor: Colors.white,
+                      style: GoogleFonts.poppins(fontSize: 12, color: appBlack),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'All Comments',
+                          child: Text('All Comments'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'Recent',
+                          child: Text('Recent'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'Popular',
+                          child: Text('Popular'),
+                        ),
+                      ],
+                      onChanged: (v) =>
+                          setState(() => _commentFilter = v ?? _commentFilter),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // COMMENTS LIST
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : filteredComments.isEmpty
+                ? Center(
+                    child: Text(
+                      'No comments yet.\nBe the first to comment!',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: filteredComments.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) {
+                      final comment = filteredComments[index];
+                      final vote = comment['userVote'] as String;
+                      final greenSelected = vote == 'green';
+                      final redSelected = vote == 'red';
+
+                      final greenColor = greenSelected
+                          ? appGreen
+                          : appGreen.withOpacity(0.6);
+                      final redColor = redSelected
+                          ? appRed
+                          : appRed.withOpacity(0.6);
+
+                      final timestamp = comment['timestamp'] as DateTime;
+                      final timeAgo = _formatTimeAgo(timestamp);
+
+                      return Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: appBlack.withOpacity(0.15),
+                            width: 1,
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // AUTHOR + TIME
+                            Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 14,
+                                  backgroundColor: appBlue,
+                                  child: Text(
+                                    comment['author'][0].toUpperCase(),
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 12,
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        comment['author'],
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                          color: appBlack,
+                                        ),
+                                      ),
+                                      Text(
+                                        timeAgo,
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 11,
+                                          color: Colors.grey[600],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+
+                            // COMMENT TEXT
+                            Text(
+                              comment['text'],
+                              style: GoogleFonts.poppins(
+                                fontSize: 13,
+                                color: appBlack,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+
+                            // FLAGS
+                            Row(
+                              children: [
+                                // GREEN FLAG
+                                InkWell(
+                                  onTap: () => _onCommentGreenFlag(index),
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: greenSelected
+                                          ? appGreen.withOpacity(0.1)
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.flag,
+                                          size: 18,
+                                          color: greenColor,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          '${comment['greenFlags']}',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 12,
+                                            fontWeight: greenSelected
+                                                ? FontWeight.w700
+                                                : FontWeight.w500,
+                                            color: appBlack,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+
+                                const SizedBox(width: 16),
+
+                                // RED FLAG
+                                InkWell(
+                                  onTap: () => _onCommentRedFlag(index),
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: redSelected
+                                          ? appRed.withOpacity(0.1)
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.flag,
+                                          size: 18,
+                                          color: redColor,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          '${comment['redFlags']}',
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 12,
+                                            fontWeight: redSelected
+                                                ? FontWeight.w700
+                                                : FontWeight.w500,
+                                            color: appBlack,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
+
+          // COMMENT INPUT
+          Container(
+            color: Colors.white,
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 12,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 12,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _commentController,
+                    maxLines: null,
+                    decoration: InputDecoration(
+                      hintText: 'Write a comment...',
+                      hintStyle: GoogleFonts.poppins(fontSize: 13),
+                      filled: true,
+                      fillColor: Colors.grey[100],
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _postComment,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: appBlue,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: Text(
+                    'Post',
+                    style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatTimeAgo(DateTime timestamp) {
+    final now = DateTime.now();
+    final difference = now.difference(timestamp);
+
+    if (difference.inSeconds < 60) {
+      return 'Just now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else if (difference.inDays < 7) {
+      return '${difference.inDays}d ago';
+    } else {
+      return DateFormat('MMM dd').format(timestamp);
+    }
   }
 }

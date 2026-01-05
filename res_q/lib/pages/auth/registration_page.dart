@@ -5,7 +5,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 
 class PhoneNumberFormatter extends TextInputFormatter {
   @override
@@ -42,7 +41,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
   // Brand colors
   static const appBlue = Color(0xFFAC1B22);
   static const appRed = Color(0xFFFFC806);
-  static const appGreen = Color(0xFF00A458);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
 
@@ -58,7 +56,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
   bool _loading = false;
   bool _agree = false;
-  bool _termsClicked = false;
   String? _idPhotoPath;
   bool _obscurePassword = true;
   bool _uploadingPhoto = false;
@@ -328,7 +325,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                   ? () {
                                       setState(() {
                                         _agree = true;
-                                        _termsClicked = true;
                                       });
                                       Navigator.pop(context);
                                     }
@@ -461,9 +457,9 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
       return;
     }
 
-    // Start Phone Auth flow: send OTP, then verify on OTP page
     setState(() => _loading = true);
 
+    // Format phone number for Firebase (must be in E.164 format: +63XXXXXXXXXX)
     String phone = _contactCtl.text.replaceAll('-', '').trim();
     if (phone.isNotEmpty && !phone.startsWith('+')) {
       phone = phone.startsWith('0') ? '+63${phone.substring(1)}' : '+63$phone';
@@ -483,56 +479,38 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
     };
 
     try {
+      // Send OTP to phone number
       await _auth.verifyPhoneNumber(
         phoneNumber: phone,
         timeout: const Duration(seconds: 60),
         verificationCompleted: (PhoneAuthCredential credential) async {
-          // Auto-retrieval on Android: sign in, then go to OTP page (autoVerified)
-          try {
-            await _auth.signInWithCredential(credential);
-            if (mounted) {
-              setState(() => _loading = false);
-              Navigator.pushNamed(
-                context,
-                '/otp',
-                arguments: {
-                  'verificationId': null,
-                  'phoneNumber': phone,
-                  'userData': userData,
-                  'autoVerified': true,
-                },
-              );
-            }
-          } catch (e) {
-            if (mounted) {
-              setState(() => _loading = false);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Auto verification failed: $e'),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            }
-          }
+          // Auto-verification (rare on most devices)
+          // This happens automatically on some Android devices
         },
         verificationFailed: (FirebaseAuthException e) {
-          String msg = e.message ?? 'Phone verification failed';
-          if (e.code.isNotEmpty) {
-            msg = '${e.code}: $msg';
-          }
-          if (e.code == 'admin-restricted-operation') {
-            msg =
-                'Account creation is restricted by project settings. Enable end-user account creation in Firebase Authentication settings.';
-          }
           setState(() => _loading = false);
+          String msg = e.message ?? 'Phone verification failed';
+
+          if (e.code == 'invalid-phone-number') {
+            msg = 'Invalid phone number. Please check and try again.';
+          } else if (e.code == 'too-many-requests') {
+            msg = 'Too many attempts. Please try again later.';
+          }
+
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(msg), backgroundColor: Colors.red),
+              SnackBar(
+                content: Text(msg),
+                backgroundColor: Colors.red,
+                duration: const Duration(seconds: 3),
+              ),
             );
           }
         },
         codeSent: (String verificationId, int? resendToken) {
           setState(() => _loading = false);
+
+          // Navigate to OTP verification page
           if (mounted) {
             Navigator.pushNamed(
               context,
@@ -546,7 +524,7 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
           }
         },
         codeAutoRetrievalTimeout: (String verificationId) {
-          // No-op: OTP page holds verificationId for manual entry
+          // Auto-retrieval timeout
         },
       );
     } catch (e) {
@@ -554,56 +532,12 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Registration failed: $e'),
+            content: Text('Failed to send OTP: $e'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
           ),
         );
       }
-    }
-  }
-
-  Future<void> _saveUserData(String phone) async {
-    try {
-      print('DEBUG: _saveUserData called');
-      final user = _auth.currentUser;
-      print('DEBUG: Current user: ${user?.uid}');
-
-      if (user != null) {
-        print('DEBUG: Attempting to save to Firestore...');
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'fullName': _fullNameCtl.text.trim(),
-          'username': _usernameCtl.text.trim(),
-          'email': _emailCtl.text.trim(),
-          'contactNumber': phone,
-          'address': _addressCtl.text.trim(),
-          'dateOfBirth':
-              '${_dobMonthCtl.text}/${_dobDayCtl.text}/${_dobYearCtl.text}',
-          'idPhotoPath': _idPhotoPath,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-        print('DEBUG: Firestore save successful!');
-
-        if (mounted) {
-          print('DEBUG: Navigating to /main');
-          Navigator.pushReplacementNamed(context, '/main');
-        }
-      } else {
-        print('DEBUG: ERROR - No authenticated user found');
-        throw Exception('No authenticated user');
-      }
-    } catch (e, stackTrace) {
-      print('DEBUG: _saveUserData error: $e');
-      print('DEBUG: Stack trace: $stackTrace');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to save account: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
-          ),
-        );
-      }
-      rethrow;
     }
   }
 
@@ -767,43 +701,70 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
                           ),
                           const SizedBox(height: 6),
 
-                          SizedBox(
-                            height: 40,
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: _uploadingPhoto ? null : _uploadPhoto,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: _idPhotoPath != null
-                                    ? const Color(0xFF00A458)
-                                    : appRed,
-                                disabledBackgroundColor: Colors.grey[400],
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                              ),
-                              child: _uploadingPhoto
-                                  ? const SizedBox(
-                                      height: 20,
-                                      width: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                              Colors.white,
-                                            ),
-                                      ),
-                                    )
-                                  : Text(
+                          Row(
+                            children: [
+                              Expanded(
+                                flex: 3,
+                                child: Container(
+                                  height: 64,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: Colors.black,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: Center(
+                                    child: Text(
                                       _idPhotoPath == null
-                                          ? 'UPLOAD GOVERNMENT ID'
+                                          ? '(Required) UPLOAD GOVERNMENT ID'
                                           : '✓ ID UPLOADED',
                                       style: GoogleFonts.poppins(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.white,
+                                        fontSize: 14,
+                                        color: Colors.black,
+                                        fontWeight: FontWeight.w500,
                                       ),
                                     ),
-                            ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                flex: 1,
+                                child: GestureDetector(
+                                  onTap: _uploadingPhoto ? null : _uploadPhoto,
+                                  child: Container(
+                                    height: 64,
+                                    decoration: BoxDecoration(
+                                      color: _uploadingPhoto
+                                          ? Colors.grey[400]
+                                          : appRed,
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Center(
+                                      child: _uploadingPhoto
+                                          ? const SizedBox(
+                                              height: 30,
+                                              width: 30,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<
+                                                      Color
+                                                    >(Colors.white),
+                                              ),
+                                            )
+                                          : const Icon(
+                                              Icons.camera_alt,
+                                              color: Colors.white,
+                                              size: 32,
+                                            ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
 
                           const SizedBox(height: 14),

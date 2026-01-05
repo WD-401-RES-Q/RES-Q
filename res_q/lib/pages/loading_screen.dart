@@ -41,7 +41,7 @@ class _LoadingScreenState extends State<LoadingScreen> {
 }
 
 class _LoadingContent extends StatelessWidget {
-  const _LoadingContent({super.key});
+  const _LoadingContent();
 
   @override
   Widget build(BuildContext context) {
