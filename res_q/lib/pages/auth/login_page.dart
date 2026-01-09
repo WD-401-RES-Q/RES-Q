@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../home_page.dart';
 import '../semi-admin/semi_admin_main_page.dart';
 import '../../services/user_session.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -99,7 +100,7 @@ class _LoginPageState extends State<LoginPage> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Invalid password'),
-              backgroundColor: Colors.red,
+              backgroundColor: const Color(0xFFAC1B22),
             ),
           );
           return;
@@ -159,7 +160,7 @@ class _LoginPageState extends State<LoginPage> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Invalid password'),
-              backgroundColor: Colors.red,
+              backgroundColor: const Color(0xFFAC1B22),
             ),
           );
           return;
@@ -331,23 +332,13 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  Widget _logo() {
-    return RichText(
-      text: TextSpan(
-        style: GoogleFonts.poppins(fontSize: 26, fontWeight: FontWeight.w700),
-        children: const [
-          TextSpan(
-            text: 'RES',
-            style: TextStyle(color: appBlue),
-          ),
-          TextSpan(
-            text: 'Q',
-            style: TextStyle(color: appRed),
-          ),
-        ],
-      ),
-    );
-  }
+Widget _logo() {
+  return SvgPicture.asset(
+    'assets/icons/RESQ-LOGO.svg',
+    height: 80,
+    width: 120,
+  );
+}
 
   @override
   Widget build(BuildContext context) {
@@ -370,13 +361,15 @@ class _LoginPageState extends State<LoginPage> {
                     const SizedBox(height: 32),
                     Text(
                       'LOGIN',
-                      style: GoogleFonts.poppins(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
+                      style: TextStyle(
+                        fontSize: 50,
+                        fontWeight: FontWeight.w900,
                         color: appBlack,
+                        fontFamily: 'Roboto',
                       ),
                     ),
                     const SizedBox(height: 28),
+
                     Form(
                       key: _formKey,
                       child: Column(
@@ -385,31 +378,49 @@ class _LoginPageState extends State<LoginPage> {
                           // Username
                           Text(
                             'USERNAME',
-                            style: GoogleFonts.poppins(
+                            style: TextStyle(
                               fontSize: 11,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w900,
                               color: appBlack,
+                              fontFamily: 'Roboto',
                             ),
                           ),
                           const SizedBox(height: 4),
                           TextFormField(
                             controller: _usernameCtl,
-                            decoration: _inputDecoration(
-                              'Enter Username',
-                              prefixIcon: const Icon(Icons.person_outline),
+                            style: const TextStyle(  // Add this line
+                              fontFamily: 'RobotoCondensed',
+                              fontWeight: FontWeight.w400,
+                              fontSize: 14,
+                              color: appBlack,
                             ),
-                            validator: (v) => (v == null || v.isEmpty)
-                                ? 'Enter username'
-                                : null,
+                            decoration: InputDecoration(
+                              hintText: 'Enter Username',
+                              hintStyle: TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontWeight: FontWeight.w400,
+                                fontSize: 14,
+                                color: appBlack.withOpacity(0.5),
+                              ),
+                              prefixIcon: const Icon(Icons.person_outline, color: Colors.black),
+                              filled: true,
+                              fillColor: const Color(0xFFF7F8F3), // background color
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12), // rounded corners
+                                borderSide: const BorderSide(color: Colors.black, width: 2),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                            ),
+                            validator: (v) => (v == null || v.isEmpty) ? 'Enter username' : null,
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 15),
 
                           // Password
                           Text(
                             'PASSWORD',
-                            style: GoogleFonts.poppins(
+                            style: TextStyle(
                               fontSize: 11,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.w900,
                               color: appBlack,
                             ),
                           ),
@@ -417,98 +428,131 @@ class _LoginPageState extends State<LoginPage> {
                           TextFormField(
                             controller: _passCtl,
                             obscureText: _obscure,
-                            decoration:
-                                _inputDecoration(
-                                  'Enter Password',
-                                  prefixIcon: const Icon(Icons.lock_outline),
-                                ).copyWith(
-                                  suffixIcon: IconButton(
-                                    icon: Icon(
-                                      _obscure
-                                          ? Icons.visibility
-                                          : Icons.visibility_off,
-                                      size: 18,
-                                    ),
-                                    onPressed: () =>
-                                        setState(() => _obscure = !_obscure),
-                                  ),
+                            decoration: InputDecoration(
+                              hintText: 'Enter Password',
+                              hintStyle: TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontWeight: FontWeight.w400,
+                                fontSize: 14,
+                                color: appBlack.withOpacity(0.5),
+                              ),
+                              prefixIcon: const Icon(Icons.lock_outline, color: Colors.black),
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _obscure ? Icons.visibility : Icons.visibility_off,
+                                  size: 18,
+                                  color: Colors.grey,
                                 ),
-                            validator: (v) => (v == null || v.length < 6)
-                                ? 'Password too short'
-                                : null,
+                                onPressed: () => setState(() => _obscure = !_obscure),
+                              ),
+                              filled: true,
+                              fillColor: const Color(0xFFF7F8F3), // background color
+                              contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12), // rounded corners
+                                borderSide: const BorderSide(color: Colors.black, width: 1),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Colors.black, width: 1),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(color: Colors.black, width: 2),
+                              ),
+                            ),
+                            validator: (v) => (v == null || v.length < 6) ? 'Password too short' : null,
                           ),
 
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 20),
+
                           Align(
-                            alignment: Alignment.centerRight,
+                            alignment: Alignment.center, // change from centerRight to center
                             child: TextButton(
-                              onPressed: () =>
-                                  Navigator.pushNamed(context, '/forgot'),
+                              onPressed: () => Navigator.pushNamed(context, '/forgot'),
                               style: TextButton.styleFrom(
                                 padding: EdgeInsets.zero,
                                 minimumSize: const Size(0, 0),
                               ),
                               child: Text(
                                 'FORGOT PASSWORD?',
-                                style: GoogleFonts.poppins(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w500,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w400,
                                   color: appBlack,
+                                  fontFamily: 'RobotoCondensed',
                                 ),
                               ),
                             ),
                           ),
-                          const SizedBox(height: 6),
 
-                          // LOGIN button (blue)
-                          SizedBox(
-                            height: 42,
-                            child: ElevatedButton(
-                              onPressed: _loading ? null : _submit,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: appBlue,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(4),
+                          const SizedBox(height: 20),
+
+                          // LOGIN button
+                          Align(
+                            alignment: Alignment.center,
+                            child: SizedBox(
+                              height: 50,
+                              width: 210, // 👈 control button width here
+                              child: ElevatedButton(
+                                onPressed: _loading ? null : _submit,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: appBlue,
+                                  elevation: 3, // 👈 shadow depth
+                                  shadowColor: Colors.black.withOpacity(1), // 👈 shadow color
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(50),
+                                  ),
                                 ),
+                                child: _loading
+                                    ? const SizedBox(
+                                        height: 20,
+                                        width: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : const Text(
+                                        'LOGIN',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w400,
+                                          color: Colors.white,
+                                          fontFamily: 'RobotoCondensed',
+                                          fontSize: 18,
+                                        ),
+                                      ),
                               ),
-                              child: _loading
-                                  ? const SizedBox(
-                                      height: 20,
-                                      width: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : Text(
-                                      'LOGIN',
-                                      style: GoogleFonts.poppins(
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.white,
-                                      ),
-                                    ),
                             ),
                           ),
 
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 20),
 
-                          // REGISTER button (green)
-                          SizedBox(
-                            height: 42,
-                            child: ElevatedButton(
-                              onPressed: () =>
-                                  Navigator.pushNamed(context, '/register'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: appRed,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(4),
+                          // REGISTER button (yellow)
+                          Align(
+                            alignment: Alignment.center,
+                            child: SizedBox(
+                              height: 50,
+                              width: 210, // 👈 same width as LOGIN
+                              child: ElevatedButton(
+                                onPressed: () =>
+                                    Navigator.pushNamed(context, '/register'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: appRed,
+                                  elevation: 3, // 👈 shadow depth
+                                  shadowColor: Colors.black.withOpacity(1), // 👈 shadow color
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(50),
+                                  ),
                                 ),
-                              ),
-                              child: Text(
-                                'REGISTER',
-                                style: GoogleFonts.poppins(
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.white,
+                                child: Text(
+                                  'REGISTER',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w400,
+                                    color: Colors.white,
+                                    fontFamily: 'RobotoCondensed',
+                                    fontSize: 18,
+                                  ),
                                 ),
                               ),
                             ),

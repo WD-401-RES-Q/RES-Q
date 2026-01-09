@@ -46,9 +46,10 @@ class NotificationsPage extends StatelessWidget {
               child: RichText(
                 textAlign: TextAlign.center,
                 text: TextSpan(
-                  style: GoogleFonts.poppins(
-                    fontSize: 40,
-                    fontWeight: FontWeight.w700,
+                  style: TextStyle(
+                    fontSize: 45,
+                    fontWeight: FontWeight.w900,
+                    fontFamily: 'Roboto',
                   ),
                   children: const [
                     TextSpan(

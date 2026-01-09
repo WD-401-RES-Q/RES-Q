@@ -6,8 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../widgets/bottom_nav_bar.dart';
-
 class MapPage extends StatefulWidget {
   const MapPage({super.key});
 
@@ -41,12 +39,9 @@ class _MapPageState extends State<MapPage> {
   // Simulate moving along route
   Timer? _trackingTimer;
 
-  int _navIndex = 2;
-
   @override
   void initState() {
     super.initState();
-    _addSampleMarkers();
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
     _loadReportsFromFirestore();
@@ -56,59 +51,6 @@ class _MapPageState extends State<MapPage> {
   void dispose() {
     _trackingTimer?.cancel();
     super.dispose();
-  }
-
-  void _addSampleMarkers() {
-    _incidentMarkers.addAll([
-      Marker(
-        point: const LatLng(15.1450, 120.5887),
-        width: 40,
-        height: 40,
-        child: GestureDetector(
-          onTap: () =>
-              _showIncidentInfo('Fire Incident', 'Reported 10 mins ago'),
-          child: const Icon(
-            Icons.local_fire_department,
-            color: Colors.red,
-            size: 40,
-          ),
-        ),
-      ),
-      Marker(
-        point: const LatLng(15.1500, 120.5950),
-        width: 40,
-        height: 40,
-        child: GestureDetector(
-          onTap: () =>
-              _showIncidentInfo('Road Obstruction', 'Reported 25 mins ago'),
-          child: const Icon(Icons.warning, color: Colors.orange, size: 40),
-        ),
-      ),
-      Marker(
-        point: const LatLng(15.1400, 120.5800),
-        width: 40,
-        height: 40,
-        child: GestureDetector(
-          onTap: () =>
-              _showIncidentInfo('Medical Emergency', 'Reported 5 mins ago'),
-          child: const Icon(
-            Icons.medical_services,
-            color: Colors.yellow,
-            size: 40,
-          ),
-        ),
-      ),
-      Marker(
-        point: const LatLng(15.1550, 120.5850),
-        width: 40,
-        height: 40,
-        child: GestureDetector(
-          onTap: () =>
-              _showIncidentInfo('Flood Warning', 'Reported 1 hour ago'),
-          child: const Icon(Icons.water, color: Colors.blue, size: 40),
-        ),
-      ),
-    ]);
   }
 
   void _showIncidentInfo(String title, String subtitle) {
@@ -373,8 +315,47 @@ Route calculated successfully!
     }
   }
 
+  Widget _buildTopBarAction({
+    required IconData icon,
+    required VoidCallback onTap,
+    bool isActive = false,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(isActive ? 0.28 : 0.18),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.35),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.18),
+                blurRadius: 6,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Icon(
+            icon,
+            color: Colors.white,
+            size: 28,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _loadReportsFromFirestore() async {
     try {
+      _incidentMarkers.clear();
       final snapshot = await FirebaseFirestore.instance
           .collection('reports')
           .where('location', isNotEqualTo: null)
@@ -390,17 +371,18 @@ Route calculated successfully!
           _incidentMarkers.add(
             Marker(
               point: point,
-              width: 40,
-              height: 40,
+              width: 72,
+              height: 72,
               child: GestureDetector(
                 onTap: () => _showIncidentInfo(
                   incidentType,
                   'Reported by ${data['name'] ?? 'Unknown'}',
                 ),
-                child: Icon(
-                  _getIconForIncidentType(incidentType),
-                  color: _getColorForIncidentType(incidentType),
-                  size: 40,
+                child: Image.asset(
+                  _getMarkerAssetForIncidentType(incidentType),
+                  width: 72,
+                  height: 72,
+                  fit: BoxFit.contain,
                 ),
               ),
             ),
@@ -415,37 +397,20 @@ Route calculated successfully!
     }
   }
 
-  IconData _getIconForIncidentType(String type) {
+  String _getMarkerAssetForIncidentType(String type) {
     switch (type.toUpperCase()) {
       case 'FIRE':
-        return Icons.local_fire_department;
+        return 'assets/icons/LOC-FIRE.png';
       case 'FLOOD':
-        return Icons.water;
+        return 'assets/icons/LOC-FLOOD.png';
       case 'EARTHQUAKE':
-        return Icons.warning;
+        return 'assets/icons/LOC-EARTHQUAKE.png';
       case 'VEHICULAR':
-        return Icons.car_crash;
+        return 'assets/icons/LOC-CRASH.png';
       case 'ROAD OBSTRUCTION':
-        return Icons.block;
+        return 'assets/icons/LOC-ROAD.png';
       default:
-        return Icons.report_problem;
-    }
-  }
-
-  Color _getColorForIncidentType(String type) {
-    switch (type.toUpperCase()) {
-      case 'FIRE':
-        return Colors.red;
-      case 'FLOOD':
-        return Colors.blue;
-      case 'EARTHQUAKE':
-        return Colors.orange;
-      case 'VEHICULAR':
-        return Colors.purple;
-      case 'ROAD OBSTRUCTION':
-        return Colors.amber;
-      default:
-        return Colors.grey;
+        return 'assets/icons/LOC-OTHERS.png';
     }
   }
 
@@ -548,18 +513,17 @@ Route calculated successfully!
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 18,
-                          fontWeight: FontWeight.bold,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'Roboto',
                         ),
                       ),
                       Row(
                         children: [
                           // Route button
-                          IconButton(
-                            icon: Icon(
-                              _isTracking ? Icons.stop : Icons.route,
-                              color: Colors.white,
-                            ),
-                            onPressed: () {
+                          _buildTopBarAction(
+                            icon: _isTracking ? Icons.stop : Icons.route,
+                            isActive: _isTracking,
+                            onTap: () {
                               if (_isTracking) {
                                 _stopTracking();
                               } else if (_routePoints.isNotEmpty) {
@@ -569,26 +533,19 @@ Route calculated successfully!
                               }
                             },
                           ),
+                          const SizedBox(width: 8),
                           // Filter button
-                          IconButton(
-                            icon: const Icon(
-                              Icons.filter_list,
-                              color: Colors.white,
-                            ),
-                            onPressed: () {
-                              _showFilterDialog();
-                            },
+                          _buildTopBarAction(
+                            icon: Icons.filter_list,
+                            onTap: _showFilterDialog,
                           ),
+                          const SizedBox(width: 8),
                           // Refresh button
-                          IconButton(
-                            icon: const Icon(
-                              Icons.refresh,
-                              color: Colors.white,
-                            ),
-                            onPressed: () {
+                          _buildTopBarAction(
+                            icon: Icons.refresh,
+                            onTap: () {
                               setState(() {
                                 _incidentMarkers.clear();
-                                _addSampleMarkers();
                                 _loadReportsFromFirestore();
                               });
                             },
@@ -826,18 +783,6 @@ Route calculated successfully!
               ),
             ),
         ],
-      ),
-      bottomNavigationBar: BottomNavBar(
-        currentIndex: _navIndex,
-        onTap: (index) {
-          setState(() {
-            _navIndex = index;
-          });
-          // Navigate back to MainPage if not already on the selected tab
-          if (index != 2) {
-            Navigator.pushReplacementNamed(context, '/main');
-          }
-        },
       ),
     );
   }

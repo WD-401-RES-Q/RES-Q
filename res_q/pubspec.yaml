@@ -82,23 +82,48 @@ flutter:
     - assets/images/NOTIF-2.png
     - assets/images/NOTIF-3.png
     - assets/icons/PHONE-ICON.png
-    - assets/icons/NAV-PROFILE-ICON.svg
     - assets/icons/FINAL-OTHERS-ICON.png
     - assets/icons/FINAL-EARTHQUAKE-ICON.png
     - assets/icons/FINAL-FIRE-ICON.png
     - assets/icons/FINAL-FLOOD-ICON.png
     - assets/icons/FINAL-ROAD-ICON.png
     - assets/icons/FINAL-CRASH-ICON.png
-    - assets/icons/NAV-COMMUNITY-ICON-WHITE.png
-    - assets/icons/NAV-NOTIFICATIONS-ICON-WHITE.png
-    - assets/icons/NAV-MAPS-ICON-WHITE.png
-    - assets/icons/NAV-PROFILE-ICON-WHITE.png
-    - assets/icons/NAV-HOMEPAGE-ICON-WHITE.png
-    - assets/icons/NAV-COMMUNITY-ICON-YELLOW.png
-    - assets/icons/NAV-NOTIFICATIONS-ICON-YELLOW.png
-    - assets/icons/NAV-MAPS-ICON-YELLOW.png
-    - assets/icons/NAV-PROFILE-ICON-YELLOW.png
-    - assets/icons/NAV-HOMEPAGE-ICON-YELLOW.png
+    - assets/icons/COMMUNITY-ICON.png
+    - assets/icons/COMMUNITY-ICON-YELLOW.png
+    - assets/icons/HOME-ICON.png
+    - assets/icons/HOME-ICON-YELLOW.png
+    - assets/icons/PROFILE-ICON.png
+    - assets/icons/PROFILE-ICON-YELLOW.png
+    - assets/icons/MAPS-ICON.png
+    - assets/icons/MAPS-ICON-YELLOW.png
+    - assets/icons/NOTICATIONS-ICON.png
+    - assets/icons/NOTICATIONS-ICON-YELLOW.png
+    - assets/icons/LOC-FIRE.png
+    - assets/icons/LOC-EARTHQUAKE.png
+    - assets/icons/LOC-FLOOD.png
+    - assets/icons/LOC-ROAD.png
+    - assets/icons/LOC-CRASH.png
+    - assets/icons/LOC-OTHERS.png
+
+  fonts:
+
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Roboto-Black.ttf
+          weight: 900
+    
+    - family: RobotoCondensed
+      fonts:
+        - asset: assets/fonts/Roboto_Condensed-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Roboto_Condensed-Bold.ttf
+          weight: 700
+        - asset: assets/fonts/Roboto_Condensed-Black.ttf
+          weight: 900
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

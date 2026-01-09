@@ -8,7 +8,9 @@ import 'notifications_page.dart';
 import 'profile_page.dart';
 import 'emergency_call_screen.dart';
 import 'report_form_screen.dart';
-import 'semi-admin/admin-map_page.dart';
+import 'map_page.dart';
+import 'report_map_page.dart';
+import '../services/user_session.dart';
 
 class MainPage extends StatefulWidget {
   final int initialIndex;
@@ -21,15 +23,37 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   late int _currentIndex = widget.initialIndex;
+  late Widget _mapPage;
+  late final List<Widget> _pages;
 
-  List<Widget> get _pages => [
-    const _HomePageContent(),
-    const CommunityPage(),
-    //const MapPage(),
-    const AdminMapPage(),
-    const NotificationsPage(),
-    const ProfilePage(),
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _mapPage = _buildMapPage();
+    _pages = [
+      const _HomePageContent(),
+      const CommunityPage(),
+      _mapPage,
+      const NotificationsPage(),
+      const ProfilePage(),
+    ];
+  }
+
+  Widget _buildMapPage() {
+    final reportId = UserSession.activeReportId;
+    final reportData = UserSession.activeReportData;
+
+    if (reportId != null && reportData != null) {
+      return ReportMapPage(
+        key: ValueKey('report-map-$reportId'),
+        reportId: reportId,
+        reportData: reportData,
+        showBottomNav: false,
+      );
+    }
+
+    return const MapPage();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +63,12 @@ class _MainPageState extends State<MainPage> {
         currentIndex: _currentIndex,
         onTap: (i) => setState(() => _currentIndex = i),
       ),
-      body: SafeArea(child: _pages[_currentIndex]),
+      body: SafeArea(
+        child: IndexedStack(
+          index: _currentIndex,
+          children: _pages,
+        ),
+      ),
     );
   }
 }
@@ -51,7 +80,6 @@ class _HomePageContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final gridWidth = (screenWidth - 32).clamp(300.0, 380.0);
-    final cardAspectRatio = 1.0; // Square cards
 
     return Column(
       children: [
@@ -84,110 +112,111 @@ class _HomePageContent extends StatelessWidget {
                 children: [
                   // Instruction Text
                   Text(
-                    "SELECT THE TYPE OF INCIDENT YOU WANT TO REPORT",
+                    "SELECT THE TYPE OF INCIDENT\nYOU WANT TO REPORT",
                     textAlign: TextAlign.center,
-                    style: GoogleFonts.poppins(
-                      fontSize: 16,
+                    style: TextStyle(
+                      fontSize: 20,
                       fontWeight: FontWeight.w600,
+                      fontFamily: 'RobotoCondensed',
                     ),
                   ),
 
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 9),
 
                   // Incident Cards Grid
                   Container(
                     width: gridWidth,
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: Colors.white,
+                      color: const Color(0xFFF7F8F3),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: GridView.count(
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       crossAxisCount: 2,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
-                      childAspectRatio: cardAspectRatio,
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                      childAspectRatio: 1.05,
                       children: [
                         _incidentCard(
                           context,
                           "EARTHQUAKE",
                           "assets/icons/FINAL-EARTHQUAKE-ICON.png",
+                          fontSize: 19.0, // Larger
                         ),
                         _incidentCard(
                           context,
                           "FLOOD",
                           "assets/icons/FINAL-FLOOD-ICON.png",
+                          fontSize: 22.0, // Larger
                         ),
                         _incidentCard(
                           context,
                           "FIRE",
                           "assets/icons/FINAL-FIRE-ICON.png",
+                          fontSize: 22.0, // Larger
                         ),
                         _incidentCard(
                           context,
                           "VEHICULAR",
                           "assets/icons/FINAL-CRASH-ICON.png",
+                          fontSize: 20.0, // Larger
                         ),
                         _incidentCard(
                           context,
                           "ROAD OBSTRUCTION",
                           "assets/icons/FINAL-ROAD-ICON.png",
+                          fontSize: 12.0, // Smaller (longer text)
                         ),
                         _incidentCard(
                           context,
                           "OTHERS",
                           "assets/icons/FINAL-OTHERS-ICON.png",
+                          fontSize: 20.0, // Larger
                         ),
                       ],
                     ),
                   ),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 0.5),
 
-                  // Emergency Call Button
-                  SizedBox(
-                    width: (screenWidth * 0.75).clamp(260.0, 320.0),
-                    height: 100,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFAC1B22),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+                  // Circular Emergency Call Button
+                  GestureDetector(
+                    onTap: () {
+                      print("Emergency call button pressed");
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const EmergencyCallScreen(),
                         ),
-                      ),
-                      onPressed: () {
-                        print("Emergency call button pressed");
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const EmergencyCallScreen(),
-                          ),
-                        );
-                      },
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            "EMERGENCY CALL",
-                            style: TextStyle(
-                              fontSize: 22,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Image.asset(
-                            'assets/icons/PHONE-ICON.png',
-                            height: 60,
-                            errorBuilder: (context, error, stackTrace) =>
-                                const Icon(
-                                  Icons.phone,
-                                  color: Colors.white,
-                                  size: 60,
-                                ),
+                      );
+                    },
+                    child: Container(
+                      width: 130,
+                      height: 130,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFFAC1B22),
+                        border: Border.all(
+                          color: const Color(0xFFFFC806),
+                          width: 9,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            spreadRadius: 2,
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
                           ),
                         ],
+                      ),
+                      child: Center(
+                        child: Icon(
+                          Icons.phone,
+                          size: 70,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ),
@@ -200,14 +229,18 @@ class _HomePageContent extends StatelessWidget {
     );
   }
 
-  Widget _incidentCard(BuildContext context, String title, String imgPath) {
+  Widget _incidentCard(
+    BuildContext context,
+    String title,
+    String imgPath, {
+    double fontSize = 13.5,
+  }) {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(30),
         onTap: () {
           print("$title card tapped");
-          // Navigate to report form screen with incident type
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -218,13 +251,17 @@ class _HomePageContent extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             color: const Color(0xFFAC1B22),
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(40),
+            border: Border.all(
+              color: const Color(0xFFFFC806),
+              width: 6,
+            ),
             boxShadow: [
               BoxShadow(
-                color: Colors.grey.withOpacity(0.2),
-                spreadRadius: 1,
-                blurRadius: 3,
-                offset: const Offset(0, 2),
+                color: Colors.black.withOpacity(0.25),
+                spreadRadius: 2,
+                blurRadius: 8,
+                offset: const Offset(0, 4),
               ),
             ],
           ),
@@ -234,29 +271,30 @@ class _HomePageContent extends StatelessWidget {
               // Icon
               Image.asset(
                 imgPath,
-                width: 100,
-                height: 100,
+                width: 110,
+                height: 110,
                 fit: BoxFit.contain,
                 errorBuilder: (context, error, stackTrace) {
                   return const Icon(
                     Icons.warning,
                     color: Colors.white,
-                    size: 40,
+                    size: 35,
                   );
                 },
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
 
               // Label
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 7.0),
                 child: Text(
                   title,
                   textAlign: TextAlign.center,
-                  style: GoogleFonts.poppins(
-                    fontSize: 16,
+                  style: TextStyle(
+                    fontSize: fontSize,
                     fontWeight: FontWeight.w600,
                     color: Colors.white,
+                    fontFamily: 'RobotoCondensed',
                     height: 1.1,
                   ),
                 ),

@@ -9,6 +9,19 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
+  // Track which sections are expanded
+  Set<String> expandedSections = {};
+
+  void toggleSection(String section) {
+    setState(() {
+      if (expandedSections.contains(section)) {
+        expandedSections.remove(section);
+      } else {
+        expandedSections.add(section);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -47,9 +60,10 @@ class _ProfilePageState extends State<ProfilePage> {
                         child: RichText(
                           textAlign: TextAlign.center,
                           text: TextSpan(
-                            style: GoogleFonts.poppins(
-                              fontSize: 40,
-                              fontWeight: FontWeight.w700,
+                            style: TextStyle(
+                              fontSize: 45,
+                              fontWeight: FontWeight.w900,
+                              fontFamily: 'Roboto',
                             ),
                             children: const [
                               TextSpan(
@@ -92,8 +106,6 @@ class _ProfilePageState extends State<ProfilePage> {
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(18),
-
-                    // ✨ UPDATED FLOATING SHADOW ✨
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withOpacity(0.12),
@@ -103,7 +115,6 @@ class _ProfilePageState extends State<ProfilePage> {
                       ),
                     ],
                   ),
-
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 18.0,
@@ -115,27 +126,36 @@ class _ProfilePageState extends State<ProfilePage> {
                         // Settings Section
                         Text(
                           'Settings',
-                          style: GoogleFonts.poppins(
+                          style: TextStyle(
                             fontSize: 18,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w900,
+                            fontFamily: 'Roboto',
                           ),
                         ),
                         const SizedBox(height: 10),
-                        const _ProfileItem(
+                        _ProfileItemWithDropdown(
                           icon: Icons.person_outline,
                           label: 'Personal Information',
+                          isExpanded: expandedSections.contains('personal_info'),
+                          onTap: () => toggleSection('personal_info'),
                         ),
-                        const _ProfileItem(
+                        _ProfileItemWithDropdown(
                           icon: Icons.shield_outlined,
                           label: 'Account Security',
+                          isExpanded: expandedSections.contains('account_security'),
+                          onTap: () => toggleSection('account_security'),
                         ),
-                        const _ProfileItem(
+                        _ProfileItemWithDropdown(
                           icon: Icons.credit_card_outlined,
                           label: 'Payments',
+                          isExpanded: expandedSections.contains('payments'),
+                          onTap: () => toggleSection('payments'),
                         ),
-                        const _ProfileItem(
+                        _ProfileItemWithDropdown(
                           icon: Icons.notifications_none,
                           label: 'Notifications',
+                          isExpanded: expandedSections.contains('notifications'),
+                          onTap: () => toggleSection('notifications'),
                         ),
 
                         const SizedBox(height: 20),
@@ -143,23 +163,30 @@ class _ProfilePageState extends State<ProfilePage> {
                         // Support
                         Text(
                           'Support',
-                          style: GoogleFonts.poppins(
+                          style: TextStyle(
                             fontSize: 18,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w900,
+                            fontFamily: 'Roboto',
                           ),
                         ),
                         const SizedBox(height: 10),
-                        const _ProfileItem(
+                        _ProfileItemWithDropdown(
                           icon: Icons.support_agent_outlined,
                           label: 'Help Center',
+                          isExpanded: expandedSections.contains('help_center'),
+                          onTap: () => toggleSection('help_center'),
                         ),
-                        const _ProfileItem(
+                        _ProfileItemWithDropdown(
                           icon: Icons.phone_in_talk_outlined,
                           label: 'Report a Problem',
+                          isExpanded: expandedSections.contains('report_problem'),
+                          onTap: () => toggleSection('report_problem'),
                         ),
-                        const _ProfileItem(
+                        _ProfileItemWithDropdown(
                           icon: Icons.rate_review_outlined,
                           label: 'Write a feedback',
+                          isExpanded: expandedSections.contains('feedback'),
+                          onTap: () => toggleSection('feedback'),
                         ),
 
                         const SizedBox(height: 20),
@@ -167,23 +194,30 @@ class _ProfilePageState extends State<ProfilePage> {
                         // Legal
                         Text(
                           'Legal',
-                          style: GoogleFonts.poppins(
+                          style: TextStyle(
                             fontSize: 18,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w900,
+                            fontFamily: 'Roboto',
                           ),
                         ),
                         const SizedBox(height: 10),
-                        const _ProfileItem(
+                        _ProfileItemWithDropdown(
                           icon: Icons.description_outlined,
                           label: 'Terms of Service',
+                          isExpanded: expandedSections.contains('terms'),
+                          onTap: () => toggleSection('terms'),
                         ),
-                        const _ProfileItem(
+                        _ProfileItemWithDropdown(
                           icon: Icons.privacy_tip_outlined,
                           label: 'Privacy Policy',
+                          isExpanded: expandedSections.contains('privacy'),
+                          onTap: () => toggleSection('privacy'),
                         ),
-                        const _ProfileItem(
+                        _ProfileItemWithDropdown(
                           icon: Icons.article_outlined,
                           label: 'Source Licenses',
+                          isExpanded: expandedSections.contains('licenses'),
+                          onTap: () => toggleSection('licenses'),
                         ),
                       ],
                     ),
@@ -196,6 +230,79 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ───────── PROFILE ITEM WITH DROPDOWN ─────────
+class _ProfileItemWithDropdown extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isExpanded;
+  final VoidCallback onTap;
+
+  const _ProfileItemWithDropdown({
+    required this.icon,
+    required this.label,
+    required this.isExpanded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Row(
+              children: [
+                Icon(icon, size: 22, color: Colors.black87),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: GoogleFonts.poppins(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                Icon(
+                  isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                  size: 20,
+                  color: Colors.black38,
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (isExpanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 36, bottom: 8),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF7F7F7),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.circle, size: 6, color: Colors.black54),
+                  const SizedBox(width: 8),
+                  Text(
+                    'To be added',
+                    style: GoogleFonts.poppins(
+                      fontSize: 13,
+                      color: Colors.black54,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

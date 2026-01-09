@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../services/location_service.dart';
+import '../services/user_session.dart';
 import '../widgets/bottom_nav_bar.dart';
 import 'home_page.dart';
 
@@ -16,10 +17,12 @@ class ReportMapPage extends StatefulWidget {
     super.key,
     required this.reportId,
     required this.reportData,
+    this.showBottomNav = true,
   });
 
   final String reportId;
   final Map<String, dynamic> reportData;
+  final bool showBottomNav;
 
   @override
   State<ReportMapPage> createState() => _ReportMapPageState();
@@ -157,6 +160,46 @@ class _ReportMapPageState extends State<ReportMapPage>
           ),
         );
       }
+    }
+  }
+
+  Future<void> _resolveReport() async {
+    final shouldResolve = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Resolve Report'),
+        content: const Text(
+          'Mark this incident as resolved and return to the map?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.black,
+            ),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFFC806),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Resolve'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldResolve != true) return;
+
+    UserSession.clearActiveReport();
+
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const MainPage(initialIndex: 2)),
+      );
     }
   }
 
@@ -344,6 +387,24 @@ class _ReportMapPageState extends State<ReportMapPage>
                           ? 'Video'
                           : 'Photo',
                     ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: _resolveReport,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFFFFC806),
+                        side: const BorderSide(color: Color(0xFFFFC806)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: const Text(
+                        'REPORT RESOLVED',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 20),
 
                   // Responder Information
@@ -622,6 +683,23 @@ class _ReportMapPageState extends State<ReportMapPage>
     }
   }
 
+  String _getMarkerAssetForIncidentType(String type) {
+    switch (type.toUpperCase()) {
+      case 'FIRE':
+        return 'assets/icons/LOC-FIRE.png';
+      case 'FLOOD':
+        return 'assets/icons/LOC-FLOOD.png';
+      case 'EARTHQUAKE':
+        return 'assets/icons/LOC-EARTHQUAKE.png';
+      case 'VEHICULAR':
+        return 'assets/icons/LOC-CRASH.png';
+      case 'ROAD OBSTRUCTION':
+        return 'assets/icons/LOC-ROAD.png';
+      default:
+        return 'assets/icons/LOC-OTHERS.png';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context); // keep state when navigating tabs
@@ -651,12 +729,15 @@ class _ReportMapPageState extends State<ReportMapPage>
                   markers: [
                     Marker(
                       point: _userLocation!,
-                      width: 50,
-                      height: 50,
-                      child: const Icon(
-                        Icons.person_pin_circle,
-                        color: Colors.blue,
-                        size: 50,
+                      width: 72,
+                      height: 72,
+                      child: Image.asset(
+                        _getMarkerAssetForIncidentType(
+                          widget.reportData['incidentType'] ?? 'Unknown',
+                        ),
+                        width: 72,
+                        height: 72,
+                        fit: BoxFit.contain,
                       ),
                     ),
                   ],
@@ -831,17 +912,21 @@ class _ReportMapPageState extends State<ReportMapPage>
             ),
         ],
       ),
-      bottomNavigationBar: BottomNavBar(
-        currentIndex: _navIndex,
-        onTap: (index) {
-          if (index != _navIndex) {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (_) => MainPage(initialIndex: index)),
-            );
-          }
-        },
-      ),
+      bottomNavigationBar: widget.showBottomNav
+          ? BottomNavBar(
+              currentIndex: _navIndex,
+              onTap: (index) {
+                if (index != _navIndex) {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => MainPage(initialIndex: index),
+                    ),
+                  );
+                }
+              },
+            )
+          : null,
     );
   }
 

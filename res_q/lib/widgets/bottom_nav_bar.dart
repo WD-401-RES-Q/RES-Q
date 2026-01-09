@@ -18,7 +18,7 @@ class _BottomNavBarState extends State<BottomNavBar> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 70,
+      height: 80,
       decoration: const BoxDecoration(
         color: Color(0xFFAC1B22),
         borderRadius: BorderRadius.only(
@@ -36,56 +36,78 @@ class _BottomNavBarState extends State<BottomNavBar> {
           unselectedItemColor: Colors.white,
           selectedFontSize: 10,
           unselectedFontSize: 10,
+          selectedLabelStyle: const TextStyle(
+            fontFamily: 'Roboto',
+            fontWeight: FontWeight.w900,
+            shadows: [
+              Shadow(
+                color: Color(0x66000000),
+                offset: Offset(0, 1),
+                blurRadius: 2,
+              ),
+            ],
+          ),
+          unselectedLabelStyle: const TextStyle(
+            fontFamily: 'Roboto',
+            fontWeight: FontWeight.w900,
+            shadows: [
+              Shadow(
+                color: Color(0x66000000),
+                offset: Offset(0, 1),
+                blurRadius: 2,
+              ),
+            ],
+          ),
           currentIndex: widget.currentIndex,
           onTap: widget.onTap,
           items: [
             BottomNavigationBarItem(
               icon: Image.asset(
                 widget.currentIndex == 0
-                    ? "assets/icons/NAV-HOMEPAGE-ICON-YELLOW.png"
-                    : "assets/icons/NAV-HOMEPAGE-ICON-WHITE.png",
-                width: 40,
-                height: 40,
+                    ? "assets/icons/HOME-ICON-YELLOW.png"
+                    : "assets/icons/HOME-ICON.png",
+                width: 48,
+                height: 48,
               ),
               label: "HOME",
             ),
             BottomNavigationBarItem(
               icon: Image.asset(
                 widget.currentIndex == 1
-                    ? "assets/icons/NAV-COMMUNITY-ICON-YELLOW.png"
-                    : "assets/icons/NAV-COMMUNITY-ICON-WHITE.png",
-                width: 40,
-                height: 40,
+                    ? "assets/icons/COMMUNITY-ICON-YELLOW.png"
+                    : "assets/icons/COMMUNITY-ICON.png",
+                width: 48,
+                height: 48,
               ),
               label: "COMMUNITY",
             ),
             BottomNavigationBarItem(
               icon: Image.asset(
                 widget.currentIndex == 2
-                    ? "assets/icons/NAV-MAPS-ICON-YELLOW.png"
-                    : "assets/icons/NAV-MAPS-ICON-WHITE.png",
-                width: 40,
-                height: 40,
+                    ? "assets/icons/MAPS-ICON-YELLOW.png"
+                    : "assets/icons/MAPS-ICON.png",
+                width: 48,
+                height: 48,
               ),
               label: "MAP",
             ),
             BottomNavigationBarItem(
               icon: Image.asset(
                 widget.currentIndex == 3
-                    ? "assets/icons/NAV-NOTIFICATIONS-ICON-YELLOW.png"
-                    : "assets/icons/NAV-NOTIFICATIONS-ICON-WHITE.png",
-                width: 40,
-                height: 40,
+                    ? "assets/icons/NOTICATIONS-ICON-YELLOW.png"
+                    : "assets/icons/NOTICATIONS-ICON.png",
+                width: 48,
+                height: 48,
               ),
               label: "NOTIFICATION",
             ),
             BottomNavigationBarItem(
               icon: Image.asset(
                 widget.currentIndex == 4
-                    ? "assets/icons/NAV-PROFILE-ICON-YELLOW.png"
-                    : "assets/icons/NAV-PROFILE-ICON-WHITE.png",
-                width: 40,
-                height: 40,
+                    ? "assets/icons/PROFILE-ICON-YELLOW.png"
+                    : "assets/icons/PROFILE-ICON.png",
+                width: 48,
+                height: 48,
               ),
               label: "PROFILE",
             ),

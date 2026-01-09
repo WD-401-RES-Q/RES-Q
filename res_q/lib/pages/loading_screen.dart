@@ -54,17 +54,18 @@ class _LoadingContent extends StatelessWidget {
           "EVERY SECOND COUNTS",
           style: TextStyle(
             fontSize: 16,
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w400,
             letterSpacing: 1.3,
             color: Colors.black,
+            fontFamily: 'RobotoCondensed',
           ),
         ),
         const SizedBox(height: 35),
         const SizedBox(
-          height: 40,
-          width: 40,
+          height: 100,
+          width: 100,
           child: CircularProgressIndicator(
-            strokeWidth: 4,
+            strokeWidth: 12,
             valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFFFC806)),
           ),
         ),

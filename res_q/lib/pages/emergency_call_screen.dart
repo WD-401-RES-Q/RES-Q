@@ -18,17 +18,17 @@ class EmergencyCallScreen extends StatelessWidget {
               // Top icon - same size as main_page.dart
               SvgPicture.asset(
                 'assets/icons/RESQ-LOGO.svg', // Replace with your logo path
-                height: 70, // Adjust this to match your main_page icon size
+                height: 90, // Adjust this to match your main_page icon size
               ),
-              const SizedBox(height: 40),
+              const SizedBox(height: 10),
               
               // CENTER SVG
               Expanded(
                 child: Center(
                   child: SvgPicture.asset(
                     'assets/icons/CALLING-ICON.svg', // Replace with your PNG path
-                    width: 300,
-                    height: 300,
+                    width: 350,
+                    height: 350,
                     fit: BoxFit.contain,
                   ),
                 ),
@@ -36,13 +36,14 @@ class EmergencyCallScreen extends StatelessWidget {
               
               // Text below the image
               const Text(
-                'STAY CALM. CURRENTLY CONTACTING ACDRRMO...',
+                'STAY CALM. CURRENTLY\nCONTACTING ACDRRMO...',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
                   color: Colors.black,
                   height: 1.4,
+                  fontFamily: 'Roboto',
                 ),
               ),
               
@@ -61,16 +62,20 @@ class EmergencyCallScreen extends StatelessWidget {
                   );
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFFAC1B22),                  foregroundColor: Colors.white,
+                  backgroundColor: const Color(0xFFAC1B22),                  
+                  foregroundColor: Colors.white,
+                  elevation: 5, // 👈 drop shadow
+                  shadowColor: Colors.black.withOpacity(1), // 👈 shadow color
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(35),
                   ),
                 ),
                 child: const Text(
                   'END CALL',
                   style: TextStyle(
                     fontSize: 24,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w100,
+                    fontFamily: 'RobotoCondensed',
                   ),
                 ),
               ),

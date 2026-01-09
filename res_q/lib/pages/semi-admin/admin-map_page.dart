@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -62,7 +63,7 @@ class _AdminMapPageState extends State<AdminMapPage> {
   @override
   void initState() {
     super.initState();
-    _addSampleMarkers();
+    _loadReportsFromFirestore();
     _addSampleComments();
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
@@ -74,113 +75,79 @@ class _AdminMapPageState extends State<AdminMapPage> {
     super.dispose();
   }
 
-  void _addSampleMarkers() {
-    _incidentMarkers.addAll([
-      Marker(
-        point: const LatLng(15.1450, 120.5887),
-        width: 50,
-        height: 50,
-        child: GestureDetector(
-          onTap: () => _showIncidentInfo('Fire Incident', 'Reported 10 mins ago'),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.local_fire_department,
-              color: Colors.red,
-              size: 32,
-            ),
-          ),
+  Widget _buildIncidentMarker({
+    required String assetPath,
+    required String title,
+    required String subtitle,
+  }) {
+    return GestureDetector(
+      onTap: () => _showIncidentInfo(title, subtitle),
+      child: Container(
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+        ),
+        child: Image.asset(
+          assetPath,
+          width: 72,
+          height: 72,
+          fit: BoxFit.contain,
         ),
       ),
-      Marker(
-        point: const LatLng(15.1500, 120.5950),
-        width: 50,
-        height: 50,
-        child: GestureDetector(
-          onTap: () => _showIncidentInfo('Road Obstruction', 'Reported 25 mins ago'),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.warning,
-              color: Colors.orange,
-              size: 32,
-            ),
-          ),
-        ),
-      ),
-      Marker(
-        point: const LatLng(15.1400, 120.5800),
-        width: 50,
-        height: 50,
-        child: GestureDetector(
-          onTap: () => _showIncidentInfo('Medical Emergency', 'Reported 5 mins ago'),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.medical_services,
-              color: Colors.yellow,
-              size: 32,
+    );
+  }
+
+  Future<void> _loadReportsFromFirestore() async {
+    try {
+      _incidentMarkers.clear();
+      final snapshot = await FirebaseFirestore.instance
+          .collection('reports')
+          .where('location', isNotEqualTo: null)
+          .get();
+
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final location = data['location'] as GeoPoint?;
+        if (location == null) continue;
+
+        final point = LatLng(location.latitude, location.longitude);
+        final incidentType = data['incidentType'] as String? ?? 'Unknown';
+
+        _incidentMarkers.add(
+          Marker(
+            point: point,
+            width: 72,
+            height: 72,
+            child: _buildIncidentMarker(
+              assetPath: _getMarkerAssetForIncidentType(incidentType),
+              title: incidentType,
+              subtitle: 'Reported by ${data['name'] ?? 'Unknown'}',
             ),
           ),
-        ),
-      ),
-      Marker(
-        point: const LatLng(15.1550, 120.5850),
-        width: 50,
-        height: 50,
-        child: GestureDetector(
-          onTap: () => _showIncidentInfo('Flood Warning', 'Reported 1 hour ago'),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.water,
-              color: Colors.blue,
-              size: 32,
-            ),
-          ),
-        ),
-      ),
-    ]);
+        );
+      }
+
+      if (mounted) setState(() {});
+      print('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+    } catch (e) {
+      print('❌ Failed to load reports: $e');
+    }
+  }
+
+  String _getMarkerAssetForIncidentType(String type) {
+    switch (type.toUpperCase()) {
+      case 'FIRE':
+        return 'assets/icons/LOC-FIRE.png';
+      case 'FLOOD':
+        return 'assets/icons/LOC-FLOOD.png';
+      case 'EARTHQUAKE':
+        return 'assets/icons/LOC-EARTHQUAKE.png';
+      case 'VEHICULAR':
+        return 'assets/icons/LOC-CRASH.png';
+      case 'ROAD OBSTRUCTION':
+        return 'assets/icons/LOC-ROAD.png';
+      default:
+        return 'assets/icons/LOC-OTHERS.png';
+    }
   }
 
   void _addSampleComments() {
@@ -461,6 +428,44 @@ Route calculated successfully!
     } else {
       _mapController.move(_initialCenter, _initialZoom);
     }
+  }
+
+  Widget _buildTopBarAction({
+    required IconData icon,
+    required VoidCallback onTap,
+    bool isActive = false,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(isActive ? 0.28 : 0.18),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.35),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.18),
+                blurRadius: 6,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Icon(
+            icon,
+            color: Colors.white,
+            size: 28,
+          ),
+        ),
+      ),
+    );
   }
 
   void _showAdminCommentDialog() {
@@ -926,8 +931,9 @@ Route calculated successfully!
                         'LIVE MAP',
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'RobotoCondensed',
                         ),
                       ),
                       Row(
@@ -935,18 +941,14 @@ Route calculated successfully!
                           // Admin comment button
                           Stack(
                             children: [
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.admin_panel_settings,
-                                  color: Colors.white,
-                                ),
-                                onPressed: _showAdminCommentDialog,
-                                tooltip: 'Add Admin Comment',
+                              _buildTopBarAction(
+                                icon: Icons.admin_panel_settings,
+                                onTap: _showAdminCommentDialog,
                               ),
                               if (_adminComments.isNotEmpty)
                                 Positioned(
-                                  right: 8,
-                                  top: 8,
+                                  right: 4,
+                                  top: 4,
                                   child: Container(
                                     padding: const EdgeInsets.all(4),
                                     decoration: const BoxDecoration(
@@ -962,45 +964,44 @@ Route calculated successfully!
                                       ),
                                     ),
                                   ),
-                                ),
+                              ),
                             ],
                           ),
+                          const SizedBox(width: 8),
                           // View all comments button
-                          IconButton(
-                            icon: const Icon(Icons.comment, color: Colors.white),
-                            onPressed: _showAllCommentsDialog,
-                            tooltip: 'View All Comments',
+                          _buildTopBarAction(
+                            icon: Icons.comment,
+                            onTap: _showAllCommentsDialog,
                           ),
+                          const SizedBox(width: 8),
                           // Route button
-                          IconButton(
-                            icon: Icon(
-                              _isTracking ? Icons.stop : Icons.route,
-                              color: Colors.white,
-                            ),
-                            onPressed: () {
+                          _buildTopBarAction(
+                            icon: _isTracking ? Icons.stop : Icons.route,
+                            isActive: _isTracking,
+                            onTap: () {
                               if (_isTracking) {
                                 _stopTracking();
                               } else if (_routePoints.isNotEmpty) {
                                 _startTracking();
                               } else {
-                                _showRouteDialog();
+                                  _showRouteDialog();
                               }
                             },
                           ),
+                          const SizedBox(width: 8),
                           // Filter button
-                          IconButton(
-                            icon: const Icon(Icons.filter_list, color: Colors.white),
-                            onPressed: () {
-                              _showFilterDialog();
-                            },
+                          _buildTopBarAction(
+                            icon: Icons.filter_list,
+                            onTap: _showFilterDialog,
                           ),
+                          const SizedBox(width: 8),
                           // Refresh button
-                          IconButton(
-                            icon: const Icon(Icons.refresh, color: Colors.white),
-                            onPressed: () {
+                          _buildTopBarAction(
+                            icon: Icons.refresh,
+                            onTap: () {
                               setState(() {
                                 _incidentMarkers.clear();
-                                _addSampleMarkers();
+                                _loadReportsFromFirestore();
                               });
                             },
                           ),

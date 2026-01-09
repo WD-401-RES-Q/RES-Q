@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class ForgotPasswordPage extends StatefulWidget {
   const ForgotPasswordPage({super.key});
@@ -32,42 +33,24 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     super.dispose();
   }
 
-  Widget _logo() {
-    return RichText(
-      text: TextSpan(
-        style: GoogleFonts.poppins(fontSize: 26, fontWeight: FontWeight.w700),
-        children: const [
-          TextSpan(
-            text: 'RES',
-            style: TextStyle(color: appBlue),
-          ),
-          TextSpan(
-            text: 'Q',
-            style: TextStyle(color: appRed),
-          ),
-        ],
-      ),
-    );
-  }
-
   InputDecoration _inputDecoration(String label) {
     return InputDecoration(
       labelText: label,
       labelStyle: GoogleFonts.poppins(fontSize: 12, color: appBlack),
       filled: true,
       fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: Colors.black87, width: 1),
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.black87, width: 1.5),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: Colors.black87, width: 1),
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Colors.black87, width: 1.5),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: appBlue, width: 1.4),
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: appBlue, width: 1.5),
       ),
     );
   }
@@ -102,109 +85,170 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         child: Center(
           child: SingleChildScrollView(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 360),
+              constraints: const BoxConstraints(maxWidth: 400),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 16,
+                  horizontal: 32,
+                  vertical: 24,
                 ),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    // BLUE BACK BUTTON
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new,
-                        color: appBlue,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-
-                    Center(child: _logo()),
-                    const SizedBox(height: 24),
-
-                    Center(
-                      child: Text(
-                        'FORGOT PASSWORD',
-                        style: GoogleFonts.poppins(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: appBlack,
+                     // Back button
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new,
+                          color: appBlue,
+                          size: 24,
                         ),
                       ),
                     ),
+                    const SizedBox(height: 8),
 
-                    const SizedBox(height: 24),
+                    // Logo at the top
+                    SvgPicture.asset(
+                      'assets/icons/RESQ-LOGO.svg',
+                      height: 70,
+                      width: 200,
+                    ),
+                    const SizedBox(height: 40),
+
+                    // Title
+                    Text(
+                      'FORGOT PASSWORD',
+                      style: GoogleFonts.roboto(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                        color: appBlack,
+                      ),
+                    ),
+
+                    const SizedBox(height: 40),
 
                     Form(
                       key: _formKey,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          // Email Address Label
+                          Text(
+                            'EMAIL ADDRESS',
+                            style: GoogleFonts.roboto(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: appBlack,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
                           TextFormField(
                             controller: _emailCtl,
-                            decoration: _inputDecoration('EMAIL ADDRESS'),
+                            style: GoogleFonts.robotoCondensed(
+                              fontSize: 15,
+                              color: appBlack,
+                            ),
+                            decoration: _inputDecoration(''),
                             validator: (v) =>
                                 (v == null || v.isEmpty) ? 'Required' : null,
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 24),
 
+                          // New Password Label
+                          Text(
+                            'NEW PASSWORD',
+                            style: GoogleFonts.roboto(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: appBlack,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
                           TextFormField(
                             controller: _newPassCtl,
                             obscureText: _obscureNew,
-                            decoration: _inputDecoration('NEW PASSWORD')
-                                .copyWith(
-                                  suffixIcon: IconButton(
-                                    icon: Icon(
-                                      _obscureNew
-                                          ? Icons.visibility
-                                          : Icons.visibility_off,
-                                      size: 18,
-                                    ),
-                                    onPressed: () => setState(
-                                      () => _obscureNew = !_obscureNew,
-                                    ),
-                                  ),
+                            style: GoogleFonts.robotoCondensed(
+                              fontSize: 15,
+                              color: appBlack,
+                            ),
+                            decoration: _inputDecoration('').copyWith(
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _obscureNew
+                                      ? Icons.visibility
+                                      : Icons.visibility_off,
+                                  size: 20,
                                 ),
+                                onPressed: () => setState(
+                                  () => _obscureNew = !_obscureNew,
+                                ),
+                              ),
+                            ),
                             validator: (v) => (v == null || v.length < 6)
                                 ? 'Min 6 chars'
                                 : null,
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 24),
 
+                          // Confirm New Password Label
+                          Text(
+                            'CONFIRM NEW PASSWORD',
+                            style: GoogleFonts.roboto(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: appBlack,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
                           TextFormField(
                             controller: _confirmCtl,
                             obscureText: _obscureConfirm,
-                            decoration: _inputDecoration('CONFIRM NEW PASSWORD')
-                                .copyWith(
-                                  suffixIcon: IconButton(
-                                    icon: Icon(
-                                      _obscureConfirm
-                                          ? Icons.visibility
-                                          : Icons.visibility_off,
-                                      size: 18,
-                                    ),
-                                    onPressed: () => setState(
-                                      () => _obscureConfirm = !_obscureConfirm,
-                                    ),
-                                  ),
+                            style: GoogleFonts.robotoCondensed(
+                              fontSize: 15,
+                              color: appBlack,
+                            ),
+                            decoration: _inputDecoration('').copyWith(
+                              suffixIcon: IconButton(
+                                icon: Icon(
+                                  _obscureConfirm
+                                      ? Icons.visibility
+                                      : Icons.visibility_off,
+                                  size: 20,
                                 ),
+                                onPressed: () => setState(
+                                  () => _obscureConfirm = !_obscureConfirm,
+                                ),
+                              ),
+                            ),
                             validator: (v) =>
                                 (v == null || v.isEmpty) ? 'Required' : null,
                           ),
 
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 40),
 
-                          SizedBox(
-                            height: 44,
+                          // Button with shadow
+                          Container(
+                            height: 56,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(28),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.2),
+                                  spreadRadius: 2,
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
+                            ),
                             child: ElevatedButton(
                               onPressed: _loading ? null : _submit,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: appBlue,
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(4),
+                                  borderRadius: BorderRadius.circular(28),
                                 ),
+                                elevation: 0,
                               ),
                               child: _loading
                                   ? const CircularProgressIndicator(
@@ -213,10 +257,12 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                                     )
                                   : Text(
                                       'UPDATE AND PROCEED TO LOGIN',
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
+                                      style: TextStyle(
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.w200,
                                         color: Colors.white,
+                                        letterSpacing: 0.5,
+                                        fontFamily: 'RobotoCondensed',
                                       ),
                                       textAlign: TextAlign.center,
                                     ),

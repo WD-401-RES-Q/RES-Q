@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:async';
 import '../services/user_session.dart';
 import '../widgets/bottom_nav_bar.dart';
-import 'report_map_page.dart';
+import 'home_page.dart';
+import 'emergency_call_screen.dart';
 
 class ReportFormScreen extends StatefulWidget {
   final String incidentType;
@@ -84,28 +84,101 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   void _showMediaOptions() {
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      builder: (context) => SafeArea(
-        child: Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: const Text('Take Photo'),
-              onTap: () {
-                Navigator.pop(context);
-                _capturePhoto();
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: const Text('Choose from Gallery'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickFromGallery();
-              },
-            ),
-          ],
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        backgroundColor: const Color(0xFFF7F8F3),
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  // Camera Icon
+                  Container(
+                    width: 90,
+                    height: 90,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFAC1B22),
+                      borderRadius: BorderRadius.all(Radius.circular(12)),
+                    ),
+                    child: const Icon(
+                      Icons.camera_alt,
+                      color: Colors.white,
+                      size: 30,
+                    ),
+                  ),
+                  const SizedBox(width: 24),
+                  // Buttons Column
+                  Expanded(
+                    child: Column(
+                      children: [
+                        // Capture Image Button
+                        SizedBox(
+                          width: double.infinity,
+                          height: 36,
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _capturePhoto();
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFAC1B22),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              elevation: 2,
+                            ),
+                            child: const Text(
+                              'CAPTURE AN IMAGE',
+                              style: TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontSize: 12,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        // Record Video Button
+                        SizedBox(
+                          width: double.infinity,
+                          height: 36,
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _pickFromGallery();
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFAC1B22),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              elevation: 2,
+                            ),
+                            child: const Text(
+                              'RECORD A VIDEO',
+                              style: TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontSize: 12,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -116,7 +189,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please enable GPS sharing to continue'),
-          backgroundColor: Colors.red,
+          backgroundColor: const Color(0xFFAC1B22),
         ),
       );
       return;
@@ -206,8 +279,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
               const SizedBox(width: 12),
               Text(
                 'Success!',
-                style: GoogleFonts.poppins(
-                  fontWeight: FontWeight.bold,
+                style: const TextStyle(
+                  fontFamily: 'Roboto',
+                  fontWeight: FontWeight.w900,
                   fontSize: 20,
                 ),
               ),
@@ -215,26 +289,32 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           ),
           content: Text(
             'Your ${widget.incidentType} report has been submitted successfully.',
-            style: GoogleFonts.poppins(fontSize: 14),
+            style: const TextStyle(
+              fontFamily: 'RobotoCondensed',
+              fontWeight: FontWeight.w400,
+              fontSize: 14,
+            ),
           ),
           actions: [
             ElevatedButton(
               onPressed: () {
                 Navigator.of(context).pop(); // Close dialog
+                final reportData = {
+                  'name': _fullName ?? 'Unknown',
+                  'contactNumber': _contactNumber ?? 'Unknown',
+                  'incidentType': widget.incidentType,
+                  'details': _informationController.text.trim(),
+                  'mediaUrl': mediaUrl,
+                  'mediaType': mediaType,
+                  'reportedAt': now,
+                };
+                UserSession.setActiveReport(
+                  reportId: docRef.id,
+                  reportData: reportData,
+                );
                 Navigator.of(context).pushReplacement(
                   MaterialPageRoute(
-                    builder: (context) => ReportMapPage(
-                      reportId: docRef.id,
-                      reportData: {
-                        'name': _fullName ?? 'Unknown',
-                        'contactNumber': _contactNumber ?? 'Unknown',
-                        'incidentType': widget.incidentType,
-                        'details': _informationController.text.trim(),
-                        'mediaUrl': mediaUrl,
-                        'mediaType': mediaType,
-                        'reportedAt': now,
-                      },
-                    ),
+                    builder: (context) => const MainPage(initialIndex: 2),
                   ),
                 );
               },
@@ -244,11 +324,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              child: Text(
+              child: const Text(
                 'OK',
-                style: GoogleFonts.poppins(
+                style: TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontWeight: FontWeight.w400,
                   color: Colors.white,
-                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
@@ -307,15 +388,16 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
                 const SizedBox(height: 32),
 
-                // Incident label
+                // Incident label (HEADING - Roboto Black)
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
                     widget.incidentType,
-                    style: GoogleFonts.poppins(
+                    style: const TextStyle(
+                      fontFamily: 'Roboto',
                       fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      color: const Color(0xFFAC1B22),
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFFAC1B22),
                     ),
                   ),
                 ),
@@ -350,7 +432,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
                 // Information TextArea
                 Container(
-                  height: 320,
+                  height: 190,
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
@@ -361,19 +443,22 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                     maxLines: null,
                     expands: true,
                     textAlignVertical: TextAlignVertical.top,
-                    style: GoogleFonts.poppins(
+                    style: const TextStyle(
+                      fontFamily: 'RobotoCondensed',
                       fontSize: 14,
+                      fontWeight: FontWeight.w400,
                       color: Colors.black,
                     ),
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       hintText:
                           "Please tell us more about the incident...(Optional)",
-                      hintStyle: GoogleFonts.poppins(
+                      hintStyle: TextStyle(
+                        fontFamily: 'RobotoCondensed',
                         fontSize: 16,
+                        fontWeight: FontWeight.w400,
                         color: Colors.black,
-                        fontWeight: FontWeight.w500,
                       ),
-                      contentPadding: const EdgeInsets.all(16),
+                      contentPadding: EdgeInsets.all(16),
                       border: InputBorder.none,
                     ),
                   ),
@@ -398,10 +483,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                             _capturedMedia == null
                                 ? "(Optional) CAPTURE PHOTO/VIDEO"
                                 : "✓ Media captured",
-                            style: GoogleFonts.poppins(
+                            style: const TextStyle(
+                              fontFamily: 'RobotoCondensed',
                               fontSize: 14,
+                              fontWeight: FontWeight.w400,
                               color: Colors.black,
-                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ),
@@ -429,11 +515,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   ],
                 ),
 
-                const SizedBox(height: 16),
-                const SizedBox(height: 24),
+                const SizedBox(height: 18),
 
-                // GPS Checkbox
+                // GPS Checkbox - Center aligned
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     SizedBox(
                       width: 28,
@@ -452,34 +538,43 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        "CHECK TO ENABLE GPS SHARING LOCATION",
-                        style: GoogleFonts.poppins(
-                          fontSize: 13,
-                          color: Colors.black,
-                          fontWeight: FontWeight.w500,
-                        ),
+                    Text(
+                      "CHECK TO ENABLE GPS SHARING LOCATION",
+                      style: const TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                        color: Colors.black,
                       ),
                     ),
                   ],
                 ),
 
-                const SizedBox(height: 24),
+                const SizedBox(height: 18),
 
-                // Confirm Button
-                SizedBox(
-                  width: 280,
+                // Confirm Button - Rounded corners, drop shadow
+                Container(
+                  width: 230,
                   height: 56,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(30),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.4),
+                        blurRadius: 4,
+                        offset: const Offset(0, 7),
+                      ),
+                    ],
+                  ),
                   child: ElevatedButton(
                     onPressed: _confirmReport,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFFFC806),
                       foregroundColor: Colors.white,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(30),
                       ),
-                      elevation: 4,
+                      elevation: 0,
                     ),
                     child: _submitting
                         ? const SizedBox(
@@ -492,50 +587,55 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                               ),
                             ),
                           )
-                        : Text(
+                        : const Text(
                             "CONFIRM",
-                            style: GoogleFonts.poppins(
+                            style: TextStyle(
+                              fontFamily: 'RobotoCondensed',
                               fontSize: 18,
-                              fontWeight: FontWeight.bold,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
                   ),
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 25),
 
-                // Emergency Call Button
-                SizedBox(
-                  width: 300,
-                  height: 80,
+                // Emergency Call Button - Circular with yellow border and drop shadow
+                Container(
+                  width: 110,
+                  height: 110,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.4),
+                        blurRadius: 4,
+                        offset: const Offset(0, 7),
+                      ),
+                    ],
+                  ),
                   child: ElevatedButton(
                     onPressed: () {
-                      // TODO: Navigate to emergency call screen
-                      print("Emergency call pressed");
+                      print("Emergency call button pressed");
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const EmergencyCallScreen(),
+                        ),
+                      );
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFAC1B22),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                      shape: const CircleBorder(
+                        side: BorderSide(color: Color(0xFFFFC806), width: 6),
                       ),
-                      elevation: 4,
+                      elevation: 0,
+                      padding: EdgeInsets.zero,
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          "EMERGENCY\nCALL",
-                          textAlign: TextAlign.center,
-                          style: GoogleFonts.poppins(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            height: 1.2,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        const Icon(Icons.phone, color: Colors.white, size: 60),
-                      ],
+                    child: const Icon(
+                      Icons.phone,
+                      color: Colors.white,
+                      size: 60,
                     ),
                   ),
                 ),
@@ -565,9 +665,10 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       children: [
         Text(
           '$label:',
-          style: GoogleFonts.poppins(
+          style: const TextStyle(
+            fontFamily: 'Roboto',
             fontSize: 14,
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w900,
             color: Colors.black,
           ),
         ),
@@ -575,9 +676,10 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           child: Text(
             value,
             textAlign: TextAlign.right,
-            style: GoogleFonts.poppins(
+            style: const TextStyle(
+              fontFamily: 'RobotoCondensed',
               fontSize: 14,
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w400,
               color: Colors.black,
             ),
           ),

@@ -14,8 +14,8 @@ class CommunityPage extends StatefulWidget {
 class _CommunityPageState extends State<CommunityPage> {
   // Brand colors
   static const appBlue = Color(0xFFAC1B22);
-  static const appRed = Color(0xFFFFC806);
-  static const appGreen = Color(0xFF00A458);
+  static const appRed = Color(0xFFAC1B22);
+  static const appGreen = Color(0xFFFFC806);
   static const appYellow = Color(0xFFF5F520);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
@@ -141,252 +141,254 @@ class _CommunityPageState extends State<CommunityPage> {
 
   // ───────────────── DIALOG HELPERS ─────────────────
 
-  Future<bool> _showReasonDialog({
-    required Color headerColor,
-    required String headerText,
-    required String question,
-    required List<String> reasons,
-  }) async {
-    final TextEditingController commentController = TextEditingController();
-    final List<bool> selected = List<bool>.filled(reasons.length, false);
-    String? errorText;
+  // Add this method to replace the existing _showReasonDialog in community_page.dart
 
-    final result =
-        await showDialog<bool>(
-          context: context,
-          barrierDismissible: true,
-          builder: (dialogContext) {
-            return Dialog(
-              insetPadding: const EdgeInsets.symmetric(
-                horizontal: 24,
-                vertical: 24,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: StatefulBuilder(
-                builder: (context, setStateDialog) {
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
+Future<bool> _showReasonDialog({
+  required Color headerColor,
+  required String headerText,
+  required String question,
+  required List<String> reasons,
+}) async {
+  final TextEditingController commentController = TextEditingController();
+  final List<bool> selected = List<bool>.filled(reasons.length, false);
+  String? errorText;
+
+  final result = await showDialog<bool>(
+    context: context,
+    barrierDismissible: true,
+    builder: (dialogContext) {
+      return Dialog(
+        insetPadding: const EdgeInsets.symmetric(
+          horizontal: 24,
+          vertical: 24,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // HEADER (Yellow/Green background with white text)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 24,
+                  ),
+                  decoration: BoxDecoration(
+                    color: headerColor,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(20),
+                      topRight: Radius.circular(20),
+                    ),
+                  ),
+                  child: Center(
+                    child: Text(
+                      headerText,
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+
+                // BODY (White background)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.only(
+                      bottomLeft: Radius.circular(20),
+                      bottomRight: Radius.circular(20),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // HEADER WITH BACK BUTTON
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
+                      // Question
+                      Text(
+                        question,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 22,
+                          fontWeight: FontWeight.w400,
+                          color: Colors.black,
                         ),
-                        decoration: BoxDecoration(
-                          color: headerColor,
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(16),
-                            topRight: Radius.circular(16),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            // back button (blue, like profile)
-                            Container(
-                              decoration: BoxDecoration(
-                                //color: appBlue,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: IconButton(
-                                padding: const EdgeInsets.all(4),
-                                constraints: const BoxConstraints(),
-                                icon: const Icon(
-                                  Icons.arrow_back_ios_new,
-                                  color: Colors.white,
-                                  size: 20,
+                      ),
+                      const SizedBox(height: 24),
+
+                      // Reasons (Checkboxes)
+                      ...List.generate(reasons.length, (i) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: InkWell(
+                            onTap: () {
+                              setStateDialog(() {
+                                selected[i] = !selected[i];
+                              });
+                            },
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: Colors.black,
+                                      width: 2,
+                                    ),
+                                    color: selected[i]
+                                        ? headerColor.withOpacity(0.1)
+                                        : Colors.white,
+                                  ),
+                                  child: selected[i]
+                                      ? Icon(
+                                          Icons.check,
+                                          size: 28,
+                                          color: headerColor,
+                                        )
+                                      : null,
                                 ),
-                                onPressed: () =>
-                                    Navigator.of(dialogContext).pop(false),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Center(
-                                child: Text(
-                                  headerText,
-                                  style: GoogleFonts.poppins(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white,
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Text(
+                                    reasons[i],
+                                    style: const TextStyle(
+                                      fontFamily: 'RobotoCondensed',
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w400,
+                                      color: Colors.black,
+                                    ),
                                   ),
                                 ),
-                              ),
+                              ],
                             ),
-                            const SizedBox(width: 40), // balance right side
-                          ],
+                          ),
+                        );
+                      }),
+
+                      const SizedBox(height: 24),
+
+                      // Additional Comments Label
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Additional Comments',
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 18,
+                            fontWeight: FontWeight.w400,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Text Field
+                      Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE8E8E8),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: TextField(
+                          controller: commentController,
+                          maxLines: 4,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 16,
+                            fontWeight: FontWeight.w400,
+                            color: Colors.black,
+                          ),
+                          decoration: const InputDecoration(
+                            contentPadding: EdgeInsets.all(16),
+                            border: InputBorder.none,
+                          ),
                         ),
                       ),
 
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              question,
-                              style: GoogleFonts.poppins(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w500,
-                                color: appBlack,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
+                      if (errorText != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          errorText!,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 14,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ],
 
-                            // Reasons
-                            ...List.generate(reasons.length, (i) {
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 4.0,
-                                ),
-                                child: InkWell(
-                                  onTap: () {
-                                    setStateDialog(() {
-                                      selected[i] = !selected[i];
-                                    });
-                                  },
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        width: 22,
-                                        height: 22,
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
-                                          border: Border.all(
-                                            color: appBlack,
-                                            width: 1.4,
-                                          ),
-                                          color: selected[i]
-                                              ? headerColor.withOpacity(0.15)
-                                              : Colors.white,
-                                        ),
-                                        child: selected[i]
-                                            ? Icon(
-                                                Icons.check,
-                                                size: 18,
-                                                color: headerColor,
-                                              )
-                                            : null,
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Text(
-                                          reasons[i],
-                                          style: GoogleFonts.poppins(
-                                            fontSize: 13,
-                                            color: appBlack,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            }),
+                      const SizedBox(height: 24),
 
-                            const SizedBox(height: 16),
-
-                            Text(
-                              'Additional Comments',
-                              style: GoogleFonts.poppins(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: appBlack,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            TextField(
-                              controller: commentController,
-                              maxLines: 3,
-                              decoration: InputDecoration(
-                                filled: true,
-                                fillColor: const Color(0xFFF0F0F0),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: const BorderSide(
-                                    color: Colors.transparent,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: const BorderSide(
-                                    color: Colors.transparent,
-                                  ),
-                                ),
-                              ),
-                            ),
-
-                            if (errorText != null) ...[
-                              const SizedBox(height: 8),
-                              Text(
-                                errorText!,
-                                style: GoogleFonts.poppins(
-                                  fontSize: 12,
-                                  color: appRed,
-                                ),
-                              ),
-                            ],
-
-                            const SizedBox(height: 16),
-
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: SizedBox(
-                                width: 110,
-                                height: 36,
-                                child: ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: headerColor,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                  ),
-                                  onPressed: () {
-                                    final hasReason = selected.contains(true);
-                                    final hasComment = commentController.text
-                                        .trim()
-                                        .isNotEmpty;
-
-                                    if (!hasReason && !hasComment) {
-                                      setStateDialog(() {
-                                        errorText =
-                                            'Please select a reason or add a comment.';
-                                      });
-                                      return;
-                                    }
-
-                                    Navigator.of(dialogContext).pop(true);
-                                  },
-                                  child: Text(
-                                    'SUBMIT',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ),
-                              ),
+                      // Submit Button
+                      Container(
+                        width: 200,
+                        height: 56,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.25),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
                             ),
                           ],
+                        ),
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: headerColor,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30),
+                            ),
+                            elevation: 0,
+                          ),
+                          onPressed: () {
+                            final hasReason = selected.contains(true);
+                            final hasComment =
+                                commentController.text.trim().isNotEmpty;
+
+                            if (!hasReason && !hasComment) {
+                              setStateDialog(() {
+                                errorText =
+                                    'Please select a reason or add a comment.';
+                              });
+                              return;
+                            }
+
+                            Navigator.of(dialogContext).pop(true);
+                          },
+                          child: const Text(
+                            'SUBMIT',
+                            style: TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 20,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.white,
+                            ),
+                          ),
                         ),
                       ),
                     ],
-                  );
-                },
-              ),
+                  ),
+                ),
+              ],
             );
           },
-        ) ??
-        false;
+        ),
+      );
+    },
+  ) ?? false;
 
-    return result;
-  }
+  return result;
+}
 
   // ───────────────── FLAG LOGIC (WITH DIALOG) ─────────────────
 
@@ -405,7 +407,7 @@ class _CommunityPageState extends State<CommunityPage> {
 
     // Show VERIFY modal
     final bool confirmed = await _showReasonDialog(
-      headerColor: appGreen,
+      headerColor: appRed,
       headerText: 'VERIFY REPORT',
       question: 'Why are you verifying this report?',
       reasons: const [
@@ -442,7 +444,7 @@ class _CommunityPageState extends State<CommunityPage> {
 
     // Show REPORT modal
     final bool confirmed = await _showReasonDialog(
-      headerColor: appRed,
+      headerColor: appBlue,
       headerText: 'REPORT INCIDENT',
       question: 'Why are you flagging this report?',
       reasons: const [
@@ -494,9 +496,10 @@ class _CommunityPageState extends State<CommunityPage> {
             Center(
               child: RichText(
                 text: TextSpan(
-                  style: GoogleFonts.poppins(
-                    fontSize: 40,
-                    fontWeight: FontWeight.w700,
+                  style: TextStyle(
+                    fontSize: 45,
+                    fontWeight: FontWeight.w900,
+                    fontFamily: 'Roboto',
                   ),
                   children: const [
                     TextSpan(
@@ -505,7 +508,7 @@ class _CommunityPageState extends State<CommunityPage> {
                     ),
                     TextSpan(
                       text: 'O',
-                      style: TextStyle(color: appRed),
+                      style: TextStyle(color: const Color(0xFFFFC806)),
                     ),
                     TextSpan(
                       text: 'MMUNITY',
@@ -518,100 +521,120 @@ class _CommunityPageState extends State<CommunityPage> {
 
             const SizedBox(height: 12),
 
-            // FILTER ROW
-            Row(
+            // FILTERS
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Filter by:',
-                  style: GoogleFonts.poppins(fontSize: 12, color: appBlack),
-                ),
-                const SizedBox(width: 6),
-                Container(
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _selectedFilter,
-                      dropdownColor: Colors.white,
-                      style: GoogleFonts.poppins(fontSize: 12, color: appBlack),
-                      items: const [
-                        DropdownMenuItem(value: 'All', child: Text('All')),
-                        DropdownMenuItem(
-                          value: 'Verified',
-                          child: Text('Verified'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'Under Review',
-                          child: Text('Under Review'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'Unverified',
-                          child: Text('Unverified'),
-                        ),
-                      ],
-                      onChanged: (v) => setState(
-                        () => _selectedFilter = v ?? _selectedFilter,
+                Row(
+                  children: [
+                    Text(
+                      'FILTER BY:  ',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: appBlack,
+                        fontWeight: FontWeight.w900,
+                        fontFamily: 'Roboto',
                       ),
                     ),
-                  ),
-                ),
-
-                const SizedBox(width: 24),
-
-                Text(
-                  'Category:',
-                  style: GoogleFonts.poppins(fontSize: 12, color: appBlack),
-                ),
-                const SizedBox(width: 6),
-
-                Container(
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  decoration: BoxDecoration(
-                    color: appBlue,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _selectedCategory,
-                      dropdownColor: Colors.white,
-                      iconEnabledColor: Colors.white,
-                      style: GoogleFonts.poppins(fontSize: 12, color: appBlack),
-                      items: _categories
-                          .map(
-                            (value) => DropdownMenuItem(
-                              value: value,
-                              child: Text(
-                                value,
-                                style: const TextStyle(color: appBlack),
-                              ),
+                    const SizedBox(width: 8),
+                    Container(
+                      height: 35,
+                      width: 120,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _selectedFilter,
+                          dropdownColor: Colors.white,
+                          style:
+                              GoogleFonts.poppins(fontSize: 13, color: appBlack),
+                          items: const [
+                            DropdownMenuItem(value: 'All', child: Text('All')),
+                            DropdownMenuItem(
+                              value: 'Verified',
+                              child: Text('Verified'),
                             ),
-                          )
-                          .toList(),
-                      selectedItemBuilder: (context) {
-                        return _categories.map((value) {
-                          return Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              value,
-                              style: GoogleFonts.poppins(
-                                fontSize: 12,
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
+                            DropdownMenuItem(
+                              value: 'Under Review',
+                              child: Text('Under Review'),
                             ),
-                          );
-                        }).toList();
-                      },
-                      onChanged: (v) => setState(
-                        () => _selectedCategory = v ?? _selectedCategory,
+                            DropdownMenuItem(
+                              value: 'Unverified',
+                              child: Text('Unverified'),
+                            ),
+                          ],
+                          onChanged: (v) => setState(
+                            () => _selectedFilter = v ?? _selectedFilter,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Text(
+                      'CATEGORY:',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: appBlack,
+                        fontWeight: FontWeight.w900,
+                        fontFamily: 'Roboto',
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      height: 35,
+                      width: 120,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        color: appBlue,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _selectedCategory,
+                          dropdownColor: Colors.white,
+                          iconEnabledColor: Colors.white,
+                          style:
+                              GoogleFonts.poppins(fontSize: 13, color: appBlack),
+                          items: _categories
+                              .map(
+                                (value) => DropdownMenuItem(
+                                  value: value,
+                                  child: Text(
+                                    value,
+                                    style: const TextStyle(color: appBlack),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          selectedItemBuilder: (context) {
+                            return _categories.map((value) {
+                              return Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  value,
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              );
+                            }).toList();
+                          },
+                          onChanged: (v) => setState(
+                            () => _selectedCategory = v ?? _selectedCategory,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -620,10 +643,11 @@ class _CommunityPageState extends State<CommunityPage> {
 
             Text(
               'LATEST REPORTS',
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
                 color: appBlack,
+                fontFamily: 'Roboto',
               ),
             ),
 
@@ -715,9 +739,10 @@ class _CommunityPageState extends State<CommunityPage> {
                                   const SizedBox(width: 6),
                                   Text(
                                     report['status'],
-                                    style: GoogleFonts.poppins(
+                                    style: TextStyle(
+                                      fontFamily: 'RobotoCondensed',
                                       fontSize: 12,
-                                      fontWeight: FontWeight.w600,
+                                      fontWeight: FontWeight.w400,
                                       color:
                                           statusLower == 'approved' ||
                                               statusLower == 'verified'
@@ -735,16 +760,20 @@ class _CommunityPageState extends State<CommunityPage> {
                                 children: [
                                   Text(
                                     'DATE: ${report['date']}',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 12,
+                                    style: const TextStyle(
+                                      fontFamily: 'RobotoCondensed',
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w400,
                                       color: appBlack,
                                     ),
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
                                     'TIME: ${report['time']}',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 12,
+                                    style: const TextStyle(
+                                      fontFamily: 'RobotoCondensed',
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w400,
                                       color: appBlack,
                                     ),
                                   ),
@@ -761,9 +790,10 @@ class _CommunityPageState extends State<CommunityPage> {
                           padding: const EdgeInsets.symmetric(horizontal: 12.0),
                           child: Text(
                             report['title'],
-                            style: GoogleFonts.poppins(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
                               color: appBlack,
                             ),
                           ),
@@ -776,8 +806,10 @@ class _CommunityPageState extends State<CommunityPage> {
                           padding: const EdgeInsets.symmetric(horizontal: 12.0),
                           child: Text(
                             report['desc'],
-                            style: GoogleFonts.poppins(
-                              fontSize: 14,
+                            style: const TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 16,
+                              fontWeight: FontWeight.w400,
                               color: appBlack,
                             ),
                           ),
@@ -800,7 +832,7 @@ class _CommunityPageState extends State<CommunityPage> {
                                 child: Container(
                                   decoration: BoxDecoration(
                                     color: greenSelected
-                                        ? appGreen.withOpacity(0.12)
+                                        ? appGreen.withOpacity(1)
                                         : Colors.transparent,
                                     borderRadius: BorderRadius.circular(8),
                                   ),
@@ -818,11 +850,10 @@ class _CommunityPageState extends State<CommunityPage> {
                                       const SizedBox(width: 6),
                                       Text(
                                         '${report['greenFlags']}',
-                                        style: GoogleFonts.poppins(
+                                        style: const TextStyle(
+                                          fontFamily: 'RobotoCondensed',
                                           fontSize: 13,
-                                          fontWeight: greenSelected
-                                              ? FontWeight.w700
-                                              : FontWeight.w500,
+                                          fontWeight: FontWeight.w400,
                                           color: appBlack,
                                         ),
                                       ),
@@ -840,7 +871,7 @@ class _CommunityPageState extends State<CommunityPage> {
                                 child: Container(
                                   decoration: BoxDecoration(
                                     color: redSelected
-                                        ? appRed.withOpacity(0.12)
+                                        ? appRed.withOpacity(1)
                                         : Colors.transparent,
                                     borderRadius: BorderRadius.circular(8),
                                   ),
@@ -858,11 +889,10 @@ class _CommunityPageState extends State<CommunityPage> {
                                       const SizedBox(width: 6),
                                       Text(
                                         '${report['redFlags']}',
-                                        style: GoogleFonts.poppins(
+                                        style: const TextStyle(
+                                          fontFamily: 'RobotoCondensed',
                                           fontSize: 13,
-                                          fontWeight: redSelected
-                                              ? FontWeight.w700
-                                              : FontWeight.w500,
+                                          fontWeight: FontWeight.w400,
                                           color: appBlack,
                                         ),
                                       ),
@@ -892,8 +922,10 @@ class _CommunityPageState extends State<CommunityPage> {
                                       const SizedBox(width: 6),
                                       Text(
                                         '${report['comments']}',
-                                        style: GoogleFonts.poppins(
+                                        style: const TextStyle(
+                                          fontFamily: 'RobotoCondensed',
                                           fontSize: 13,
+                                          fontWeight: FontWeight.w400,
                                           color: appBlack,
                                         ),
                                       ),
@@ -1262,9 +1294,10 @@ class _CommentsPageState extends State<_CommentsPage> {
         ),
         title: Text(
           'Comments (${widget.report['comments']})',
-          style: GoogleFonts.poppins(
+          style: const TextStyle(
+            fontFamily: 'Roboto',
             fontSize: 18,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w900,
             color: Colors.white,
           ),
         ),
@@ -1280,9 +1313,10 @@ class _CommentsPageState extends State<_CommentsPage> {
               children: [
                 Text(
                   'Report: ${widget.report['title']}',
-                  style: GoogleFonts.poppins(
+                  style: const TextStyle(
+                    fontFamily: 'Roboto',
                     fontSize: 14,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w900,
                     color: appBlack,
                   ),
                 ),
@@ -1292,15 +1326,19 @@ class _CommentsPageState extends State<_CommentsPage> {
                   children: [
                     Text(
                       'Status: ${widget.report['status']}',
-                      style: GoogleFonts.poppins(
+                      style: TextStyle(
+                        fontFamily: 'RobotoCondensed',
                         fontSize: 12,
+                        fontWeight: FontWeight.w400,
                         color: Colors.grey[600],
                       ),
                     ),
                     Text(
                       'By: ${widget.report['name']}',
-                      style: GoogleFonts.poppins(
+                      style: TextStyle(
+                        fontFamily: 'RobotoCondensed',
                         fontSize: 12,
+                        fontWeight: FontWeight.w400,
                         color: Colors.grey[600],
                       ),
                     ),
@@ -1319,7 +1357,12 @@ class _CommentsPageState extends State<_CommentsPage> {
               children: [
                 Text(
                   'Filter:',
-                  style: GoogleFonts.poppins(fontSize: 13, color: appBlack),
+                  style: const TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                    color: appBlack,
+                  ),
                 ),
                 const SizedBox(width: 8),
                 Container(
@@ -1333,7 +1376,12 @@ class _CommentsPageState extends State<_CommentsPage> {
                     child: DropdownButton<String>(
                       value: _commentFilter,
                       dropdownColor: Colors.white,
-                      style: GoogleFonts.poppins(fontSize: 12, color: appBlack),
+                      style: const TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w400,
+                        color: appBlack,
+                      ),
                       items: const [
                         DropdownMenuItem(
                           value: 'All Comments',
@@ -1366,8 +1414,10 @@ class _CommentsPageState extends State<_CommentsPage> {
                     child: Text(
                       'No comments yet.\nBe the first to comment!',
                       textAlign: TextAlign.center,
-                      style: GoogleFonts.poppins(
+                      style: TextStyle(
+                        fontFamily: 'RobotoCondensed',
                         fontSize: 14,
+                        fontWeight: FontWeight.w400,
                         color: Colors.grey[600],
                       ),
                     ),
@@ -1413,10 +1463,11 @@ class _CommentsPageState extends State<_CommentsPage> {
                                   backgroundColor: appBlue,
                                   child: Text(
                                     comment['author'][0].toUpperCase(),
-                                    style: GoogleFonts.poppins(
+                                    style: const TextStyle(
+                                      fontFamily: 'RobotoCondensed',
                                       fontSize: 12,
                                       color: Colors.white,
-                                      fontWeight: FontWeight.w600,
+                                      fontWeight: FontWeight.w400,
                                     ),
                                   ),
                                 ),
@@ -1428,16 +1479,19 @@ class _CommentsPageState extends State<_CommentsPage> {
                                     children: [
                                       Text(
                                         comment['author'],
-                                        style: GoogleFonts.poppins(
+                                        style: const TextStyle(
+                                          fontFamily: 'RobotoCondensed',
                                           fontSize: 13,
-                                          fontWeight: FontWeight.w600,
+                                          fontWeight: FontWeight.w400,
                                           color: appBlack,
                                         ),
                                       ),
                                       Text(
                                         timeAgo,
-                                        style: GoogleFonts.poppins(
+                                        style: TextStyle(
+                                          fontFamily: 'RobotoCondensed',
                                           fontSize: 11,
+                                          fontWeight: FontWeight.w400,
                                           color: Colors.grey[600],
                                         ),
                                       ),
@@ -1451,8 +1505,10 @@ class _CommentsPageState extends State<_CommentsPage> {
                             // COMMENT TEXT
                             Text(
                               comment['text'],
-                              style: GoogleFonts.poppins(
+                              style: const TextStyle(
+                                fontFamily: 'RobotoCondensed',
                                 fontSize: 13,
+                                fontWeight: FontWeight.w400,
                                 color: appBlack,
                               ),
                             ),
@@ -1486,11 +1542,10 @@ class _CommentsPageState extends State<_CommentsPage> {
                                         const SizedBox(width: 4),
                                         Text(
                                           '${comment['greenFlags']}',
-                                          style: GoogleFonts.poppins(
+                                          style: const TextStyle(
+                                            fontFamily: 'RobotoCondensed',
                                             fontSize: 12,
-                                            fontWeight: greenSelected
-                                                ? FontWeight.w700
-                                                : FontWeight.w500,
+                                            fontWeight: FontWeight.w400,
                                             color: appBlack,
                                           ),
                                         ),
@@ -1526,11 +1581,10 @@ class _CommentsPageState extends State<_CommentsPage> {
                                         const SizedBox(width: 4),
                                         Text(
                                           '${comment['redFlags']}',
-                                          style: GoogleFonts.poppins(
+                                          style: const TextStyle(
+                                            fontFamily: 'RobotoCondensed',
                                             fontSize: 12,
-                                            fontWeight: redSelected
-                                                ? FontWeight.w700
-                                                : FontWeight.w500,
+                                            fontWeight: FontWeight.w400,
                                             color: appBlack,
                                           ),
                                         ),
@@ -1563,9 +1617,19 @@ class _CommentsPageState extends State<_CommentsPage> {
                   child: TextField(
                     controller: _commentController,
                     maxLines: null,
+                    style: const TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w400,
+                      color: appBlack,
+                    ),
                     decoration: InputDecoration(
                       hintText: 'Write a comment...',
-                      hintStyle: GoogleFonts.poppins(fontSize: 13),
+                      hintStyle: const TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontSize: 13,
+                        fontWeight: FontWeight.w400,
+                      ),
                       filled: true,
                       fillColor: Colors.grey[100],
                       contentPadding: const EdgeInsets.symmetric(
@@ -1594,10 +1658,11 @@ class _CommentsPageState extends State<_CommentsPage> {
                   ),
                   child: Text(
                     'Post',
-                    style: GoogleFonts.poppins(
+                    style: const TextStyle(
+                      fontFamily: 'RobotoCondensed',
                       color: Colors.white,
                       fontSize: 13,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
                 ),
