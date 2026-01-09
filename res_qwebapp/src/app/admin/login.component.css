@@ -1,75 +1,112 @@
-.login-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  min-height: 100vh;
-  background: #F7F8F3;
-  padding: 24px;
+/* ====== HARD LOCK: prevent any vertical scrolling ====== */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden !important;       /* hard stop */
+  overscroll-behavior: none;          /* prevent bounce/overscroll */
+  background: #ffffff;
 }
 
-.login-card {
-  background: #ffffff;
-  border-radius: 12px;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
-  width: 100%;
-  max-width: 420px;
+/* Angular root can still allow scroll if it overflows */
+app-root,
+:host {
+  display: block;
+  height: 100%;
+  overflow: hidden !important;
+}
+
+/* ====== PAGE WRAPPER ====== */
+.login-container {
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+
+/* Center hero + card, allow shrinking */
+.login-body {
+  flex: 1;
+  min-height: 0; /* IMPORTANT: lets flex child shrink instead of overflow */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 8px 16px;
+  box-sizing: border-box;
   overflow: hidden;
 }
 
-.login-header {
-  background: #AC1B22;
-  padding: 40px 30px;
+/* ====== HERO ====== */
+.login-hero {
   text-align: center;
-  color: #F7F8F3;
+  color: #ac1b22;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 
-.logo-container h1 {
-  margin: 0;
-  font-size: 48px;
-  font-weight: bold;
-  letter-spacing: 2px;
-  color: #FFC806;
+.hero-logo {
+  max-width: 320px;
+  width: 100%;
+  height: auto;
 }
 
-.subtitle {
-  margin: 8px 0 0 0;
-  font-size: 18px;
-  opacity: 0.95;
-  font-weight: 300;
+.hero-underline {
+  margin: 4px auto 0;
+  width: 240px;
+  height: 5px;
+  background: #ffc806;
+  border-radius: 3px;
+}
+
+/* ====== CARD ====== */
+.login-card {
+  background: #f7f8f3;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.08);
+  width: 100%;
+  max-width: 540px;
+  overflow: hidden;
 }
 
 .login-form {
-  padding: 40px 30px;
-  background: #ffffff;
+  padding: 32px 36px;
+  box-sizing: border-box;
 }
 
+/* ====== INPUTS ====== */
 .form-group {
-  margin-bottom: 24px;
+  margin-bottom: 18px;
 }
 
 .form-group label {
   display: block;
   margin-bottom: 8px;
   font-weight: 600;
-  color: #AC1B22;
+  color: #ac1b22;
   font-size: 14px;
-  font-family: 'Poppins', sans-serif;
+  font-family: "Poppins", sans-serif;
 }
 
 .form-group input {
   width: 100%;
-  padding: 12px 16px;
+  padding: 14px 18px;
   border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  font-size: 16px;
+  border-radius: 32px;
+  font-size: 15px;
   transition: all 0.3s ease;
   box-sizing: border-box;
 }
 
 .form-group input:focus {
   outline: none;
-  border-color: #AC1B22;
+  border-color: #ac1b22;
   box-shadow: 0 0 0 3px rgba(172, 27, 34, 0.12);
 }
 
@@ -78,32 +115,36 @@
   cursor: not-allowed;
 }
 
+/* ====== ERROR ====== */
 .error-message {
   background-color: #fee;
-  color: #AC1B22;
+  color: #ac1b22;
   padding: 12px 16px;
   border-radius: 8px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   font-size: 14px;
-  border-left: 4px solid #AC1B22;
+  border-left: 4px solid #ac1b22;
 }
 
+/* ====== BUTTON ====== */
 .login-button {
-  width: 100%;
-  padding: 14px;
-  background: #AC1B22;
+  width: 58%;
+  max-width: 220px;
+  margin: 0 auto;
+  padding: 12px 18px;
+  background: #ac1b22;
   color: white;
   border: none;
-  border-radius: 8px;
-  font-size: 16px;
-  font-weight: 600;
+  border-radius: 64px;
+  font-size: 15px;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.3s ease;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-family: 'Poppins', sans-serif;
+  font-family: "Poppins", sans-serif;
 }
 
 .login-button:hover:not(:disabled) {
@@ -120,6 +161,7 @@
   cursor: not-allowed;
 }
 
+/* ====== LOADING SPINNER ====== */
 .loading-spinner {
   width: 16px;
   height: 16px;
@@ -135,33 +177,65 @@
   }
 }
 
+/* ====== FOOTER (fixed at bottom, no hacks) ====== */
 .login-footer {
-  background-color: #f8f9fa;
-  padding: 20px;
-  text-align: center;
-  border-top: 1px solid #e0e0e0;
-}
-
-.login-footer p {
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0;
   margin: 0;
-  color: #666;
-  font-size: 12px;
 }
 
+.footer-line {
+  height: 4px;
+  background: #ac1b22;
+  width: 100%;
+}
+
+.footer-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  text-align: center;
+  align-items: center;
+  padding: 12px 16px 12px;
+  box-sizing: border-box;
+}
+
+.footer-item {
+  font-family: "Roboto Condensed", sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #3a3a3a;
+  text-transform: uppercase;
+  line-height: 1.15;
+}
+
+/* ====== RESPONSIVE ====== */
 @media (max-width: 480px) {
-  .login-card {
-    max-width: 100%;
+  .wordmark {
+    font-size: 44px;
   }
 
-  .login-header {
-    padding: 30px 20px;
+  .hero-title {
+    font-size: 52px;
   }
 
-  .logo-container h1 {
-    font-size: 36px;
+  .hero-underline {
+    width: 220px;
   }
 
   .login-form {
-    padding: 30px 20px;
+    padding: 20px 16px;
+  }
+
+  .footer-grid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .footer-item {
+    font-size: 10px;
   }
 }

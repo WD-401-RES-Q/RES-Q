@@ -48,6 +48,10 @@ export class ApprovedReportsComponent implements OnInit, OnDestroy {
   isLoading = true;
   private sub?: Subscription;
 
+  // Modal state
+  showRevertModal = false;
+  reportToRevert: ApprovedReport | null = null;
+
   // Comments state
   expandedReportId: string | null = null;
   reportComments: { [key: string]: Comment[] } = {};
@@ -76,11 +80,23 @@ export class ApprovedReportsComponent implements OnInit, OnDestroy {
     const dateObj = this.coerceDate(reportedAt);
     const [dateStr, timeStr] = this.formatDateTime(dateObj);
 
+    // Fix location display
+    let locationStr = 'Unknown location';
+    if (doc.location) {
+      if (typeof doc.location === 'string') {
+        locationStr = doc.location;
+      } else if (doc.location.address) {
+        locationStr = doc.location.address;
+      } else if (doc.location.lat && doc.location.lng) {
+        locationStr = `${doc.location.lat}, ${doc.location.lng}`;
+      }
+    }
+
     return {
       id: doc.id ?? '',
       category: doc.incidentType ?? 'Category',
       type: doc.type ?? doc.incidentType ?? 'Type',
-      location: doc.location?.address ?? doc.location ?? 'Unknown location',
+      location: locationStr,
       approvedBy: doc.approvedBy ?? 'Admin',
       date: dateStr,
       time: timeStr,
@@ -106,10 +122,27 @@ export class ApprovedReportsComponent implements OnInit, OnDestroy {
   }
 
   revert(report: ApprovedReport) {
+    this.reportToRevert = report;
+    this.showRevertModal = true;
+  }
+
+  confirmRevert() {
+    if (!this.reportToRevert) {
+      this.cancelRevert();
+      return;
+    }
+    
     // Move back to pending
     this.firestoreService
-      .updateDocument('reports', report.id, { status: 'Pending' })
+      .updateDocument('reports', this.reportToRevert.id, { status: 'Pending' })
       .catch((err) => console.error('Failed to revert approved report:', err));
+    
+    this.cancelRevert();
+  }
+
+  cancelRevert() {
+    this.showRevertModal = false;
+    this.reportToRevert = null;
   }
 
   async toggleComments(report: ApprovedReport) {

@@ -15,16 +15,14 @@
       <div class="details">
         <h2 class="report-title">{{ report.title }}</h2>
 
-        <div class="meta-row">
-          <div class="meta-group">
-            <span class="meta-label">Category:</span>
-            <span class="meta-value">{{ report.category }}</span>
-          </div>
+        <div class="meta-group">
+          <span class="meta-label">Category:</span>
+          <span class="meta-value">{{ report.category }}</span>
+        </div>
 
-          <div class="meta-group">
-            <span class="meta-label">Reporter:</span>
-            <span class="meta-value">{{ report.reporter }}</span>
-          </div>
+        <div class="meta-group">
+          <span class="meta-label">Reporter:</span>
+          <span class="meta-value">{{ report.reporter }}</span>
         </div>
 
         <div class="meta-group">
@@ -32,16 +30,14 @@
           <span class="meta-value">{{ report.location }}</span>
         </div>
 
-        <div class="meta-row">
-          <div class="meta-group">
-            <span class="meta-label">Date:</span>
-            <span class="meta-value">{{ report.date }}</span>
-          </div>
+        <div class="meta-group">
+          <span class="meta-label">Date:</span>
+          <span class="meta-value">{{ report.date }}</span>
+        </div>
 
-          <div class="meta-group">
-            <span class="meta-label">Time:</span>
-            <span class="meta-value">{{ report.time }}</span>
-          </div>
+        <div class="meta-group">
+          <span class="meta-label">Time:</span>
+          <span class="meta-value">{{ report.time }}</span>
         </div>
 
         <p class="description">{{ report.description }}</p>
@@ -115,6 +111,30 @@
 
   <div class="loading-overlay" *ngIf="isLoading">
     <div class="loading-card">Loading pending reports…</div>
+  </div>
+
+  <!-- APPROVE MODAL -->
+  <div class="modal-overlay" *ngIf="showApproveModal" (click)="cancelApprove()">
+    <div class="modal-content-confirm" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">APPROVE THIS REPORT?</h3>
+      <p class="modal-subtitle">ARE YOU SURE?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-yes" (click)="confirmApprove()">YES</button>
+        <button type="button" class="btn-modal btn-no" (click)="cancelApprove()">NO</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- REJECT MODAL -->
+  <div class="modal-overlay" *ngIf="showRejectModal" (click)="cancelReject()">
+    <div class="modal-content-confirm" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">REJECT (FLAG) THIS REPORT?</h3>
+      <p class="modal-subtitle">ARE YOU SURE?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-yes" (click)="confirmReject()">YES</button>
+        <button type="button" class="btn-modal btn-no" (click)="cancelReject()">NO</button>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -202,16 +222,11 @@
     font-weight: 700;
   }
 
-  .meta-row {
-    display: flex;
-    gap: 20px;
-    margin-bottom: 6px;
-  }
-
   .meta-group {
     display: flex;
     gap: 4px;
     font-size: 14px;
+    margin-bottom: 6px;
   }
 
   .meta-label {
@@ -279,6 +294,7 @@
     font-family: 'Poppins', sans-serif;
     font-weight: 600;
     color: white;
+    transition: 0.15s ease;
   }
 
   .btn-comments {
@@ -381,14 +397,19 @@
 
   .btn-approve:hover {
     background-color: #e5b400;
+    transform: translateY(-2px);
+    box-shadow: 0 3px 8px rgba(255, 200, 6, 0.35);
   }
 
   .btn-reject {
     background-color: #ac1b22; /* RESQ Red */
+    color: white;
   }
 
   .btn-reject:hover {
     background-color: #8f161c;
+    transform: translateY(-2px);
+    box-shadow: 0 3px 8px rgba(172, 27, 34, 0.35);
   }
 
   /* MODAL STYLES */
@@ -573,5 +594,72 @@
       width: 95%;
       max-height: 90vh;
     }
+  }
+
+  /* CONFIRMATION MODALS */
+  .modal-content-confirm {
+    background: white;
+    border-radius: 12px;
+    padding: 32px 40px;
+    text-align: center;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    min-width: 320px;
+  }
+
+  .modal-title {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    font-weight: 700;
+    font-family: "Roboto", sans-serif;
+    color: #ac1b22;
+    letter-spacing: 0.5px;
+  }
+
+  .modal-subtitle {
+    margin: 18px 0 24px 0;
+    font-size: 15px;
+    font-weight: 600;
+    font-family: "Roboto Condensed", sans-serif;
+    color: #ac1b22;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+
+  .btn-modal {
+    padding: 12px 32px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    font-family: "Roboto", sans-serif;
+    cursor: pointer;
+    min-width: 100px;
+    transition: all 0.2s ease;
+  }
+
+  .btn-yes {
+    background-color: #ac1b22;
+    color: white;
+  }
+
+  .btn-yes:hover {
+    background-color: #8f161c;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(172, 27, 34, 0.4);
+  }
+
+  .btn-no {
+    background-color: #ffc806;
+    color: #212121;
+  }
+
+  .btn-no:hover {
+    background-color: #e5b400;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 200, 6, 0.4);
   }
 </style>

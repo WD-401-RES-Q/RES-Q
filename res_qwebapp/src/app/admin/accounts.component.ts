@@ -28,6 +28,8 @@ export class AccountsComponent implements OnInit, OnDestroy {
   isLoading$: Observable<boolean>;
   accounts: Account[] = [];
   selected: Account | null = null;
+  showBanModal = false;
+  accountToBan: Account | null = null;
   private subscription?: Subscription;
 
   constructor(private firestoreService: FirestoreService) {
@@ -92,13 +94,28 @@ export class AccountsComponent implements OnInit, OnDestroy {
     return null;
   }
 
-  async ban(account: Account) {
-    if (!confirm(`Are you sure you want to ban ${account.fullName}?`)) {
-      return;
-    }
+  ban(account: Account) {
+    this.accountToBan = account;
+    this.showBanModal = true;
+  }
+
+  cancelBan() {
+    this.showBanModal = false;
+    this.accountToBan = null;
+  }
+
+  async confirmBan() {
+    if (!this.accountToBan) return;
     
-    console.log('Ban account', account);
-    alert(`Banned account: ${account.fullName}`);
+    console.log('Ban account', this.accountToBan);
+    alert(`Banned account: ${this.accountToBan.fullName}`);
     // TODO: Implement ban functionality
+    
+    this.showBanModal = false;
+    this.accountToBan = null;
+  }
+
+  trackById(_: number, acc: Account) {
+    return acc.id;
   }
 }

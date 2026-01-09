@@ -2,16 +2,18 @@
    GLOBAL FONT SYSTEM
    ========================================================== */
 
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&family=Roboto+Condensed:wght@400;500;600;700&display=swap');
+
 /* Default text font */
 body, p, span, td, th, option, select, input, button, label {
-  font-family: 'Quicksand', sans-serif !important;
+  font-family: 'Roboto Condensed', sans-serif !important;
   font-weight: 500;
   color: #212121;
 }
 
-/* Headings use POPPINS */
+/* Headings use ROBOTO */
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Poppins', sans-serif !important;
+  font-family: 'Roboto', sans-serif !important;
   font-weight: 700;
   color: #212121;
 }
@@ -22,15 +24,15 @@ h1, h2, h3, h4, h5, h6 {
 .page-header h1,
 .page-header h2,
 .stat-label {
-  font-family: 'Poppins', sans-serif !important;
-  font-weight: 600;
+  font-family: 'Roboto', sans-serif !important;
+  font-weight: 700;
 }
 
 /* Card values */
 .summary-value,
 .cat-value,
 .stat-value {
-  font-family: 'Quicksand', sans-serif !important;
+  font-family: 'Roboto Condensed', sans-serif !important;
   font-weight: 600;
   color: #212121;
 }
@@ -38,13 +40,13 @@ h1, h2, h3, h4, h5, h6 {
 /* Buttons */
 button,
 .btn {
-  font-family: 'Poppins', sans-serif !important;
-  font-weight: 600;
+  font-family: 'Roboto', sans-serif !important;
+  font-weight: 700;
 }
 
 /* Sidebar */
 .sidebar a {
-  font-family: 'Poppins', sans-serif !important;
+  font-family: 'Roboto', sans-serif !important;
 }
 
 /* ==========================================================
@@ -61,6 +63,8 @@ button,
 /* Background override */
 body {
   background: var(--resq-light);
+  margin: 0; /* IMPORTANT: remove default margin */
+  padding: 0;
 }
 
 /* Buttons (default styles if no override in components) */
@@ -156,12 +160,38 @@ table {
 }
 
 table th {
-  background: #f7fafc;
-  font-family: 'Poppins', sans-serif !important;
-  font-weight: 600;
+  background: var(--resq-light);
+  font-family: 'Roboto', sans-serif !important;
+  font-weight: 700;
 }
 
 table td {
-  font-family: 'Quicksand', sans-serif !important;
+  font-family: 'Roboto Condensed', sans-serif !important;
   font-weight: 500;
+}
+
+/* ==========================================================
+   LOGIN PAGE ONLY — DISABLE SCROLLING (THE FULL FIX)
+   ========================================================== */
+
+/* Lock the entire document scrolling only on login */
+body.login-no-scroll {
+  height: 100vh;
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  position: fixed;   /* ✅ strongest lock */
+  width: 100%;
+}
+
+/* Angular sometimes scrolls on app-root/html instead of body */
+html:has(body.login-no-scroll) {
+  overflow: hidden !important;
+  height: 100%;
+}
+
+/* Ensure app-root cannot scroll either */
+body.login-no-scroll app-root {
+  height: 100vh;
+  overflow: hidden !important;
+  display: block;
 }

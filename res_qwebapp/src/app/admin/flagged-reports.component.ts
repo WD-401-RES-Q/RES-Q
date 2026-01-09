@@ -48,6 +48,10 @@ export class FlaggedReportsComponent implements OnInit, OnDestroy {
   isLoading = true;
   private sub?: Subscription;
 
+  // Modal state
+  showRevertModal = false;
+  reportToRevert: FlaggedReport | null = null;
+
   // Comments state
   expandedReportId: string | null = null;
   reportComments: { [key: string]: Comment[] } = {};
@@ -106,10 +110,27 @@ export class FlaggedReportsComponent implements OnInit, OnDestroy {
   }
 
   revert(report: FlaggedReport) {
+    this.reportToRevert = report;
+    this.showRevertModal = true;
+  }
+
+  confirmRevert() {
+    if (!this.reportToRevert) {
+      this.cancelRevert();
+      return;
+    }
+    
     // Move back to pending
     this.firestoreService
-      .updateDocument('reports', report.id, { status: 'Pending' })
+      .updateDocument('reports', this.reportToRevert.id, { status: 'Pending' })
       .catch((err) => console.error('Failed to revert flagged report:', err));
+    
+    this.cancelRevert();
+  }
+
+  cancelRevert() {
+    this.showRevertModal = false;
+    this.reportToRevert = null;
   }
 
   async toggleComments(report: FlaggedReport) {

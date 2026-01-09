@@ -28,12 +28,15 @@
 /* SIDEBAR FOOTER */
 .sidebar-footer {
   margin-top: auto;
-  padding-top: 20px;
+  margin-bottom: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
   border-top: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .admin-info {
-  margin-bottom: 12px;
+  margin-top: 12px;
+  margin-bottom: 6px;
   padding: 8px;
   background: rgba(255, 255, 255, 0.1);
   border-radius: 6px;
@@ -71,13 +74,28 @@
   border-color: rgba(255, 255, 255, 0.5);
 }
 
-/* BRAND TITLE */
+/* BRAND LOGO */
 .sidebar .brand {
-  font-size: 22px;
-  font-weight: 700;
-  font-family: 'Poppins', sans-serif;
-  text-align: center;
-  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0 14px 0;
+}
+
+.brand-logo {
+  max-width: 160px;
+  width: 100%;
+  height: auto;
+}
+
+.brand-subtext {
+  font-family: "Roboto Condensed", sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(247, 248, 243, 0.85);
+  letter-spacing: 0.04em;
 }
 
 /* NAVIGATION LIST */

@@ -17,185 +17,354 @@
       <table class="accounts-table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Username</th>
-            <th>Email</th>
-            <th>Phone</th>
-            <th>Approved Date</th>
-            <th>Actions</th>
+            <th class="col-name">Name</th>
+            <th class="col-user">Username</th>
+            <th class="col-email">Email</th>
+            <th class="col-phone">Phone</th>
+            <th class="col-date">Approved Date</th>
+            <th class="col-actions">Actions</th>
           </tr>
         </thead>
 
         <tbody>
-          <tr *ngFor="let acc of accounts">
-            <td>{{ acc.fullName }}</td>
-            <td>@{{ acc.username }}</td>
-            <td>{{ acc.email }}</td>
-            <td>{{ acc.contactNumber }}</td>
-            <td>{{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'short') : 'N/A' }}</td>
-            <td>
-              <button class="btn btn-view" (click)="select(acc)">View</button>
-              <button class="btn btn-ban" (click)="ban(acc)">Ban</button>
+          <tr
+            *ngFor="let acc of accounts; trackBy: trackById"
+            (click)="select(acc)"
+            [class.selected-row]="selected?.id === acc.id"
+          >
+            <td class="col-name">{{ acc.fullName }}</td>
+            <td class="col-user">@{{ acc.username }}</td>
+            <td class="col-email">{{ acc.email }}</td>
+            <td class="col-phone">{{ acc.contactNumber }}</td>
+            <td class="col-date">
+              {{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'mediumDate') : 'N/A' }}
+            </td>
+
+            <!-- prevent row-click from double firing when pressing buttons -->
+            <td class="col-actions" (click)="$event.stopPropagation()">
+              <div class="action-buttons">
+                <button type="button" class="btn btn-view" (click)="select(acc)">View</button>
+                <button type="button" class="btn btn-ban" (click)="ban(acc)">Ban</button>
+              </div>
             </td>
           </tr>
         </tbody>
       </table>
+
+      <p class="hint">Click a row to view details.</p>
     </div>
 
     <!-- DETAILS PANEL -->
     <div class="account-details" *ngIf="selected as acc">
       <h2>Account Details</h2>
 
-      <p><strong>Full Name:</strong> {{ acc.fullName }}</p>
-      <p><strong>Username:</strong> @{{ acc.username }}</p>
-      <p><strong>Email:</strong> {{ acc.email }}</p>
-      <p><strong>Address:</strong> {{ acc.address }}</p>
-      <p><strong>Birthdate:</strong> {{ acc.dateOfBirth }}</p>
-      <p><strong>Phone:</strong> {{ acc.contactNumber }}</p>
-      <p><strong>Approved By:</strong> {{ acc.approvedBy || 'N/A' }}</p>
-      <p><strong>Approved On:</strong> {{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'medium') : 'N/A' }}</p>
+      <div class="detail-grid">
+        <p><strong>Full Name:</strong> {{ acc.fullName }}</p>
+        <p><strong>Username:</strong> @{{ acc.username }}</p>
+        <p><strong>Email:</strong> {{ acc.email }}</p>
+        <p><strong>Address:</strong> {{ acc.address }}</p>
+        <p><strong>Birthdate:</strong> {{ acc.dateOfBirth }}</p>
+        <p><strong>Phone:</strong> {{ acc.contactNumber }}</p>
+        <p><strong>Approved By:</strong> {{ acc.approvedBy || 'N/A' }}</p>
+        <p><strong>Approved On:</strong> {{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'medium') : 'N/A' }}</p>
+      </div>
 
       <div class="id-preview" *ngIf="acc.idPhotoPath">
         <p><strong>Valid ID Status:</strong></p>
         <span class="id-badge">✓ Uploaded</span>
       </div>
 
-      <button class="btn btn-ban" (click)="ban(acc)">Ban Account</button>
+      <button type="button" class="btn btn-ban big" (click)="ban(acc)">Ban Account</button>
+    </div>
+  </div>
+
+  <!-- BAN CONFIRMATION MODAL -->
+  <div class="modal-overlay" *ngIf="showBanModal" (click)="cancelBan()">
+    <div class="modal-content" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">BAN THIS ACCOUNT?</h3>
+      <p class="modal-subtitle">ARE YOU SURE?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-yes" (click)="confirmBan()">YES</button>
+        <button type="button" class="btn-modal btn-no" (click)="cancelBan()">NO</button>
+      </div>
     </div>
   </div>
 </section>
 
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&family=Roboto+Condensed:wght@400;500;600;700&display=swap');
+
   .accounts-page {
-    padding: 20px;
+    padding: 24px;
+    max-width: 1200px;
+    margin: 0 auto;
+    font-family: "Roboto Condensed", sans-serif;
+    color: #212121;
   }
 
-  /* Header Title */
+  /* Header */
   .page-header {
-    margin-bottom: 20px;
+    margin-bottom: 18px;
   }
 
   .page-header h1 {
     margin: 0;
-    font-size: 28px;
-    font-family: "Poppins", sans-serif;
-    font-weight: 700;
-    color: #212121;
+    font-size: 30px;
+    font-family: "Roboto", sans-serif;
+    font-weight: 800;
+    color: #111827;
   }
 
-  /* Layout Grid */
+  /* Layout */
   .accounts-layout {
     display: grid;
-    grid-template-columns: 2fr 1.2fr;
-    gap: 24px;
+    grid-template-columns: 2.2fr 1fr;
+    gap: 22px;
+    align-items: start;
   }
 
-  /* Table Container */
+  /* Table container */
   .accounts-table-wrapper {
     background: #ffffff;
-    border-radius: 14px;
-    border: 1px solid #e2e8f0;
-    padding: 24px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+    border-radius: 16px;
+    border: 1px solid #e5e7eb;
+    padding: 18px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+
+    /* KEY FIX: allow horizontal scroll so Actions column is clickable */
+    overflow-x: auto;
   }
 
-  /* TABLE */
   .accounts-table {
     width: 100%;
-    border-collapse: collapse;
+    min-width: 860px; /* forces table to keep columns usable; wrapper scrolls */
+    border-collapse: separate;
+    border-spacing: 0;
     font-size: 15px;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
+  }
+
+  .accounts-table th,
+  .accounts-table td {
+    padding: 14px 12px;
+    border-bottom: 1px solid #eef2f7;
+    vertical-align: middle;
+    white-space: nowrap;
   }
 
   .accounts-table th {
-    padding: 14px 12px;
-    text-align: left;
-    background: #f7fafc;
-    font-weight: 600;
-    font-size: 14px;
+    position: sticky;
+    top: 0;
+    background: #f7f8f3;
+    font-weight: 700;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #212121;
+    text-align: center;
   }
 
   .accounts-table td {
-    padding: 18px 12px;
-    border-bottom: 1px solid #eee;
-    vertical-align: middle;
+    text-align: center;
   }
 
-  .accounts-table tr:last-child td {
-    border-bottom: none;
+  .accounts-table tbody tr {
+    cursor: pointer;
+    transition: background 0.12s ease;
   }
 
-/* ACTION BUTTONS */
-.btn {
-  padding: 8px 14px;
-  border-radius: 6px;
-  border: none;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: "Poppins", sans-serif;
-  margin-bottom: 6px;
-  display: block;
-  width: 100%;
-}
+  .accounts-table tbody tr:hover td {
+    background: #fff4cc; /* lighter yellow hover */
+  }
 
-/* VIEW = Yellow */
-.btn-view {
-  background-color: #ffc806;
-  color: #212121;
-}
+  .selected-row td {
+    background: #ffc806 !important; /* clicked row = brand yellow */
+  }
 
-.btn-view:hover {
-  background-color: #e5b400;
-}
+  /* Column sizing (helps reduce cramped look) */
+  .col-name { min-width: 160px; }
+  .col-user { min-width: 120px; }
+  .col-email { min-width: 230px; }
+  .col-phone { min-width: 140px; }
+  .col-date { min-width: 150px; }
+  .col-actions { 
+    min-width: 160px;
+    text-align: center;
+  }
 
-/* BAN = Red */
-.btn-ban {
-  background-color: #ac1b22;
-  color: white;
-}
+  /* Buttons: inline, not full-width */
+  .action-buttons {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+  }
 
-.btn-ban:hover {
-  background-color: #8f161c;
-}
+  .btn {
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: none;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: "Roboto", sans-serif;
+  }
 
+  .btn-view {
+    background-color: #ffc806;
+    color: #212121;
+  }
 
-  /* ACCOUNT DETAILS CARD */
+  .btn-view:hover {
+    background-color: #e5b400;
+  }
+
+  /* White view button on selected row for visibility */
+  .selected-row .btn-view {
+    background-color: white;
+    color: #212121;
+  }
+
+  .selected-row .btn-view:hover {
+    background-color: #f5f5f5;
+  }
+
+  .btn-ban {
+    background-color: #ac1b22;
+    color: white;
+  }
+
+  .btn-ban:hover {
+    background-color: #8f161c;
+  }
+
+  .btn.big {
+    width: 100%;
+    padding: 12px 14px;
+    font-size: 14px;
+    margin-top: 12px;
+  }
+
+  /* Details card */
   .account-details {
     background: #ffffff;
-    border-radius: 14px;
-    border: 1px solid #e2e8f0;
-    padding: 26px 24px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
-    font-size: 15px;
-    font-family: "Quicksand", sans-serif;
+    border-radius: 16px;
+    border: 1px solid #e5e7eb;
+    padding: 18px 18px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+    font-family: "Roboto Condensed", sans-serif;
   }
 
   .account-details h2 {
-    margin-top: 0;
+    margin: 0 0 14px 0;
     font-size: 24px;
-    font-family: "Poppins", sans-serif;
-    margin-bottom: 18px;
+    font-family: "Roboto", sans-serif;
   }
 
-  .account-details p {
+  .detail-grid p {
     margin: 10px 0;
-    font-size: 15px;
+    line-height: 1.35;
   }
 
-  /* ID PREVIEW */
-  .id-preview img {
-    margin-top: 10px;
-    max-width: 100%;
-    height: auto;
-    border-radius: 6px;
-    border: 1px solid #dcdcdc;
+  /* ID Badge */
+  .id-badge {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: #e8fff1;
+    color: #0f7a38;
+    font-weight: 700;
   }
 
-  /* RESPONSIVE */
-  @media (max-width: 960px) {
+  /* Hint */
+  .hint {
+    margin: 10px 2px 0;
+    color: #6b7280;
+    font-size: 13px;
+  }
+
+  /* Responsive */
+  @media (max-width: 980px) {
     .accounts-layout {
       grid-template-columns: 1fr;
     }
+  }
+
+  /* BAN MODAL */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal-content {
+    background: white;
+    border-radius: 12px;
+    padding: 32px 40px;
+    text-align: center;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    min-width: 320px;
+  }
+
+  .modal-title {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    font-weight: 700;
+    font-family: "Roboto", sans-serif;
+    color: #ac1b22;
+    letter-spacing: 0.5px;
+  }
+
+  .modal-subtitle {
+    margin: 18px 0 24px 0;
+    font-size: 15px;
+    font-weight: 600;
+    font-family: "Roboto Condensed", sans-serif;
+    color: #ac1b22;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+
+  .btn-modal {
+    padding: 12px 32px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    font-family: "Roboto", sans-serif;
+    cursor: pointer;
+    min-width: 100px;
+    transition: all 0.2s ease;
+  }
+
+  .btn-yes {
+    background-color: #ac1b22;
+    color: white;
+  }
+
+  .btn-yes:hover {
+    background-color: #8f161c;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(172, 27, 34, 0.4);
+  }
+
+  .btn-no {
+    background-color: #ffc806;
+    color: #212121;
+  }
+
+  .btn-no:hover {
+    background-color: #e5b400;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 200, 6, 0.4);
   }
 </style>

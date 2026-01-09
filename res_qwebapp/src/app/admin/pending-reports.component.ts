@@ -49,6 +49,12 @@ export class PendingReportsComponent implements OnInit, OnDestroy {
   isLoading = true;
   private sub?: Subscription;
 
+  // Modal state
+  showApproveModal = false;
+  showRejectModal = false;
+  reportToApprove: PendingReport | null = null;
+  reportToReject: PendingReport | null = null;
+
   // Comments state
   expandedReportId: string | null = null;
   reportComments: { [key: string]: Comment[] } = {};
@@ -111,37 +117,57 @@ export class PendingReportsComponent implements OnInit, OnDestroy {
   }
 
   approve(report: PendingReport) {
-    const ok = confirm(`Approve this report: ${report.title}?`);
-    if (!ok) return;
+    this.reportToApprove = report;
+    this.showApproveModal = true;
+  }
 
-    if (!report.id) {
+  confirmApprove() {
+    if (!this.reportToApprove || !this.reportToApprove.id) {
       console.error('Missing report id, cannot approve');
+      this.cancelApprove();
       return;
     }
 
     // Optimistically mark as approved; real-time listener will remove it from pending list
     this.firestoreService
-      .updateDocument('reports', report.id, { status: 'Approved' })
+      .updateDocument('reports', this.reportToApprove.id, { status: 'Approved' })
       .catch((err) => {
         console.error('Failed to approve report:', err);
       });
+    
+    this.cancelApprove();
+  }
+
+  cancelApprove() {
+    this.showApproveModal = false;
+    this.reportToApprove = null;
   }
 
   reject(report: PendingReport) {
-    const ok = confirm(`Reject (flag) this report: ${report.title}?`);
-    if (!ok) return;
+    this.reportToReject = report;
+    this.showRejectModal = true;
+  }
 
-    if (!report.id) {
+  confirmReject() {
+    if (!this.reportToReject || !this.reportToReject.id) {
       console.error('Missing report id, cannot flag');
+      this.cancelReject();
       return;
     }
 
     // Move to flagged by setting status; pending listener will drop it
     this.firestoreService
-      .updateDocument('reports', report.id, { status: 'Flagged', reason: 'Flagged by admin' })
+      .updateDocument('reports', this.reportToReject.id, { status: 'Flagged', reason: 'Flagged by admin' })
       .catch((err) => {
         console.error('Failed to flag report:', err);
       });
+    
+    this.cancelReject();
+  }
+
+  cancelReject() {
+    this.showRejectModal = false;
+    this.reportToReject = null;
   }
 
   async toggleComments(report: PendingReport) {

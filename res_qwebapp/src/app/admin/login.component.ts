@@ -1,4 +1,4 @@
-import { Component, signal } from '@angular/core';
+import { Component, signal, OnInit, OnDestroy } from '@angular/core';
 import { Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -11,7 +11,8 @@ import { AuthService } from '../services/auth.service';
   templateUrl: './login.component.html',
   styleUrls: ['./login.component.css']
 })
-export class AdminLoginComponent {
+export class AdminLoginComponent implements OnInit, OnDestroy {
+
   username = '';
   password = '';
   errorMessage = signal('');
@@ -22,9 +23,23 @@ export class AdminLoginComponent {
     private router: Router
   ) {}
 
+  /* ==========================================================
+     DISABLE SCROLLING (LOGIN PAGE ONLY)
+     ========================================================== */
+  ngOnInit(): void {
+    document.body.classList.add('login-no-scroll');
+  }
+
+  ngOnDestroy(): void {
+    document.body.classList.remove('login-no-scroll');
+  }
+
+  /* ==========================================================
+     LOGIN HANDLER
+     ========================================================== */
   async onSubmit(): Promise<void> {
     this.errorMessage.set('');
-    
+
     if (!this.username || !this.password) {
       this.errorMessage.set('Please enter both username and password');
       return;

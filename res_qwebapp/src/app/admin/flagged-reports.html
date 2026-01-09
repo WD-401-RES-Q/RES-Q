@@ -79,6 +79,18 @@
       </div>
     </article>
   </div>
+
+  <!-- REVERT MODAL -->
+  <div class="modal-overlay" *ngIf="showRevertModal" (click)="cancelRevert()">
+    <div class="modal-content-confirm" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">REVERT THIS REPORT?</h3>
+      <p class="modal-subtitle">ARE YOU SURE?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-yes" (click)="confirmRevert()">YES</button>
+        <button type="button" class="btn-modal btn-no" (click)="cancelRevert()">NO</button>
+      </div>
+    </div>
+  </div>
 </section>
 
 
@@ -491,5 +503,72 @@
       width: 95%;
       max-height: 90vh;
     }
+  }
+
+  /* CONFIRMATION MODAL */
+  .modal-content-confirm {
+    background: white;
+    border-radius: 12px;
+    padding: 32px 40px;
+    text-align: center;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    min-width: 320px;
+  }
+
+  .modal-title {
+    margin: 0 0 8px 0;
+    font-size: 18px;
+    font-weight: 700;
+    font-family: "Roboto", sans-serif;
+    color: #ac1b22;
+    letter-spacing: 0.5px;
+  }
+
+  .modal-subtitle {
+    margin: 18px 0 24px 0;
+    font-size: 15px;
+    font-weight: 600;
+    font-family: "Roboto Condensed", sans-serif;
+    color: #ac1b22;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+  }
+
+  .btn-modal {
+    padding: 12px 32px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    font-family: "Roboto", sans-serif;
+    cursor: pointer;
+    min-width: 100px;
+    transition: all 0.2s ease;
+  }
+
+  .btn-yes {
+    background-color: #ac1b22;
+    color: white;
+  }
+
+  .btn-yes:hover {
+    background-color: #8f161c;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(172, 27, 34, 0.4);
+  }
+
+  .btn-no {
+    background-color: #ffc806;
+    color: #212121;
+  }
+
+  .btn-no:hover {
+    background-color: #e5b400;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(255, 200, 6, 0.4);
   }
 </style>
