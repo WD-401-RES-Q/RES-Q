@@ -104,6 +104,8 @@ flutter:
     - assets/icons/LOC-ROAD.png
     - assets/icons/LOC-CRASH.png
     - assets/icons/LOC-OTHERS.png
+    - assets/icons/rating-star.png
+    - assets/icons/rating-empty-circle.png
 
   fonts:
 
