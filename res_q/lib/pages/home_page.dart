@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../widgets/bottom_nav_bar.dart';
+import '../ui/widgets/bottom_nav_bar.dart';
 
 import 'community_page.dart';
 import 'notifications_page.dart';
@@ -64,10 +64,7 @@ class _MainPageState extends State<MainPage> {
         onTap: (i) => setState(() => _currentIndex = i),
       ),
       body: SafeArea(
-        child: IndexedStack(
-          index: _currentIndex,
-          children: _pages,
-        ),
+        child: IndexedStack(index: _currentIndex, children: _pages),
       ),
     );
   }
@@ -212,11 +209,7 @@ class _HomePageContent extends StatelessWidget {
                         ],
                       ),
                       child: Center(
-                        child: Icon(
-                          Icons.phone,
-                          size: 70,
-                          color: Colors.white,
-                        ),
+                        child: Icon(Icons.phone, size: 70, color: Colors.white),
                       ),
                     ),
                   ),
@@ -252,10 +245,7 @@ class _HomePageContent extends StatelessWidget {
           decoration: BoxDecoration(
             color: const Color(0xFFAC1B22),
             borderRadius: BorderRadius.circular(40),
-            border: Border.all(
-              color: const Color(0xFFFFC806),
-              width: 6,
-            ),
+            border: Border.all(color: const Color(0xFFFFC806), width: 6),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.25),

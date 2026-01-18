@@ -1,34 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-
-class PhoneNumberFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    final text = newValue.text.replaceAll('-', '');
-    final buffer = StringBuffer();
-
-    for (int i = 0; i < text.length && i < 11; i++) {
-      if (i == 4 || i == 7) {
-        buffer.write('-');
-      }
-      buffer.write(text[i]);
-    }
-
-    final string = buffer.toString();
-    return TextEditingValue(
-      text: string,
-      selection: TextSelection.collapsed(offset: string.length),
-    );
-  }
-}
+import '../../ui/app_theme.dart';
+import '../../ui/widgets/auth_widgets.dart';
+import '../../ui/widgets/terms_dialog.dart';
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({super.key});
@@ -38,12 +18,6 @@ class RegistrationPage extends StatefulWidget {
 }
 
 class _RegistrationPageState extends State<RegistrationPage> {
-  // Brand colors
-  static const appBlue = Color(0xFFAC1B22);
-  static const appRed = Color(0xFFFFC806);
-  static const appBlack = Color(0xFF212121);
-  static const appOffWhite = Color(0xFFF7F8F3);
-
   final _fullNameCtl = TextEditingController();
   final _usernameCtl = TextEditingController();
   final _passwordCtl = TextEditingController();
@@ -75,59 +49,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
     _dobMonthCtl.dispose();
     _dobYearCtl.dispose();
     super.dispose();
-  }
-
-  Widget _logo() {
-    return RichText(
-      text: TextSpan(
-        style: GoogleFonts.poppins(fontSize: 26, fontWeight: FontWeight.w700),
-        children: const [
-          TextSpan(
-            text: 'RES',
-            style: TextStyle(color: appBlue),
-          ),
-          TextSpan(
-            text: 'Q',
-            style: TextStyle(color: appRed),
-          ),
-        ],
-      ),
-    );
-  }
-
-  InputDecoration _fieldDecoration(String label) {
-    return InputDecoration(
-      labelText: label,
-      labelStyle: GoogleFonts.poppins(fontSize: 12, color: appBlack),
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: Colors.black87, width: 1),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: Colors.black87, width: 1),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: appBlue, width: 1.4),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: Colors.red, width: 1.5),
-      ),
-      focusedErrorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: Colors.red, width: 2),
-      ),
-      errorStyle: GoogleFonts.poppins(
-        fontSize: 11,
-        color: Colors.red,
-        fontWeight: FontWeight.w500,
-      ),
-    );
   }
 
   Future<void> _uploadPhoto() async {
@@ -205,243 +126,12 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }
 
   Future<void> _showTermsAndConditions() async {
-    final ScrollController scrollController = ScrollController();
-    bool canAgree = false;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            scrollController.addListener(() {
-              if (scrollController.position.pixels >=
-                  scrollController.position.maxScrollExtent - 20) {
-                if (!canAgree) {
-                  setDialogState(() {
-                    canAgree = true;
-                  });
-                }
-              }
-            });
-
-            return Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-              insetPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 24,
-              ),
-              child: Container(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height * 0.85,
-                  maxWidth: 500,
-                ),
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        _logo(),
-                        const Spacer(),
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close, color: appBlue),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'TERMS AND CONDITIONS',
-                      style: GoogleFonts.poppins(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: appBlack,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.grey[300]!),
-                        ),
-                        child: SingleChildScrollView(
-                          controller: scrollController,
-                          child: Text(
-                            _getTermsAndConditionsText(),
-                            style: GoogleFonts.quicksand(
-                              fontSize: 13,
-                              height: 1.6,
-                              color: appBlack,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    if (!canAgree)
-                      Text(
-                        'Scroll to the bottom to continue',
-                        style: GoogleFonts.poppins(
-                          fontSize: 11,
-                          color: Colors.grey[600],
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 42,
-                            child: OutlinedButton(
-                              onPressed: () => Navigator.pop(context),
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(color: appBlue),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                              ),
-                              child: Text(
-                                'CLOSE',
-                                style: GoogleFonts.poppins(
-                                  fontWeight: FontWeight.w600,
-                                  color: appBlue,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: SizedBox(
-                            height: 42,
-                            child: ElevatedButton(
-                              onPressed: canAgree
-                                  ? () {
-                                      setState(() {
-                                        _agree = true;
-                                      });
-                                      Navigator.pop(context);
-                                    }
-                                  : null,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: appBlue,
-                                disabledBackgroundColor: Colors.grey[300],
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                              ),
-                              child: Text(
-                                'I AGREE',
-                                style: GoogleFonts.poppins(
-                                  fontWeight: FontWeight.w600,
-                                  color: canAgree ? Colors.white : Colors.grey,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    scrollController.dispose();
-  }
-
-  String _getTermsAndConditionsText() {
-    return '''TERMS AND CONDITIONS FOR RES-Q APP
-
-Last Updated: December 14, 2025
-
-1. ACCEPTANCE OF TERMS
-By creating an account and using the RES-Q emergency response application, you agree to be bound by these Terms and Conditions. If you do not agree to these terms, please do not use our services.
-
-2. SERVICE DESCRIPTION
-RES-Q is an emergency response application designed to connect users with emergency services, responders, and community support during critical situations. Our services include but are not limited to emergency alerts, location sharing, and community assistance features.
-
-3. USER REGISTRATION
-3.1 You must provide accurate, current, and complete information during registration.
-3.2 You are responsible for maintaining the confidentiality of your account credentials.
-3.3 You must be at least 13 years old to use this service.
-3.4 Phone number verification is required for account activation.
-
-4. EMERGENCY SERVICES
-4.1 RES-Q is a supplementary tool and should not replace official emergency services (911, local emergency numbers).
-4.2 In life-threatening situations, always contact official emergency services first.
-4.3 We strive for accuracy but cannot guarantee response times or service availability.
-
-5. USER RESPONSIBILITIES
-5.1 You agree not to misuse the emergency alert system.
-5.2 False emergency reports may result in account termination and legal action.
-5.3 You are responsible for the accuracy of your location and contact information.
-5.4 You must respect other users and community members.
-
-6. PRIVACY AND DATA COLLECTION
-6.1 We collect and store personal information including name, contact details, location data, and emergency contacts.
-6.2 Your data may be shared with emergency responders when you activate emergency services.
-6.3 We use industry-standard security measures to protect your information.
-6.4 For full details, please review our Privacy Policy.
-
-7. LOCATION SERVICES
-7.1 The app requires location access to function properly.
-7.2 Your location may be shared with emergency responders and authorized contacts during emergencies.
-7.3 You can control location sharing settings in your device and app preferences.
-
-8. CONTENT AND CONDUCT
-8.1 You are responsible for any content you post or share through the app.
-8.2 Prohibited content includes: harassment, threats, illegal activities, spam, or misleading information.
-8.3 We reserve the right to remove content and terminate accounts that violate these terms.
-
-9. LIABILITY DISCLAIMER
-9.1 RES-Q is provided "as is" without warranties of any kind.
-9.2 We are not liable for delays, failures, or inaccuracies in emergency response.
-9.3 We are not responsible for actions or inactions of emergency responders or other users.
-9.4 Use of the app is at your own risk.
-
-10. INTELLECTUAL PROPERTY
-10.1 All app content, features, and functionality are owned by RES-Q.
-10.2 You may not copy, modify, distribute, or reverse engineer any part of the application.
-
-11. ACCOUNT TERMINATION
-11.1 We reserve the right to suspend or terminate accounts for violations of these terms.
-11.2 You may delete your account at any time through app settings.
-11.3 Termination does not relieve you of obligations incurred before termination.
-
-12. MODIFICATIONS TO TERMS
-12.1 We may update these Terms and Conditions at any time.
-12.2 Continued use of the app after changes constitutes acceptance of new terms.
-12.3 Material changes will be notified through the app or email.
-
-13. INDEMNIFICATION
-You agree to indemnify and hold harmless RES-Q, its developers, and affiliates from any claims, damages, or expenses arising from your use of the service or violation of these terms.
-
-14. GOVERNING LAW
-These terms are governed by the laws of the Philippines. Any disputes shall be resolved in the appropriate courts of the jurisdiction.
-
-15. CONTACT INFORMATION
-For questions about these Terms and Conditions, please contact:
-Email: support@resq-app.com
-Address: [Your Address]
-
-16. EMERGENCY CONTACT CONSENT
-By agreeing to these terms, you consent to RES-Q contacting your emergency contacts in situations where you have activated emergency services or are unresponsive.
-
-17. SMS AND NOTIFICATIONS
-You consent to receive SMS messages and push notifications related to emergency alerts, account security, and important service updates.
-
-By clicking "I AGREE," you acknowledge that you have read, understood, and agree to be bound by these Terms and Conditions.''';
+    final agreed = await TermsAndConditionsDialog.show(context);
+    if (agreed) {
+      setState(() {
+        _agree = true;
+      });
+    }
   }
 
   Future<void> _submit() async {
@@ -479,6 +169,14 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
     };
 
     try {
+      // For Web: Configure reCAPTCHA verifier
+      if (kIsWeb) {
+        await _auth.setSettings(
+          appVerificationDisabledForTesting: false,
+          forceRecaptchaFlow: true,
+        );
+      }
+
       // Send OTP to phone number
       await _auth.verifyPhoneNumber(
         phoneNumber: phone,
@@ -544,7 +242,7 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: appOffWhite,
+      backgroundColor: AppTheme.appOffWhite,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -563,12 +261,12 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
                       onPressed: () => Navigator.pop(context),
                       icon: const Icon(
                         Icons.arrow_back_ios_new,
-                        color: appBlue,
+                        color: AppTheme.appBlue,
                       ),
                     ),
                     const SizedBox(height: 6),
 
-                    Center(child: _logo()),
+                    const Center(child: ResqLogo()),
                     const SizedBox(height: 8),
 
                     Center(
@@ -577,7 +275,7 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
                         style: GoogleFonts.poppins(
                           fontSize: 20,
                           fontWeight: FontWeight.w700,
-                          color: appBlack,
+                          color: AppTheme.appBlack,
                         ),
                       ),
                     ),
@@ -586,50 +284,49 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
                     Form(
                       child: Column(
                         children: [
-                          TextFormField(
+                          AuthTextField(
                             controller: _fullNameCtl,
-                            decoration: _fieldDecoration('FULL NAME'),
+                            label: 'FULL NAME',
                           ),
                           const SizedBox(height: 10),
 
-                          TextFormField(
+                          AuthTextField(
                             controller: _usernameCtl,
-                            decoration: _fieldDecoration('USERNAME'),
+                            label: 'USERNAME',
                           ),
                           const SizedBox(height: 10),
 
-                          TextFormField(
+                          AuthTextField(
                             controller: _passwordCtl,
+                            label: 'PASSWORD',
                             obscureText: _obscurePassword,
-                            decoration: _fieldDecoration('PASSWORD').copyWith(
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscurePassword
-                                      ? Icons.visibility_outlined
-                                      : Icons.visibility_off_outlined,
-                                  size: 20,
-                                  color: appBlack,
-                                ),
-                                onPressed: () {
-                                  setState(() {
-                                    _obscurePassword = !_obscurePassword;
-                                  });
-                                },
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                _obscurePassword
+                                    ? Icons.visibility_outlined
+                                    : Icons.visibility_off_outlined,
+                                size: 20,
+                                color: AppTheme.appBlack,
                               ),
+                              onPressed: () {
+                                setState(() {
+                                  _obscurePassword = !_obscurePassword;
+                                });
+                              },
                             ),
                           ),
                           const SizedBox(height: 10),
 
-                          TextFormField(
+                          AuthTextField(
                             controller: _emailCtl,
-                            decoration: _fieldDecoration('EMAIL ADDRESS'),
+                            label: 'EMAIL ADDRESS',
                             keyboardType: TextInputType.emailAddress,
                           ),
                           const SizedBox(height: 10),
 
-                          TextFormField(
+                          AuthTextField(
                             controller: _contactCtl,
-                            decoration: _fieldDecoration('CONTACT NUMBER'),
+                            label: 'CONTACT NUMBER',
                             keyboardType: TextInputType.phone,
                             inputFormatters: [
                               FilteringTextInputFormatter.digitsOnly,
@@ -638,181 +335,30 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
                           ),
                           const SizedBox(height: 10),
 
-                          TextFormField(
+                          AuthTextField(
                             controller: _addressCtl,
-                            decoration: _fieldDecoration('HOME ADDRESS'),
+                            label: 'HOME ADDRESS',
                           ),
                           const SizedBox(height: 12),
 
-                          // DOB
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'DATE OF BIRTH',
-                              style: GoogleFonts.poppins(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                                color: appBlack,
-                              ),
-                            ),
+                          DateOfBirthInput(
+                            monthController: _dobMonthCtl,
+                            dayController: _dobDayCtl,
+                            yearController: _dobYearCtl,
                           ),
-                          const SizedBox(height: 6),
-
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _dobMonthCtl,
-                                  keyboardType: TextInputType.number,
-                                  decoration: _fieldDecoration('MM'),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _dobDayCtl,
-                                  keyboardType: TextInputType.number,
-                                  decoration: _fieldDecoration('DD'),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: TextFormField(
-                                  controller: _dobYearCtl,
-                                  keyboardType: TextInputType.number,
-                                  decoration: _fieldDecoration('YYYY'),
-                                ),
-                              ),
-                            ],
-                          ),
-
                           const SizedBox(height: 14),
 
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'SUBMIT PHOTO OF VALID ID',
-                              style: GoogleFonts.poppins(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                                color: appBlack,
-                              ),
-                            ),
+                          IdPhotoUploadWidget(
+                            idPhotoPath: _idPhotoPath,
+                            uploadingPhoto: _uploadingPhoto,
+                            onUpload: _uploadPhoto,
                           ),
-                          const SizedBox(height: 6),
-
-                          Row(
-                            children: [
-                              Expanded(
-                                flex: 3,
-                                child: Container(
-                                  height: 64,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: Colors.black,
-                                      width: 2,
-                                    ),
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      _idPhotoPath == null
-                                          ? '(Required) UPLOAD GOVERNMENT ID'
-                                          : '✓ ID UPLOADED',
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 14,
-                                        color: Colors.black,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                flex: 1,
-                                child: GestureDetector(
-                                  onTap: _uploadingPhoto ? null : _uploadPhoto,
-                                  child: Container(
-                                    height: 64,
-                                    decoration: BoxDecoration(
-                                      color: _uploadingPhoto
-                                          ? Colors.grey[400]
-                                          : appRed,
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Center(
-                                      child: _uploadingPhoto
-                                          ? const SizedBox(
-                                              height: 30,
-                                              width: 30,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                valueColor:
-                                                    AlwaysStoppedAnimation<
-                                                      Color
-                                                    >(Colors.white),
-                                              ),
-                                            )
-                                          : const Icon(
-                                              Icons.camera_alt,
-                                              color: Colors.white,
-                                              size: 32,
-                                            ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-
                           const SizedBox(height: 14),
 
-                          Row(
-                            children: [
-                              AnimatedSwitcher(
-                                duration: const Duration(milliseconds: 250),
-                                switchInCurve: Curves.easeOutBack,
-                                switchOutCurve: Curves.easeIn,
-                                transitionBuilder: (child, animation) =>
-                                    ScaleTransition(
-                                      scale: animation,
-                                      child: child,
-                                    ),
-                                child: Checkbox(
-                                  key: ValueKey<bool>(_agree),
-                                  value: _agree,
-                                  onChanged: (v) =>
-                                      setState(() => _agree = v ?? false),
-                                  checkColor: Colors.white,
-                                  fillColor: MaterialStateProperty.resolveWith((
-                                    states,
-                                  ) {
-                                    if (states.contains(
-                                      MaterialState.disabled,
-                                    )) {
-                                      return Colors.grey;
-                                    }
-                                    return appBlue;
-                                  }),
-                                ),
-                              ),
-                              Expanded(
-                                child: GestureDetector(
-                                  onTap: _showTermsAndConditions,
-                                  child: Text(
-                                    'AGREE TO TERMS AND CONDITIONS',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 11,
-                                      color: appBlue,
-                                      decoration: TextDecoration.underline,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
+                          TermsCheckbox(
+                            agreed: _agree,
+                            onChanged: () => setState(() => _agree = !_agree),
+                            onTermsTap: _showTermsAndConditions,
                           ),
                           const SizedBox(height: 14),
 
@@ -827,7 +373,7 @@ By clicking "I AGREE," you acknowledge that you have read, understood, and agree
                                   ? null
                                   : _submit,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: appBlue,
+                                backgroundColor: AppTheme.appBlue,
                                 disabledBackgroundColor: Colors.grey[400],
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(4),

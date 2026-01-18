@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import '../ui/app_theme.dart';
 
 class MapPage extends StatefulWidget {
   const MapPage({super.key});
@@ -53,18 +54,25 @@ class _MapPageState extends State<MapPage> {
     super.dispose();
   }
 
-  void _showIncidentInfo(String title, String subtitle) {
+  void _showIncidentInfo(Map<String, dynamic> data) {
+    final incidentType = data['incidentType'] as String? ?? 'Unknown';
+    final reporter = data['name'] as String? ?? 'Unknown';
+    final description = data['description'] as String? ?? 'No description';
+    final status = data['status'] as String? ?? 'Unverified';
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(title),
+        title: Text(incidentType, style: AppText.subheading),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(subtitle),
+            Text('Reported by $reporter', style: AppText.body),
             const SizedBox(height: 16),
-            const Text('Tap for more details or to navigate to location.'),
+            Text('Status: $status', style: AppText.body),
+            const SizedBox(height: 8),
+            Text(description, style: AppText.body),
           ],
         ),
         actions: [
@@ -72,41 +80,9 @@ class _MapPageState extends State<MapPage> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
           ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // Set this incident as destination
-              _setDestinationFromIncident(title);
-            },
-            child: const Text('Navigate'),
-          ),
         ],
       ),
     );
-  }
-
-  void _setDestinationFromIncident(String incidentType) {
-    LatLng destination;
-
-    switch (incidentType) {
-      case 'Fire Incident':
-        destination = const LatLng(15.1450, 120.5887);
-        break;
-      case 'Road Obstruction':
-        destination = const LatLng(15.1500, 120.5950);
-        break;
-      case 'Medical Emergency':
-        destination = const LatLng(15.1400, 120.5800);
-        break;
-      case 'Flood Warning':
-        destination = const LatLng(15.1550, 120.5850);
-        break;
-      default:
-        destination = const LatLng(15.1450, 120.5887);
-    }
-
-    _destination = destination;
-    _calculateRoute();
   }
 
   Future<void> _calculateRoute() async {
@@ -202,7 +178,7 @@ class _MapPageState extends State<MapPage> {
 
   String _calculateEstimatedTime(double distanceKm) {
     // Assume average speed of 40 km/h
-    final hours = distanceKm / 40;
+    final hours = distanceKm / 40.0;
     if (hours < 1) {
       final minutes = (hours * 60).round();
       return '$minutes mins';
@@ -217,7 +193,6 @@ Route calculated successfully!
 
 📏 Distance: ${_estimatedDistance.toStringAsFixed(2)} km
 ⏱️ Estimated Time: $_estimatedTime
-
 🚦 Directions:
 1. Head north on MacArthur Highway
 2. Turn right onto Friendship Highway
@@ -331,10 +306,7 @@ Route calculated successfully!
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(isActive ? 0.28 : 0.18),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.35),
-              width: 1,
-            ),
+            border: Border.all(color: Colors.white.withOpacity(0.35), width: 1),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.18),
@@ -343,11 +315,7 @@ Route calculated successfully!
               ),
             ],
           ),
-          child: Icon(
-            icon,
-            color: Colors.white,
-            size: 28,
-          ),
+          child: Icon(icon, color: Colors.white, size: 28),
         ),
       ),
     );
@@ -374,10 +342,7 @@ Route calculated successfully!
               width: 72,
               height: 72,
               child: GestureDetector(
-                onTap: () => _showIncidentInfo(
-                  incidentType,
-                  'Reported by ${data['name'] ?? 'Unknown'}',
-                ),
+                onTap: () => _showIncidentInfo(data),
                 child: Image.asset(
                   _getMarkerAssetForIncidentType(incidentType),
                   width: 72,
@@ -680,9 +645,11 @@ Route calculated successfully!
                     onPressed: () {
                       // Simulate emergency stop
                       _stopTracking();
-                      _showIncidentInfo(
-                        'Emergency Stop',
-                        'Emergency responder has stopped en route',
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Route tracking stopped'),
+                          duration: Duration(seconds: 2),
+                        ),
                       );
                     },
                     child: const Icon(Icons.emergency, color: Colors.white),
@@ -806,13 +773,13 @@ Route calculated successfully!
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Set Destination'),
+          title: Text('Set Destination', style: AppText.subheading),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
                 leading: const Icon(Icons.search),
-                title: const Text('Search Location'),
+                title: Text('Search Location', style: AppText.body),
                 onTap: () {
                   Navigator.pop(context);
                   // Implement location search
@@ -820,8 +787,11 @@ Route calculated successfully!
               ),
               ListTile(
                 leading: const Icon(Icons.map),
-                title: const Text('Tap on Map'),
-                subtitle: const Text('Tap anywhere on map to set destination'),
+                title: Text('Tap on Map', style: AppText.body),
+                subtitle: Text(
+                  'Tap anywhere on map to set destination',
+                  style: AppText.caption,
+                ),
                 onTap: () {
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -834,7 +804,7 @@ Route calculated successfully!
               ),
               ListTile(
                 leading: const Icon(Icons.my_location),
-                title: const Text('Use Current Location'),
+                title: Text('Use Current Location', style: AppText.body),
                 onTap: () {
                   Navigator.pop(context);
                   // Set destination to current location
@@ -860,12 +830,12 @@ Route calculated successfully!
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Filter Incidents'),
+          title: Text('Filter Incidents', style: AppText.subheading),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               CheckboxListTile(
-                title: const Text('Fire'),
+                title: Text('Fire', style: AppText.body),
                 value: true,
                 onChanged: (bool? value) {},
                 secondary: const Icon(
@@ -874,13 +844,13 @@ Route calculated successfully!
                 ),
               ),
               CheckboxListTile(
-                title: const Text('Flood'),
+                title: Text('Flood', style: AppText.body),
                 value: true,
                 onChanged: (bool? value) {},
                 secondary: const Icon(Icons.water, color: Colors.blue),
               ),
               CheckboxListTile(
-                title: const Text('Medical'),
+                title: Text('Medical', style: AppText.body),
                 value: true,
                 onChanged: (bool? value) {},
                 secondary: const Icon(
@@ -889,13 +859,13 @@ Route calculated successfully!
                 ),
               ),
               CheckboxListTile(
-                title: const Text('Vehicular'),
+                title: Text('Vehicular', style: AppText.body),
                 value: true,
                 onChanged: (bool? value) {},
                 secondary: const Icon(Icons.car_crash, color: Colors.purple),
               ),
               CheckboxListTile(
-                title: const Text('Road Obstruction'),
+                title: Text('Road Obstruction', style: AppText.body),
                 value: true,
                 onChanged: (bool? value) {},
                 secondary: const Icon(Icons.warning, color: Colors.orange),

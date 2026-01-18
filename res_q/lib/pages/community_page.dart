@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
 import '../services/user_session.dart';
 
@@ -15,10 +17,13 @@ class _CommunityPageState extends State<CommunityPage> {
   // Brand colors
   static const appBlue = Color(0xFFAC1B22);
   static const appRed = Color(0xFFAC1B22);
-  static const appGreen = Color(0xFFFFC806);
-  static const appYellow = Color(0xFFF5F520);
+  static const appGreen = Color(0xFF00A458); // True green
+  static const appYellow = Color(0xFFFFC806); // Yellow for under review
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
+  static const statusGreen = Color(0xFF00A458); // Approved
+  static const statusYellow = Color(0xFFFFC806); // Under Review
+  static const statusRed = Color(0xFFAC1B22); // Flagged
 
   String _selectedFilter = 'All';
   String _selectedCategory = 'All';
@@ -143,252 +148,302 @@ class _CommunityPageState extends State<CommunityPage> {
 
   // Add this method to replace the existing _showReasonDialog in community_page.dart
 
-Future<bool> _showReasonDialog({
-  required Color headerColor,
-  required String headerText,
-  required String question,
-  required List<String> reasons,
-}) async {
-  final TextEditingController commentController = TextEditingController();
-  final List<bool> selected = List<bool>.filled(reasons.length, false);
-  String? errorText;
+  Future<bool> _showReasonDialog({
+    required Color headerColor,
+    required String headerText,
+    required String question,
+    required List<String> reasons,
+  }) async {
+    final TextEditingController commentController = TextEditingController();
+    final List<bool> selected = List<bool>.filled(reasons.length, false);
+    String? errorText;
 
-  final result = await showDialog<bool>(
-    context: context,
-    barrierDismissible: true,
-    builder: (dialogContext) {
-      return Dialog(
-        insetPadding: const EdgeInsets.symmetric(
-          horizontal: 24,
-          vertical: 24,
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: StatefulBuilder(
-          builder: (context, setStateDialog) {
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // HEADER (Yellow/Green background with white text)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 24,
-                  ),
-                  decoration: BoxDecoration(
-                    color: headerColor,
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(20),
-                      topRight: Radius.circular(20),
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      headerText,
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 28,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-
-                // BODY (White background)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(24),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.only(
-                      bottomLeft: Radius.circular(20),
-                      bottomRight: Radius.circular(20),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
+    final result =
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: true,
+          builder: (dialogContext) {
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 24,
+                vertical: 24,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: StatefulBuilder(
+                builder: (context, setStateDialog) {
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Question
-                      Text(
-                        question,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontSize: 22,
-                          fontWeight: FontWeight.w400,
-                          color: Colors.black,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-
-                      // Reasons (Checkboxes)
-                      ...List.generate(reasons.length, (i) {
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8.0),
-                          child: InkWell(
-                            onTap: () {
-                              setStateDialog(() {
-                                selected[i] = !selected[i];
-                              });
-                            },
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(6),
-                                    border: Border.all(
-                                      color: Colors.black,
-                                      width: 2,
-                                    ),
-                                    color: selected[i]
-                                        ? headerColor.withOpacity(0.1)
-                                        : Colors.white,
-                                  ),
-                                  child: selected[i]
-                                      ? Icon(
-                                          Icons.check,
-                                          size: 28,
-                                          color: headerColor,
-                                        )
-                                      : null,
-                                ),
-                                const SizedBox(width: 16),
-                                Expanded(
-                                  child: Text(
-                                    reasons[i],
-                                    style: const TextStyle(
-                                      fontFamily: 'RobotoCondensed',
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w400,
-                                      color: Colors.black,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }),
-
-                      const SizedBox(height: 24),
-
-                      // Additional Comments Label
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Additional Comments',
-                          style: const TextStyle(
-                            fontFamily: 'RobotoCondensed',
-                            fontSize: 18,
-                            fontWeight: FontWeight.w400,
-                            color: Colors.black,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-
-                      // Text Field
+                      // HEADER (Yellow/Green background with white text)
                       Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 24,
+                        ),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFE8E8E8),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: TextField(
-                          controller: commentController,
-                          maxLines: 4,
-                          style: const TextStyle(
-                            fontFamily: 'RobotoCondensed',
-                            fontSize: 16,
-                            fontWeight: FontWeight.w400,
-                            color: Colors.black,
-                          ),
-                          decoration: const InputDecoration(
-                            contentPadding: EdgeInsets.all(16),
-                            border: InputBorder.none,
+                          color: headerColor,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(20),
+                            topRight: Radius.circular(20),
                           ),
                         ),
-                      ),
-
-                      if (errorText != null) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          errorText!,
-                          style: const TextStyle(
-                            fontFamily: 'RobotoCondensed',
-                            fontSize: 14,
-                            color: Colors.red,
-                          ),
-                        ),
-                      ],
-
-                      const SizedBox(height: 24),
-
-                      // Submit Button
-                      Container(
-                        width: 200,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(30),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.25),
-                              blurRadius: 8,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: headerColor,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30),
-                            ),
-                            elevation: 0,
-                          ),
-                          onPressed: () {
-                            final hasReason = selected.contains(true);
-                            final hasComment =
-                                commentController.text.trim().isNotEmpty;
-
-                            if (!hasReason && !hasComment) {
-                              setStateDialog(() {
-                                errorText =
-                                    'Please select a reason or add a comment.';
-                              });
-                              return;
-                            }
-
-                            Navigator.of(dialogContext).pop(true);
-                          },
-                          child: const Text(
-                            'SUBMIT',
-                            style: TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 20,
-                              fontWeight: FontWeight.w500,
+                        child: Center(
+                          child: Text(
+                            headerText,
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 28,
+                              fontWeight: FontWeight.w900,
                               color: Colors.white,
                             ),
                           ),
                         ),
                       ),
+
+                      // BODY (White background)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(24),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.only(
+                            bottomLeft: Radius.circular(20),
+                            bottomRight: Radius.circular(20),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // Question
+                            Text(
+                              question,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontSize: 22,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.black,
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+
+                            // Reasons (Checkboxes)
+                            ...List.generate(reasons.length, (i) {
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 8.0,
+                                ),
+                                child: InkWell(
+                                  onTap: () {
+                                    setStateDialog(() {
+                                      selected[i] = !selected[i];
+                                    });
+                                  },
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 40,
+                                        height: 40,
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.black,
+                                            width: 2,
+                                          ),
+                                          color: selected[i]
+                                              ? headerColor.withOpacity(0.1)
+                                              : Colors.white,
+                                        ),
+                                        child: selected[i]
+                                            ? Icon(
+                                                Icons.check,
+                                                size: 28,
+                                                color: headerColor,
+                                              )
+                                            : null,
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Expanded(
+                                        child: Text(
+                                          reasons[i],
+                                          style: const TextStyle(
+                                            fontFamily: 'RobotoCondensed',
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.w400,
+                                            color: Colors.black,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }),
+
+                            const SizedBox(height: 24),
+
+                            // Additional Comments Label
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'Additional Comments',
+                                style: const TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w400,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+
+                            // Text Field
+                            Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE8E8E8),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: TextField(
+                                controller: commentController,
+                                maxLines: 4,
+                                style: const TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w400,
+                                  color: Colors.black,
+                                ),
+                                decoration: const InputDecoration(
+                                  contentPadding: EdgeInsets.all(16),
+                                  border: InputBorder.none,
+                                ),
+                              ),
+                            ),
+
+                            if (errorText != null) ...[
+                              const SizedBox(height: 12),
+                              Text(
+                                errorText!,
+                                style: const TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontSize: 14,
+                                  color: Colors.red,
+                                ),
+                              ),
+                            ],
+
+                            const SizedBox(height: 24),
+
+                            // Submit Button
+                            Container(
+                              width: 200,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(30),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.25),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: headerColor,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(30),
+                                  ),
+                                  elevation: 0,
+                                ),
+                                onPressed: () {
+                                  final hasReason = selected.contains(true);
+                                  final hasComment = commentController.text
+                                      .trim()
+                                      .isNotEmpty;
+
+                                  if (!hasReason && !hasComment) {
+                                    setStateDialog(() {
+                                      errorText =
+                                          'Please select a reason or add a comment.';
+                                    });
+                                    return;
+                                  }
+
+                                  Navigator.of(dialogContext).pop(true);
+                                },
+                                child: const Text(
+                                  'SUBMIT',
+                                  style: TextStyle(
+                                    fontFamily: 'RobotoCondensed',
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
-                  ),
-                ),
-              ],
+                  );
+                },
+              ),
             );
           },
-        ),
-      );
-    },
-  ) ?? false;
+        ) ??
+        false;
 
-  return result;
-}
+    return result;
+  }
+
+  // ───────────────── MEDIA BUILDER ─────────────────
+
+  Widget _buildMediaWidget(Map<String, dynamic> report) {
+    final mediaUrl = (report['image'] as String? ?? '').trim();
+    final mediaType = (report['mediaType'] as String? ?? 'photo').toLowerCase();
+
+    // Debug: log what we're trying to load
+    debugPrint('🖼️ Media load -> type: ' + mediaType + ', url: ' + mediaUrl);
+
+    // Handle empty URL
+    if (mediaUrl.isEmpty) {
+      return Container(
+        color: Colors.grey[300],
+        child: const Center(child: Icon(Icons.image_not_supported, size: 48)),
+      );
+    }
+
+    // Convert Firebase Storage path to download URL if needed
+    String downloadUrl = mediaUrl;
+    if (!mediaUrl.startsWith('https')) {
+      // This is a storage path, convert to download URL
+      final bucket = 'res-q-93ca6.firebasestorage.app';
+      downloadUrl =
+          'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(mediaUrl)}?alt=media';
+      debugPrint('🔗 Converted storage path to download URL: $downloadUrl');
+    }
+
+    // Firebase Storage URLs are network images - wrapped in GestureDetector for tap to zoom
+    return GestureDetector(
+      onTap: () => _showImageZoom(downloadUrl),
+      child: _NetworkImageLoader(url: downloadUrl),
+    );
+  }
+
+  // ───────────────── IMAGE ZOOM DIALOG ─────────────────
+
+  void _showImageZoom(String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (context) => _ImageZoomDialog(imageUrl: imageUrl),
+    );
+  }
 
   // ───────────────── FLAG LOGIC (WITH DIALOG) ─────────────────
 
@@ -407,7 +462,7 @@ Future<bool> _showReasonDialog({
 
     // Show VERIFY modal
     final bool confirmed = await _showReasonDialog(
-      headerColor: appRed,
+      headerColor: statusGreen,
       headerText: 'VERIFY REPORT',
       question: 'Why are you verifying this report?',
       reasons: const [
@@ -549,8 +604,10 @@ Future<bool> _showReasonDialog({
                         child: DropdownButton<String>(
                           value: _selectedFilter,
                           dropdownColor: Colors.white,
-                          style:
-                              GoogleFonts.poppins(fontSize: 13, color: appBlack),
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            color: appBlack,
+                          ),
                           items: const [
                             DropdownMenuItem(value: 'All', child: Text('All')),
                             DropdownMenuItem(
@@ -600,8 +657,10 @@ Future<bool> _showReasonDialog({
                           value: _selectedCategory,
                           dropdownColor: Colors.white,
                           iconEnabledColor: Colors.white,
-                          style:
-                              GoogleFonts.poppins(fontSize: 13, color: appBlack),
+                          style: GoogleFonts.poppins(
+                            fontSize: 13,
+                            color: appBlack,
+                          ),
                           items: _categories
                               .map(
                                 (value) => DropdownMenuItem(
@@ -705,10 +764,7 @@ Future<bool> _showReasonDialog({
                         SizedBox(
                           height: 160,
                           width: double.infinity,
-                          child: Image.asset(
-                            report['image'],
-                            fit: BoxFit.cover,
-                          ),
+                          child: _buildMediaWidget(report),
                         ),
 
                         const SizedBox(height: 12),
@@ -728,11 +784,11 @@ Future<bool> _showReasonDialog({
                                       color:
                                           statusLower == 'approved' ||
                                               statusLower == 'verified'
-                                          ? appGreen
+                                          ? statusGreen
                                           : statusLower == 'flagged' ||
                                                 statusLower == 'unverified'
-                                          ? appRed
-                                          : appYellow,
+                                          ? statusRed
+                                          : statusYellow,
                                       shape: BoxShape.circle,
                                     ),
                                   ),
@@ -746,11 +802,11 @@ Future<bool> _showReasonDialog({
                                       color:
                                           statusLower == 'approved' ||
                                               statusLower == 'verified'
-                                          ? appGreen
+                                          ? statusGreen
                                           : statusLower == 'flagged' ||
                                                 statusLower == 'unverified'
-                                          ? appRed
-                                          : appYellow,
+                                          ? statusRed
+                                          : statusYellow,
                                     ),
                                   ),
                                 ],
@@ -966,8 +1022,9 @@ class _CommentsPage extends StatefulWidget {
 
 class _CommentsPageState extends State<_CommentsPage> {
   static const appBlue = Color(0xFFAC1B22);
-  static const appRed = Color(0xFFFFC806);
+  static const appRed = Color(0xFFAC1B22);
   static const appGreen = Color(0xFF00A458);
+  static const appYellow = Color(0xFFFFC806);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
 
@@ -1689,5 +1746,251 @@ class _CommentsPageState extends State<_CommentsPage> {
     } else {
       return DateFormat('MMM dd').format(timestamp);
     }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// IMAGE ZOOM DIALOG
+// ═══════════════════════════════════════════════════════════════════════════
+
+class _ImageZoomDialog extends StatefulWidget {
+  final String imageUrl;
+
+  const _ImageZoomDialog({required this.imageUrl});
+
+  @override
+  State<_ImageZoomDialog> createState() => _ImageZoomDialogState();
+}
+
+class _ImageZoomDialogState extends State<_ImageZoomDialog> {
+  double _scale = 1.0;
+  double _baseScale = 1.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.black.withOpacity(0.9),
+      insetPadding: EdgeInsets.zero,
+      child: GestureDetector(
+        onScaleStart: (details) {
+          _baseScale = _scale;
+        },
+        onScaleUpdate: (details) {
+          setState(() {
+            _scale = (_baseScale * details.scale).clamp(1.0, 3.0);
+          });
+        },
+        child: Stack(
+          children: [
+            // ZOOMED IMAGE
+            Center(
+              child: InteractiveViewer(
+                minScale: 1.0,
+                maxScale: 3.0,
+                child: Image.network(
+                  widget.imageUrl,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.high,
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) {
+                      return child;
+                    }
+                    return Center(
+                      child: CircularProgressIndicator(
+                        value: loadingProgress.expectedTotalBytes != null
+                            ? loadingProgress.cumulativeBytesLoaded /
+                                  (loadingProgress.expectedTotalBytes ?? 1)
+                            : null,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.white,
+                        ),
+                      ),
+                    );
+                  },
+                  errorBuilder: (context, error, stackTrace) {
+                    return const Center(
+                      child: Icon(
+                        Icons.error_outline,
+                        color: Colors.white,
+                        size: 48,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+
+            // CLOSE BUTTON
+            Positioned(
+              top: 16,
+              right: 16,
+              child: GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.6),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Center(
+                    child: Icon(Icons.close, color: Colors.white, size: 28),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// FIREBASE STORAGE IMAGE LOADER
+// ═══════════════════════════════════════════════════════════════════════════
+/// Loads images directly from Firebase Storage using the download URL
+/// Uses Image.memory for better control and error handling
+
+class _NetworkImageLoader extends StatefulWidget {
+  final String url;
+
+  const _NetworkImageLoader({required this.url});
+
+  @override
+  State<_NetworkImageLoader> createState() => _NetworkImageLoaderState();
+}
+
+class _NetworkImageLoaderState extends State<_NetworkImageLoader> {
+  int _retryCount = 0;
+  static const int _maxRetries = 2;
+
+  @override
+  void initState() {
+    super.initState();
+    debugPrint('🖼️ [NetworkImageLoader] Init - URL: ${widget.url}');
+  }
+
+  void _retry() {
+    if (_retryCount < _maxRetries) {
+      setState(() => _retryCount++);
+      debugPrint('🔄 Retry attempt ${_retryCount + 1}/$_maxRetries');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final key = ValueKey('${widget.url}_retry$_retryCount');
+
+    return Image.network(
+      widget.url,
+      key: key,
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.high,
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) {
+          debugPrint('✅ Image loaded successfully');
+          return child;
+        }
+        final percent = loadingProgress.expectedTotalBytes != null
+            ? (loadingProgress.cumulativeBytesLoaded /
+                      loadingProgress.expectedTotalBytes!) *
+                  100
+            : 0;
+        debugPrint('⏳ Loading... ${percent.toStringAsFixed(0)}%');
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(
+                value: percent > 0 ? percent / 100 : null,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${percent.toStringAsFixed(0)}%',
+                style: const TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+            ],
+          ),
+        );
+      },
+      errorBuilder: (context, error, stackTrace) {
+        String errorString = 'Unknown error';
+        try {
+          errorString = error?.toString() ?? 'Unknown error';
+        } catch (e) {
+          errorString = 'Error object inaccessible: $e';
+        }
+
+        debugPrint(
+          '❌ [ImageLoader] Load failed:\n'
+          '   URL: ${widget.url}\n'
+          '   Error: $errorString\n'
+          '   Type: ${error?.runtimeType ?? 'unknown'}',
+        );
+
+        String diagnosis = 'Failed to load image';
+
+        if (errorString.contains('statusCode: 0')) {
+          diagnosis = '📡 No Internet\n(Check connection or emulator network)';
+        } else if (errorString.contains('401') ||
+            errorString.contains('403') ||
+            errorString.contains('Permission') ||
+            errorString.contains('denied')) {
+          diagnosis = '🔒 Access Denied\n(Check Storage Rules)';
+        } else if (errorString.contains('404') ||
+            errorString.contains('not found')) {
+          diagnosis = '❌ File Not Found';
+        } else if (errorString.contains('timeout') ||
+            errorString.contains('Time out')) {
+          diagnosis = '⏱️ Network Timeout';
+        } else if (errorString.contains('Network') ||
+            errorString.contains('Connection') ||
+            errorString.contains('SocketException')) {
+          diagnosis = '🌐 Network Error\n(Check internet connection)';
+        } else if (errorString.contains('Certificate') ||
+            errorString.contains('SSL')) {
+          diagnosis = '🔐 SSL Error';
+        }
+
+        return Container(
+          color: Colors.grey[300],
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, size: 48, color: Colors.red),
+                const SizedBox(height: 8),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    diagnosis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                ),
+                if (_retryCount < _maxRetries) ...[
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    onPressed: _retry,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('Retry'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 }

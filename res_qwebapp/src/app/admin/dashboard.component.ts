@@ -99,7 +99,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     },
     scales: {
       x: {
-        ticks: { color: '#555' },
+        ticks: { color: '#555', font: { family: 'Roboto' } },
         grid: { color: '#eeeeee' },
         title: {
           display: true,
@@ -108,13 +108,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
           font: {
             size: 14,
             weight: 'bold',
-            family: 'Poppins'
+            family: 'Roboto'
           }
         }
       },
       y: {
         beginAtZero: true,
-        ticks: { color: '#555' },
+        ticks: { color: '#555', font: { family: 'Roboto' } },
         grid: { color: '#eeeeee' },
         title: {
           display: true,
@@ -123,7 +123,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
           font: {
             size: 14,
             weight: 'bold',
-            family: 'Poppins'
+            family: 'Roboto'
           }
         }
       },
@@ -415,13 +415,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 15;
+      const margin = 8;
       const contentWidth = pageWidth - 2 * margin;
       let yPosition = margin;
 
       // PAGE 1: TITLE AND SUMMARY
-      this.addPDFHeader(pdf, yPosition);
-      yPosition += 30;
+      const headerHeight = await this.addPDFHeader(pdf, yPosition);
+      yPosition += headerHeight + 6;
 
       // Summary statistics
       this.addPDFSummary(pdf, yPosition, contentWidth, margin);
@@ -430,48 +430,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       // Category breakdown
       this.addPDFCategoryBreakdown(pdf, yPosition, contentWidth, margin);
 
-      // PAGE 2: CAPTURE DASHBOARD CHART
-      pdf.addPage();
-      yPosition = margin;
-      
-      pdf.setTextColor(26, 26, 26);
-      pdf.setFontSize(14);
-      pdf.setFont('helvetica', 'bold');
-      pdf.text('ANALYTICS & TRENDS', margin, yPosition);
-      yPosition += 8;
-
-      // Selected filters for clarity
-      pdf.setFontSize(10);
-      pdf.setFont('helvetica', 'normal');
-      pdf.text(`Category: ${this.selectedCategory}`, margin, yPosition);
-      yPosition += 5;
-      pdf.text(`Time Range: ${this.selectedTimeRange}`, margin, yPosition);
-      yPosition += 7;
-      
-      // Try to capture the dashboard chart
-      try {
-        const chartElement = document.querySelector('.reports-card canvas') as HTMLCanvasElement;
-        if (chartElement) {
-          const chartCanvas = await html2canvas(chartElement, {
-            scale: 2,
-            backgroundColor: '#ffffff',
-            logging: false,
-            useCORS: true,
-            allowTaint: true,
-          });
-          const chartImg = chartCanvas.toDataURL('image/png');
-          const maxChartHeight = 100;
-          const chartHeight = Math.min((chartCanvas.height * contentWidth) / chartCanvas.width, maxChartHeight);
-          pdf.addImage(chartImg, 'PNG', margin, yPosition, contentWidth, chartHeight);
-          yPosition += chartHeight + 10;
-        }
-      } catch (e) {
-        console.warn('Could not capture chart:', e);
-        pdf.text('Chart not available', margin, yPosition);
-        yPosition += 10;
-      }
-
-      // PAGE 3: DETAILED REPORTS TABLE
+      // DETAILED REPORTS TABLE
       pdf.addPage();
       yPosition = margin;
 
@@ -485,29 +444,41 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
   }
 
-  private addPDFHeader(pdf: jsPDF, yPosition: number) {
+  private async addPDFHeader(pdf: jsPDF, yPosition: number): Promise<number> {
     const pageWidth = pdf.internal.pageSize.getWidth();
-    const margin = 15;
+    const headerHeight = 52;
 
-    // Background color
-    pdf.setFillColor(26, 26, 26);
-    pdf.rect(0, yPosition - 5, pageWidth, 35, 'F');
+    // Background band
+    pdf.setFillColor(172, 27, 34);
+    pdf.rect(0, yPosition, pageWidth, headerHeight, 'F');
+
+    const logoTop = yPosition + 8;
+    let logoAdded = false;
+    try {
+      const logoData = await this.loadImageData('assets/images/RESQ-white.png');
+      const logoWidth = 70;
+      const logoHeight = 22;
+      const logoX = (pageWidth - logoWidth) / 2;
+      pdf.addImage(logoData, 'PNG', logoX, logoTop, logoWidth, logoHeight);
+      logoAdded = true;
+    } catch (e) {
+      console.warn('Could not load logo for PDF header:', e);
+    }
 
     pdf.setTextColor(255, 255, 255);
-    pdf.setFontSize(18);
-    pdf.setFont('helvetica', 'bold');
-    pdf.text('EMERGENCY RESPONSE SYSTEM', pageWidth / 2, yPosition + 5, { align: 'center' });
-
     pdf.setFontSize(14);
-    pdf.text('Dashboard Report', pageWidth / 2, yPosition + 14, { align: 'center' });
+    pdf.setFont('helvetica', 'bold');
+    const titleY = (logoAdded ? logoTop + 24 : yPosition + 16);
+    pdf.text('Dashboard Report', pageWidth / 2, titleY, { align: 'center' });
 
     pdf.setFontSize(10);
     pdf.setFont('helvetica', 'normal');
     const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' });
     const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-    pdf.text(`Generated: ${date} | ${time}`, pageWidth / 2, yPosition + 22, { align: 'center' });
+    pdf.text(`Generated: ${date} | ${time}`, pageWidth / 2, titleY + 10, { align: 'center' });
 
     pdf.setTextColor(0, 0, 0);
+    return headerHeight;
   }
 
   private addPDFSummary(pdf: jsPDF, yPosition: number, contentWidth: number, margin: number) {
@@ -694,6 +665,111 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return outputCanvas;
   }
 
+  async printGraphToPDF() {
+    try {
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4',
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 15;
+      const contentWidth = pageWidth - 2 * margin;
+      let yPosition = margin;
+
+      // Header
+      pdf.setFillColor(172, 27, 34);
+      pdf.rect(0, 0, pageWidth, 45, 'F');
+
+      const logoTop = 8;
+      let logoAdded = false;
+      try {
+        const logoData = await this.loadImageData('assets/images/RESQ-white.png');
+        const logoWidth = 50;
+        const logoHeight = 20;
+        const logoX = (pageWidth - logoWidth) / 2;
+        pdf.addImage(logoData, 'PNG', logoX, logoTop, logoWidth, logoHeight);
+        logoAdded = true;
+      } catch (e) {
+        console.warn('Could not load logo for graph PDF:', e);
+      }
+
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(14);
+      pdf.setFont('helvetica', 'bold');
+      const titleY = logoAdded ? logoTop + 22 : 18;
+      pdf.text('Analytics Report', pageWidth / 2, titleY, { align: 'center' });
+
+      pdf.setFontSize(9);
+      pdf.setFont('helvetica', 'normal');
+      const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' });
+      const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+      pdf.text(`Generated: ${date} | ${time}`, pageWidth / 2, titleY + 8, { align: 'center' });
+
+      yPosition = 55;
+      pdf.setTextColor(26, 26, 26);
+
+      // Chart info
+      pdf.setFontSize(12);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('ANALYTICS & TRENDS', margin, yPosition);
+      yPosition += 10;
+
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Category: ${this.selectedCategory}`, margin, yPosition);
+      yPosition += 6;
+      pdf.text(`Time Range: ${this.selectedTimeRange}`, margin, yPosition);
+      yPosition += 12;
+
+      // Capture chart
+      try {
+        const chartElement = document.querySelector('.reports-card canvas') as HTMLCanvasElement;
+        if (chartElement) {
+          const chartCanvas = await html2canvas(chartElement, {
+            scale: 2,
+            backgroundColor: '#ffffff',
+            logging: false,
+            useCORS: true,
+            allowTaint: true,
+          });
+          const chartImg = chartCanvas.toDataURL('image/png');
+          const maxChartHeight = pageHeight - yPosition - 15;
+          const chartHeight = Math.min((chartCanvas.height * contentWidth) / chartCanvas.width, maxChartHeight);
+          pdf.addImage(chartImg, 'PNG', margin, yPosition, contentWidth, chartHeight);
+        } else {
+          pdf.text('Chart not available', margin, yPosition);
+        }
+      } catch (e) {
+        console.error('Could not capture chart:', e);
+        pdf.text('Error capturing chart', margin, yPosition);
+      }
+
+      // Save
+      const dateStr = new Date().toISOString().split('T')[0];
+      pdf.save(`analytics-report-${dateStr}.pdf`);
+    } catch (error) {
+      console.error('Error generating graph PDF:', error);
+    }
+  }
+
+  private async loadImageData(url: string): Promise<string> {
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      throw new Error(`Failed to load image: ${resp.status}`);
+    }
+    const blob = await resp.blob();
+
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read image blob'));
+      reader.onload = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  }
+
   private addPDFReportsTable(pdf: jsPDF, yPosition: number, contentWidth: number, margin: number) {
     pdf.setTextColor(26, 26, 26);
     pdf.setFontSize(12);
@@ -704,21 +780,23 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
     // Table headers
     const headers = ['Type', 'Status', 'Date', 'Description'];
-    const columnWidths = [contentWidth * 0.32, contentWidth * 0.16, contentWidth * 0.16, contentWidth * 0.36];
+    const columnWidths = [contentWidth * 0.28, contentWidth * 0.18, contentWidth * 0.14, contentWidth * 0.40];
 
-    pdf.setFontSize(9);
+    pdf.setFontSize(10);
     pdf.setFont('helvetica', 'bold');
     pdf.setFillColor(26, 26, 26);
     pdf.setTextColor(255, 255, 255);
 
+    // Single header bar spanning all columns
+    pdf.rect(margin, yPosition, contentWidth, 10, 'F');
+
     let xOffset = margin;
     headers.forEach((header, index) => {
-      pdf.rect(xOffset, yPosition, columnWidths[index], 7, 'F');
-      pdf.text(header, xOffset + 1, yPosition + 5);
+      pdf.text(header, xOffset + columnWidths[index] / 8, yPosition + 6,);
       xOffset += columnWidths[index];
     });
 
-    yPosition += 8;
+    yPosition += 14;
     pdf.setFont('helvetica', 'normal');
     pdf.setTextColor(26, 26, 26);
     pdf.setFontSize(8);
@@ -734,13 +812,16 @@ export class DashboardComponent implements OnInit, OnDestroy {
         pdf.setFont('helvetica', 'bold');
         pdf.setFillColor(26, 26, 26);
         pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(10);
+        // Single header bar spanning all columns
+        pdf.rect(margin, yPosition, contentWidth, 14, 'F');
+
         xOffset = margin;
         headers.forEach((header, index) => {
-          pdf.rect(xOffset, yPosition, columnWidths[index], 7, 'F');
-          pdf.text(header, xOffset + 1, yPosition + 5);
+          pdf.text(header, xOffset + columnWidths[index] / 2, yPosition + 9, { align: 'center' });
           xOffset += columnWidths[index];
         });
-        yPosition += 8;
+        yPosition += 14;
         pdf.setFont('helvetica', 'normal');
         pdf.setTextColor(26, 26, 26);
       }
@@ -781,13 +862,16 @@ export class DashboardComponent implements OnInit, OnDestroy {
         pdf.setFont('helvetica', 'bold');
         pdf.setFillColor(26, 26, 26);
         pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(10);
+        // Single header bar spanning all columns
+        pdf.rect(margin, yPosition, contentWidth, 14, 'F');
+
         xOffset = margin;
         headers.forEach((header, index) => {
-          pdf.rect(xOffset, yPosition, columnWidths[index], 7, 'F');
-          pdf.text(header, xOffset + 1, yPosition + 5);
+          pdf.text(header, xOffset + columnWidths[index] / 2, yPosition + 9, { align: 'center' });
           xOffset += columnWidths[index];
         });
-        yPosition += 8;
+        yPosition += 14;
         pdf.setFont('helvetica', 'normal');
         pdf.setTextColor(26, 26, 26);
       }

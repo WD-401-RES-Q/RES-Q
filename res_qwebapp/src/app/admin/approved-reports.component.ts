@@ -1,6 +1,7 @@
 import { Component, OnDestroy, OnInit, NgZone, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FirestoreService } from '../firestore.service';
+import { FirebaseStorageService } from '../firebase-storage.service';
 import { Subscription } from 'rxjs';
 import { collection, getDocs, query, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase.config';
@@ -40,6 +41,7 @@ interface Comment {
 export class ApprovedReportsComponent implements OnInit, OnDestroy {
   constructor(
     private firestoreService: FirestoreService,
+    private firebaseStorageService: FirebaseStorageService,
     private ngZone: NgZone,
     private cdr: ChangeDetectorRef
   ) {}
@@ -100,7 +102,7 @@ export class ApprovedReportsComponent implements OnInit, OnDestroy {
       approvedBy: doc.approvedBy ?? 'Admin',
       date: dateStr,
       time: timeStr,
-      imageUrl: doc.mediaUrl ?? 'assets/images/placeholder-report.jpg',
+      imageUrl: this.firebaseStorageService.getDownloadUrl(doc.mediaUrl),
       greenFlags: doc.greenFlags ?? 0,
       redFlags: doc.redFlags ?? 0,
       comments: doc.comments ?? 0,

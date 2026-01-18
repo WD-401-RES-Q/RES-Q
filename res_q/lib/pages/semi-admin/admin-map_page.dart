@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import '../../ui/app_theme.dart';
 
 class AdminMapPage extends StatefulWidget {
   const AdminMapPage({super.key});
@@ -31,14 +32,14 @@ class AdminComment {
 
 class _AdminMapPageState extends State<AdminMapPage> {
   final MapController _mapController = MapController();
-  
+
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
   final double _initialZoom = 14.0;
 
   // Sample incident markers
   final List<Marker> _incidentMarkers = [];
-  
+
   // Route related variables
   LatLng? _userLocation;
   LatLng? _destination;
@@ -51,11 +52,11 @@ class _AdminMapPageState extends State<AdminMapPage> {
   double _estimatedDistance = 0.0;
   String _estimatedTime = '';
   int _currentStepIndex = 0;
-  
+
   // Admin comments
   final List<AdminComment> _adminComments = [];
   bool _showComments = true;
-  
+
   // Simulate moving along route
   Timer? _trackingTimer;
   bool _isMapReady = false;
@@ -83,9 +84,7 @@ class _AdminMapPageState extends State<AdminMapPage> {
     return GestureDetector(
       onTap: () => _showIncidentInfo(title, subtitle),
       child: Container(
-        decoration: const BoxDecoration(
-          shape: BoxShape.circle,
-        ),
+        decoration: const BoxDecoration(shape: BoxShape.circle),
         child: Image.asset(
           assetPath,
           width: 72,
@@ -173,14 +172,17 @@ class _AdminMapPageState extends State<AdminMapPage> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(title),
+        title: Text(title, style: AppText.subheading),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(subtitle),
+            Text(subtitle, style: AppText.body),
             const SizedBox(height: 16),
-            const Text('Tap for more details or to navigate to location.'),
+            Text(
+              'Tap for more details or to navigate to location.',
+              style: AppText.body,
+            ),
           ],
         ),
         actions: [
@@ -203,7 +205,7 @@ class _AdminMapPageState extends State<AdminMapPage> {
 
   void _setDestinationFromIncident(String incidentType) {
     LatLng destination;
-    
+
     switch (incidentType) {
       case 'Fire Incident':
         destination = const LatLng(15.1450, 120.5887);
@@ -220,14 +222,14 @@ class _AdminMapPageState extends State<AdminMapPage> {
       default:
         destination = const LatLng(15.1450, 120.5887);
     }
-    
+
     _destination = destination;
     _calculateRoute();
   }
 
   Future<void> _calculateRoute() async {
     if (_userLocation == null || _destination == null) return;
-    
+
     setState(() {
       _isRouting = true;
       _routeInstructions = 'Calculating route...';
@@ -239,12 +241,12 @@ class _AdminMapPageState extends State<AdminMapPage> {
     try {
       // Simulated route points (in real app, use OSRM or Google Directions API)
       _routePoints = _generateSimulatedRoute(_userLocation!, _destination!);
-      
+
       // Calculate distance
       final distance = _calculateDistance(_routePoints);
       _estimatedDistance = distance;
       _estimatedTime = _calculateEstimatedTime(distance);
-      
+
       // Add markers
       _routeMarkers.addAll([
         Marker(
@@ -260,21 +262,22 @@ class _AdminMapPageState extends State<AdminMapPage> {
           child: const Icon(Icons.flag, color: Colors.red, size: 40),
         ),
       ]);
-      
+
       // Add route polyline
-      _routePolylines.add(Polyline(
-        points: _routePoints,
-        color: const Color(0xFF4285F4),
-        strokeWidth: 5.0,
-        isDotted: false,
-      ));
-      
+      _routePolylines.add(
+        Polyline(
+          points: _routePoints,
+          color: const Color(0xFF4285F4),
+          strokeWidth: 5.0,
+          isDotted: false,
+        ),
+      );
+
       // Generate route instructions
       _generateRouteInstructions();
-      
+
       // Zoom to fit route
       _zoomToRoute();
-      
     } catch (e) {
       print('Error calculating route: $e');
       _routeInstructions = 'Failed to calculate route';
@@ -289,24 +292,28 @@ class _AdminMapPageState extends State<AdminMapPage> {
     // Generate a simple curved route
     final points = <LatLng>[];
     const segments = 20;
-    
+
     for (int i = 0; i <= segments; i++) {
       final t = i / segments;
       final lat = start.latitude + (end.latitude - start.latitude) * t;
       final lng = start.longitude + (end.longitude - start.longitude) * t;
-      
+
       // Add slight curve
       final curve = 0.001 * sin(t * pi);
       points.add(LatLng(lat + curve, lng + curve));
     }
-    
+
     return points;
   }
 
   double _calculateDistance(List<LatLng> points) {
     double totalDistance = 0.0;
     for (int i = 0; i < points.length - 1; i++) {
-      totalDistance += const Distance().as(LengthUnit.Kilometer, points[i], points[i + 1]);
+      totalDistance += const Distance().as(
+        LengthUnit.Kilometer,
+        points[i],
+        points[i + 1],
+      );
     }
     return totalDistance;
   }
@@ -322,7 +329,8 @@ class _AdminMapPageState extends State<AdminMapPage> {
   }
 
   void _generateRouteInstructions() {
-    _routeInstructions = '''
+    _routeInstructions =
+        '''
 Route calculated successfully!
 
 📏 Distance: ${_estimatedDistance.toStringAsFixed(2)} km
@@ -339,54 +347,51 @@ Route calculated successfully!
 
   void _zoomToRoute() {
     if (_routePoints.isEmpty) return;
-    
+
     double minLat = _routePoints.first.latitude;
     double maxLat = _routePoints.first.latitude;
     double minLng = _routePoints.first.longitude;
     double maxLng = _routePoints.first.longitude;
-    
+
     for (final point in _routePoints) {
       if (point.latitude < minLat) minLat = point.latitude;
       if (point.latitude > maxLat) maxLat = point.latitude;
       if (point.longitude < minLng) minLng = point.longitude;
       if (point.longitude > maxLng) maxLng = point.longitude;
     }
-    
-    final center = LatLng(
-      (minLat + maxLat) / 2,
-      (minLng + maxLng) / 2,
-    );
-    
+
+    final center = LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2);
+
     // Calculate zoom level based on bounds
     final latDiff = maxLat - minLat;
     final lngDiff = maxLng - minLng;
     final maxDiff = max(latDiff, lngDiff);
     final zoom = 14 - maxDiff.abs() * 10;
-    
+
     _mapController.move(center, zoom.clamp(10.0, 16.0).toDouble());
   }
 
   void _startTracking() {
     if (_routePoints.isEmpty || _userLocation == null) return;
-    
+
     setState(() {
       _isTracking = true;
       _currentStepIndex = 0;
     });
-    
+
     int pointIndex = 0;
-    
+
     _trackingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
       if (pointIndex < _routePoints.length - 1) {
         setState(() {
           _userLocation = _routePoints[pointIndex];
           pointIndex++;
-          
+
           // Update current step
           if (pointIndex % 5 == 0 && _currentStepIndex < 3) {
             _currentStepIndex++;
           }
-          
+
           // Move map to follow user
           if (_isMapReady) {
             _mapController.move(_userLocation!, _mapController.camera.zoom);
@@ -446,10 +451,7 @@ Route calculated successfully!
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(isActive ? 0.28 : 0.18),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.35),
-              width: 1,
-            ),
+            border: Border.all(color: Colors.white.withOpacity(0.35), width: 1),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(0.18),
@@ -458,11 +460,7 @@ Route calculated successfully!
               ),
             ],
           ),
-          child: Icon(
-            icon,
-            color: Colors.white,
-            size: 28,
-          ),
+          child: Icon(icon, color: Colors.white, size: 28),
         ),
       ),
     );
@@ -470,7 +468,7 @@ Route calculated successfully!
 
   void _showAdminCommentDialog() {
     final TextEditingController commentController = TextEditingController();
-    
+
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -546,7 +544,10 @@ Route calculated successfully!
                   );
                 }
               },
-              child: const Text('Post Comment', style: TextStyle(color: Colors.white)),
+              child: const Text(
+                'Post Comment',
+                style: TextStyle(color: Colors.white),
+              ),
             ),
           ],
         );
@@ -581,15 +582,20 @@ Route calculated successfully!
                     shrinkWrap: true,
                     itemCount: _adminComments.length,
                     itemBuilder: (context, index) {
-                      final comment = _adminComments[_adminComments.length - 1 - index];
+                      final comment =
+                          _adminComments[_adminComments.length - 1 - index];
                       final timeAgo = _getTimeAgo(comment.timestamp);
-                      
+
                       return Card(
                         margin: const EdgeInsets.only(bottom: 8),
                         child: ListTile(
                           leading: const CircleAvatar(
                             backgroundColor: Color(0xFFAC1B22),
-                            child: Icon(Icons.person, color: Colors.white, size: 20),
+                            child: Icon(
+                              Icons.person,
+                              color: Colors.white,
+                              size: 20,
+                            ),
                           ),
                           title: Text(
                             comment.text,
@@ -597,7 +603,10 @@ Route calculated successfully!
                           ),
                           subtitle: Text(
                             '${comment.author} • $timeAgo',
-                            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
                           ),
                           trailing: IconButton(
                             icon: const Icon(Icons.location_on, size: 20),
@@ -740,24 +749,17 @@ Route calculated successfully!
                 userAgentPackageName: 'com.resq.emergency_app',
                 maxZoom: 19,
               ),
-              
+
               // Route polyline
               if (_routePolylines.isNotEmpty)
-                PolylineLayer(
-                  polylines: _routePolylines,
-                ),
-              
+                PolylineLayer(polylines: _routePolylines),
+
               // Incident markers
-              MarkerLayer(
-                markers: _incidentMarkers,
-              ),
-              
+              MarkerLayer(markers: _incidentMarkers),
+
               // Route markers (user location and destination)
-              if (_routeMarkers.isNotEmpty)
-                MarkerLayer(
-                  markers: _routeMarkers,
-                ),
-              
+              if (_routeMarkers.isNotEmpty) MarkerLayer(markers: _routeMarkers),
+
               // User location marker when tracking
               if (_userLocation != null && _isTracking)
                 MarkerLayer(
@@ -774,7 +776,7 @@ Route calculated successfully!
                     ),
                   ],
                 ),
-              
+
               // Attribution (required for OSM)
               RichAttributionWidget(
                 attributions: [
@@ -786,14 +788,16 @@ Route calculated successfully!
               ),
             ],
           ),
-          
+
           // Admin comment markers floating on map
           if (_showComments && _isMapReady)
             ..._adminComments.map((comment) {
               try {
                 // Get screen position for this comment
-                final point = _mapController.camera.latLngToScreenPoint(comment.position);
-                
+                final point = _mapController.camera.latLngToScreenPoint(
+                  comment.position,
+                );
+
                 return Positioned(
                   left: point.x - 120, // Center the card
                   top: point.y - 60,
@@ -807,7 +811,11 @@ Route calculated successfully!
                               const CircleAvatar(
                                 backgroundColor: Color(0xFFAC1B22),
                                 radius: 16,
-                                child: Icon(Icons.person, color: Colors.white, size: 16),
+                                child: Icon(
+                                  Icons.person,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
                               ),
                               const SizedBox(width: 8),
                               Text(
@@ -863,7 +871,11 @@ Route calculated successfully!
                               const CircleAvatar(
                                 backgroundColor: Color(0xFFAC1B22),
                                 radius: 12,
-                                child: Icon(Icons.admin_panel_settings, color: Colors.white, size: 14),
+                                child: Icon(
+                                  Icons.admin_panel_settings,
+                                  color: Colors.white,
+                                  size: 14,
+                                ),
                               ),
                               const SizedBox(width: 6),
                               Expanded(
@@ -903,7 +915,7 @@ Route calculated successfully!
                 return const SizedBox.shrink();
               }
             }).toList(),
-          
+
           // Custom Navigation Bar at the top
           Positioned(
             top: 0,
@@ -923,7 +935,10 @@ Route calculated successfully!
               child: SafeArea(
                 bottom: false,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -964,7 +979,7 @@ Route calculated successfully!
                                       ),
                                     ),
                                   ),
-                              ),
+                                ),
                             ],
                           ),
                           const SizedBox(width: 8),
@@ -984,7 +999,7 @@ Route calculated successfully!
                               } else if (_routePoints.isNotEmpty) {
                                 _startTracking();
                               } else {
-                                  _showRouteDialog();
+                                _showRouteDialog();
                               }
                             },
                           ),
@@ -1013,7 +1028,7 @@ Route calculated successfully!
               ),
             ),
           ),
-          
+
           // Route information card (top right)
           if (_routeInstructions.isNotEmpty && !_isRouting)
             Positioned(
@@ -1079,9 +1094,16 @@ Route calculated successfully!
                           child: const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.navigation, color: Colors.white, size: 20),
+                              Icon(
+                                Icons.navigation,
+                                color: Colors.white,
+                                size: 20,
+                              ),
                               SizedBox(width: 8),
-                              Text('START NAVIGATION', style: TextStyle(color: Colors.white)),
+                              Text(
+                                'START NAVIGATION',
+                                style: TextStyle(color: Colors.white),
+                              ),
                             ],
                           ),
                         )
@@ -1097,7 +1119,10 @@ Route calculated successfully!
                             children: [
                               Icon(Icons.stop, color: Colors.white, size: 20),
                               SizedBox(width: 8),
-                              Text('STOP TRACKING', style: TextStyle(color: Colors.white)),
+                              Text(
+                                'STOP TRACKING',
+                                style: TextStyle(color: Colors.white),
+                              ),
                             ],
                           ),
                         ),
@@ -1106,7 +1131,7 @@ Route calculated successfully!
                 ),
               ),
             ),
-          
+
           // Current location button (bottom right)
           Positioned(
             bottom: 20,

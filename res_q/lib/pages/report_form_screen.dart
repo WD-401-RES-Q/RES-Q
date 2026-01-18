@@ -5,7 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:async';
 import '../services/user_session.dart';
-import '../widgets/bottom_nav_bar.dart';
+import '../ui/widgets/bottom_nav_bar.dart';
 import 'home_page.dart';
 import 'emergency_call_screen.dart';
 
@@ -87,9 +87,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     showDialog(
       context: context,
       builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         backgroundColor: const Color(0xFFF7F8F3),
         child: Padding(
           padding: const EdgeInsets.all(32),

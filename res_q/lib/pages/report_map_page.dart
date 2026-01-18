@@ -6,10 +6,11 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import '../ui/app_theme.dart';
 
 import '../services/location_service.dart';
 import '../services/user_session.dart';
-import '../widgets/bottom_nav_bar.dart';
+import '../ui/widgets/bottom_nav_bar.dart';
 import 'home_page.dart';
 
 class ReportMapPage extends StatefulWidget {
@@ -58,44 +59,25 @@ class _ReportMapPageState extends State<ReportMapPage>
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            const Icon(Icons.location_on, color: Color(0xFFAC1B22), size: 28),
+            const Icon(Icons.location_on, color: AppColors.appBlue, size: 28),
             const SizedBox(width: 12),
-            Text(
-              'Share Location',
-              style: GoogleFonts.poppins(
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-              ),
-            ),
+            Text('Share Location', style: AppText.subheading),
           ],
         ),
         content: Text(
           'Please share your location so emergency responders can find you quickly.',
-          style: GoogleFonts.poppins(fontSize: 14),
+          style: AppText.body,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: Text('Skip', style: GoogleFonts.poppins(color: Colors.grey)),
+            child: const Text('Skip'),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFAC1B22),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            child: Text(
-              'Share Location',
-              style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            child: const Text('Share Location'),
           ),
         ],
       ),
@@ -167,16 +149,15 @@ class _ReportMapPageState extends State<ReportMapPage>
     final shouldResolve = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Resolve Report'),
-        content: const Text(
+        title: Text('Resolve Report', style: AppText.subheading),
+        content: Text(
           'Mark this incident as resolved and return to the map?',
+          style: AppText.body,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.black,
-            ),
+            style: TextButton.styleFrom(foregroundColor: Colors.black),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
@@ -399,9 +380,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                       ),
                       child: const Text(
                         'REPORT RESOLVED',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                        ),
+                        style: TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ),
                   ),

@@ -108,7 +108,6 @@ flutter:
     - assets/icons/rating-empty-circle.png
 
   fonts:
-
     - family: Roboto
       fonts:
         - asset: assets/fonts/Roboto-Regular.ttf
@@ -117,7 +116,7 @@ flutter:
           weight: 700
         - asset: assets/fonts/Roboto-Black.ttf
           weight: 900
-    
+
     - family: RobotoCondensed
       fonts:
         - asset: assets/fonts/Roboto_Condensed-Regular.ttf

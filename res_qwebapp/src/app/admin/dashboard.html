@@ -2,7 +2,7 @@
   <!-- HEADER WITH PRINT BUTTON -->
   <header class="dash-header">
     <h1>Dashboard</h1>
-    <button class="print-btn" (click)="printToPDF()" title="Export as PDF">
+    <button class="print-btn" (click)="printToPDF()" title="Export Report as PDF">
       <fa-icon [icon]="faPrint" class="print-icon"></fa-icon>
       Print Report
     </button>
@@ -103,32 +103,38 @@
     <div class="reports-header">
       <div class="header-left">
         <h1>Analytics</h1>
+        <div class="header-filters">
+          <div class="category-filter">
+            <select (change)="onCategoryChange($any($event.target).value)">
+              <option
+                *ngFor="let category of categories"
+                [selected]="category === selectedCategory"
+                [value]="category"
+              >
+                {{ category }}
+              </option>
+            </select>
+          </div>
+
+          <div class="time-filter">
+            <select (change)="onTimeRangeChange($any($event.target).value)">
+              <option
+                *ngFor="let range of timeRanges"
+                [selected]="range === selectedTimeRange"
+                [value]="range"
+              >
+                {{ range }}
+              </option>
+            </select>
+          </div>
+        </div>
       </div>
 
-      <div class="header-filters">
-        <div class="category-filter">
-        <select (change)="onCategoryChange($any($event.target).value)">
-          <option
-            *ngFor="let category of categories"
-            [selected]="category === selectedCategory"
-            [value]="category"
-          >
-            {{ category }}
-          </option>
-        </select>
-      </div>
-
-      <div class="time-filter">
-        <select (change)="onTimeRangeChange($any($event.target).value)">
-          <option
-            *ngFor="let range of timeRanges"
-            [selected]="range === selectedTimeRange"
-            [value]="range"
-          >
-            {{ range }}
-          </option>
-        </select>
-      </div>
+      <div class="header-right">
+        <button class="print-btn" (click)="printGraphToPDF()" title="Export Graph as PDF">
+          <fa-icon [icon]="faPrint" class="print-icon"></fa-icon>
+          Print Graph
+        </button>
       </div>
     </div>
 

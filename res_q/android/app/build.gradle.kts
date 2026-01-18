@@ -10,8 +10,8 @@ plugins {
 
 android {
     namespace = "com.example.res_q"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    compileSdk = 36
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -27,10 +27,11 @@ android {
         applicationId = "com.example.res_q"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion  // Required for Firebase Phone Auth
-        targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        minSdk = 31
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+        multiDexEnabled = true
     }
 
     buildTypes {
@@ -48,7 +49,7 @@ flutter {
 
 dependencies {
     // Import the BoM for the Firebase platform
-    implementation(platform("com.google.firebase:firebase-bom:34.7.0"))
+    implementation(platform("com.google.firebase:firebase-bom:34.8.0"))
 
     // Add the dependency for the Firebase Authentication library
     // When using the BoM, you don't specify versions in Firebase library dependencies
@@ -56,4 +57,7 @@ dependencies {
     
     // Add Firebase Analytics
     implementation("com.google.firebase:firebase-analytics")
+    
+    // Add multidex support
+    implementation("androidx.multidex:multidex:2.0.1")
 }
