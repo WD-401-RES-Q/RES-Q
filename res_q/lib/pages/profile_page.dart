@@ -730,22 +730,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 ),
                 child: Row(
                   children: [
-                    Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFAC1B22),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: IconButton(
-                        icon: const Icon(
-                          Icons.arrow_back_ios_new,
-                          color: Colors.white,
-                        ),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                    ),
-
-                    const SizedBox(width: 8),
-
+                    const SizedBox(width: 48),
                     Expanded(
                       child: Center(
                         child: RichText(
@@ -774,7 +759,6 @@ class _ProfilePageState extends State<ProfilePage> {
                         ),
                       ),
                     ),
-
                     const SizedBox(width: 48),
                   ],
                 ),

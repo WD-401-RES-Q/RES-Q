@@ -3,11 +3,16 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'dart:async';
 import '../services/user_session.dart';
+import '../services/location_service.dart';
 import '../ui/widgets/bottom_nav_bar.dart';
 import 'home_page.dart';
 import 'emergency_call_screen.dart';
+
+enum LocationSelectionMode { current, pin }
 
 class ReportFormScreen extends StatefulWidget {
   final String incidentType;
@@ -24,7 +29,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   String? _contactNumber;
   late final String _reportDate;
 
-  bool _enableGpsSharing = false;
+  LocationSelectionMode _locationMode = LocationSelectionMode.current;
+  LatLng? _selectedLocation;
+  bool _locationLoading = false;
   XFile? _capturedMedia;
   final ImagePicker _picker = ImagePicker();
   bool _submitting = false;
@@ -183,15 +190,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   Future<void> _confirmReport() async {
-    if (!_enableGpsSharing) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enable GPS sharing to continue'),
-          backgroundColor: const Color(0xFFAC1B22),
-        ),
-      );
-      return;
-    }
+    final location = await _resolveReportLocation();
+    if (location == null) return;
 
     setState(() => _submitting = true);
 
@@ -249,10 +249,16 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             'incidentType': widget.incidentType,
             'details': _informationController.text.trim(),
             'reportedAt': Timestamp.fromDate(now),
-            'gpsSharingEnabled': _enableGpsSharing,
+            'gpsSharingEnabled': _locationMode == LocationSelectionMode.current,
+            'locationSource': _locationMode == LocationSelectionMode.current
+                ? 'current'
+                : 'pin',
             'mediaUrl': mediaUrl,
             'mediaType': mediaType,
-            'location': null, // Will be updated from map page
+            'location': GeoPoint(
+              location.latitude,
+              location.longitude,
+            ),
             'status': 'Pending',
             'greenFlags': 0,
             'redFlags': 0,
@@ -305,6 +311,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   'mediaUrl': mediaUrl,
                   'mediaType': mediaType,
                   'reportedAt': now,
+                  'locationSource':
+                      _locationMode == LocationSelectionMode.current
+                          ? 'current'
+                          : 'pin',
+                  'locationLat': location.latitude,
+                  'locationLng': location.longitude,
                 };
                 UserSession.setActiveReport(
                   reportId: docRef.id,
@@ -353,6 +365,149 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  Future<LatLng?> _resolveReportLocation() async {
+    setState(() => _locationLoading = true);
+    try {
+      if (_locationMode == LocationSelectionMode.current) {
+        final position = await LocationService.getCurrentPosition();
+        if (position == null) {
+          _showLocationError('Unable to get current location');
+          return null;
+        }
+        final point = LatLng(position.latitude, position.longitude);
+        if (!_isWithinAngeles(point)) {
+          _showLocationError(
+            'Location must be inside Angeles City coverage',
+          );
+          return null;
+        }
+        _selectedLocation = point;
+        return point;
+      }
+      if (_selectedLocation == null) {
+        _showLocationError('Please pin a location to continue');
+        return null;
+      }
+      if (!_isWithinAngeles(_selectedLocation!)) {
+        _showLocationError(
+          'Pinned location must be inside Angeles City coverage',
+        );
+        return null;
+      }
+      return _selectedLocation;
+    } finally {
+      if (mounted) {
+        setState(() => _locationLoading = false);
+      }
+    }
+  }
+
+  bool _isWithinAngeles(LatLng point) {
+    const center = LatLng(15.1450, 120.5887);
+    const radiusMeters = 6000.0;
+    final distance = const Distance().as(
+      LengthUnit.Meter,
+      center,
+      point,
+    );
+    return distance <= radiusMeters;
+  }
+
+  void _showLocationError(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Location Issue',
+          style: TextStyle(
+            fontFamily: 'Roboto',
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            color: Color(0xFF111827),
+          ),
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF4B5563),
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFAC1B22),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'OK',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openPinPicker() async {
+    final picked = await Navigator.of(context).push<LatLng>(
+      MaterialPageRoute(
+        builder: (_) => const _PinPickerPage(),
+      ),
+    );
+    if (picked == null) return;
+    setState(() {
+      _selectedLocation = picked;
+    });
+  }
+
+  Widget _buildLocationOption({
+    required String label,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFFFF3F3) : Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: isSelected ? const Color(0xFFAC1B22) : Colors.black26,
+          ),
+          boxShadow: [
+            if (isSelected)
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 6,
+                offset: const Offset(0, 4),
+              ),
+          ],
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontSize: 12,
+            fontWeight: FontWeight.w400,
+            color: isSelected ? const Color(0xFFAC1B22) : Colors.black87,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -515,45 +670,92 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
                 const SizedBox(height: 18),
 
-                // GPS Checkbox - Center aligned
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                // Location selection
+                Column(
                   children: [
-                    SizedBox(
-                      width: 28,
-                      height: 28,
-                      child: Checkbox(
-                        value: _enableGpsSharing,
-                        onChanged: (value) {
-                          setState(() {
-                            _enableGpsSharing = value ?? false;
-                          });
-                        },
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        side: const BorderSide(color: Colors.black, width: 2),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      "CHECK TO ENABLE GPS SHARING LOCATION",
-                      style: const TextStyle(
+                    const Text(
+                      'Choose Report Location',
+                      style: TextStyle(
                         fontFamily: 'RobotoCondensed',
                         fontSize: 13,
                         fontWeight: FontWeight.w400,
                         color: Colors.black,
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _buildLocationOption(
+                          label: 'CURRENT LOCATION',
+                          isSelected:
+                              _locationMode == LocationSelectionMode.current,
+                          onTap: () {
+                            setState(() {
+                              _locationMode = LocationSelectionMode.current;
+                            });
+                          },
+                        ),
+                        const SizedBox(width: 12),
+                        _buildLocationOption(
+                          label: 'PIN LOCATION',
+                          isSelected:
+                              _locationMode == LocationSelectionMode.pin,
+                          onTap: () {
+                            setState(() {
+                              _locationMode = LocationSelectionMode.pin;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (_locationMode == LocationSelectionMode.pin)
+                      SizedBox(
+                        width: 180,
+                        child: OutlinedButton.icon(
+                          onPressed: _openPinPicker,
+                          icon: const Icon(Icons.location_on_outlined),
+                          label: Text(
+                            _selectedLocation == null
+                                ? 'Pick on map'
+                                : 'Update pin',
+                            style: const TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFAC1B22),
+                            side: const BorderSide(
+                              color: Color(0xFFAC1B22),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (_locationMode == LocationSelectionMode.pin &&
+                        _selectedLocation != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          'Pinned: ${_selectedLocation!.latitude.toStringAsFixed(5)}, '
+                          '${_selectedLocation!.longitude.toStringAsFixed(5)}',
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 11,
+                            color: Color(0xFF4B5563),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
 
-                const SizedBox(height: 18),
+                const SizedBox(height: 14),
 
                 // Confirm Button - Rounded corners, drop shadow
                 Container(
-                  width: 230,
-                  height: 56,
+                  width: 220,
+                  height: 48,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(30),
                     boxShadow: [
@@ -565,7 +767,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                     ],
                   ),
                   child: ElevatedButton(
-                    onPressed: _confirmReport,
+                    onPressed: _locationLoading ? null : _confirmReport,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFFFC806),
                       foregroundColor: Colors.white,
@@ -596,7 +798,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   ),
                 ),
 
-                const SizedBox(height: 25),
+                const SizedBox(height: 20),
 
                 // Emergency Call Button - Circular with yellow border and drop shadow
                 Container(
@@ -683,6 +885,209 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _PinPickerPage extends StatefulWidget {
+  const _PinPickerPage();
+
+  @override
+  State<_PinPickerPage> createState() => _PinPickerPageState();
+}
+
+class _PinPickerPageState extends State<_PinPickerPage> {
+  static const LatLng _center = LatLng(15.1450, 120.5887);
+  static const double _radiusMeters = 6000;
+
+  final MapController _mapController = MapController();
+  LatLng? _selected;
+
+  bool _isWithinAngeles(LatLng point) {
+    final distance = const Distance().as(
+      LengthUnit.Meter,
+      _center,
+      point,
+    );
+    return distance <= _radiusMeters;
+  }
+
+  void _confirmSelection() {
+    if (_selected == null) {
+      _showPinPickerError('Tap on the map to pin a location');
+      return;
+    }
+    if (!_isWithinAngeles(_selected!)) {
+      _showPinPickerError('Pinned location must be inside Angeles City coverage');
+      return;
+    }
+    Navigator.pop(context, _selected);
+  }
+
+  void _showPinPickerError(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Location Issue',
+          style: TextStyle(
+            fontFamily: 'Roboto',
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            color: Color(0xFF111827),
+          ),
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF4B5563),
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFAC1B22),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'OK',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: _center,
+              initialZoom: 13.5,
+              minZoom: 10,
+              maxZoom: 18,
+              onTap: (tapPosition, point) {
+                setState(() {
+                  _selected = point;
+                });
+              },
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.resq.emergency_app',
+                maxZoom: 19,
+              ),
+              CircleLayer(
+                circles: [
+                  CircleMarker(
+                    point: _center,
+                    radius: _radiusMeters,
+                    useRadiusInMeter: true,
+                    color: const Color(0xFF4CAF50).withOpacity(0.08),
+                    borderColor: const Color(0xFF4CAF50).withOpacity(0.55),
+                    borderStrokeWidth: 2.0,
+                  ),
+                ],
+              ),
+              if (_selected != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _selected!,
+                      width: 48,
+                      height: 48,
+                      child: const Icon(
+                        Icons.location_on,
+                        color: Color(0xFFAC1B22),
+                        size: 40,
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFFAC1B22),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: SafeArea(
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'PIN LOCATION',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'Roboto',
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                            ),
+                            child: const Text('Cancel'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: _confirmSelection,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFFFC806),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            child: const Text('Confirm'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

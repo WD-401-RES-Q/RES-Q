@@ -4,6 +4,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'pages/home_page.dart';
 import 'pages/loading_screen.dart';
+import 'pages/semi-admin/semi_admin_main_page.dart';
+import 'pages/semi-admin/semi_admin_main_page.dart';
 // auth pages
 import 'pages/auth/login_page.dart';
 import 'pages/auth/registration_page.dart';
@@ -63,7 +65,7 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const LoadingScreen(), // <-- SHOW LOADING SCREEN FIRST
+      home: const SemiAdminMainPage(),
       routes: {
         '/login': (context) => const LoginPage(),
         '/register': (context) => const RegistrationPage(),

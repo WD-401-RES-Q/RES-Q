@@ -57,6 +57,18 @@ class LocationService {
     }
   }
 
+  /// Stream location updates for live tracking
+  static Stream<Position> getPositionStream({
+    int distanceFilterMeters = 5,
+  }) {
+    return Geolocator.getPositionStream(
+      locationSettings: LocationSettings(
+        accuracy: LocationAccuracy.best,
+        distanceFilter: distanceFilterMeters,
+      ),
+    );
+  }
+
   /// Check if location service is enabled
   static Future<bool> isLocationServiceEnabled() async {
     return await Geolocator.isLocationServiceEnabled();

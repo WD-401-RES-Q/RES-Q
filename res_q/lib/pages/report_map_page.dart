@@ -1,17 +1,22 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import '../ui/app_theme.dart';
 
 import '../services/location_service.dart';
-import '../services/user_session.dart';
 import '../ui/widgets/bottom_nav_bar.dart';
 import 'home_page.dart';
+
+enum WeatherState { none, sunny, cloudy, rainy }
 
 class ReportMapPage extends StatefulWidget {
   const ReportMapPage({
@@ -29,13 +34,44 @@ class ReportMapPage extends StatefulWidget {
   State<ReportMapPage> createState() => _ReportMapPageState();
 }
 
+class _WeatherData {
+  const _WeatherData({
+    required this.temperature,
+    required this.max,
+    required this.min,
+    required this.state,
+    required this.description,
+  });
+
+  final double temperature;
+  final double max;
+  final double min;
+  final WeatherState state;
+  final String description;
+}
+
 class _ReportMapPageState extends State<ReportMapPage>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, TickerProviderStateMixin {
   final MapController _mapController = MapController();
+  late final AnimationController _pinBounceController;
+  WeatherState _weatherState = WeatherState.none;
+  bool _showWeatherCard = false;
+  bool _isWeatherLoading = false;
+  String? _weatherError;
+  _WeatherData? _weatherData;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+      _reportSubscription;
+  LatLng? _responderLocation;
+  List<Polyline> _responderRoutePolylines = [];
+  Timer? _routeDebounce;
+  LatLng? _lastRouteOrigin;
+  LatLng? _lastRouteDestination;
 
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
   final double _initialZoom = 14.0;
+  static const LatLng _angelesCityCenter = LatLng(15.1450, 120.5887);
+  static const double _angelesCityRadiusMeters = 6000;
 
   LatLng? _userLocation;
   bool _locationShared = false;
@@ -47,11 +83,39 @@ class _ReportMapPageState extends State<ReportMapPage>
   void initState() {
     super.initState();
     _userLocation = _initialCenter;
+    _pinBounceController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat(reverse: true);
+    _subscribeToReportUpdates();
 
-    // Show location sharing modal automatically
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _showLocationSharingModal();
-    });
+    final source = widget.reportData['locationSource'] as String?;
+    final latValue = widget.reportData['locationLat'];
+    final lngValue = widget.reportData['locationLng'];
+    if (source == 'pin' && latValue is num && lngValue is num) {
+      _userLocation = LatLng(latValue.toDouble(), lngValue.toDouble());
+      _locationShared = true;
+      _showReportCard = true;
+      _scheduleResponderRouteUpdate();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_userLocation != null) {
+          _mapController.move(_userLocation!, 16.0);
+        }
+      });
+    } else {
+      // Show location sharing modal automatically
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showLocationSharingModal();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _pinBounceController.dispose();
+    _reportSubscription?.cancel();
+    _routeDebounce?.cancel();
+    super.dispose();
   }
 
   Future<void> _showLocationSharingModal() async {
@@ -117,6 +181,7 @@ class _ReportMapPageState extends State<ReportMapPage>
           _locationShared = true;
           _showSuccessCard = true;
         });
+        _scheduleResponderRouteUpdate();
 
         // Center map on user location
         _mapController.move(userLatLng, 16.0);
@@ -145,42 +210,597 @@ class _ReportMapPageState extends State<ReportMapPage>
     }
   }
 
-  Future<void> _resolveReport() async {
-    final shouldResolve = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Resolve Report', style: AppText.subheading),
-        content: Text(
-          'Mark this incident as resolved and return to the map?',
-          style: AppText.body,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            style: TextButton.styleFrom(foregroundColor: Colors.black),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFC806),
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Resolve'),
-          ),
-        ],
-      ),
+  void _showIncidentInfo(Map<String, dynamic> data) {
+    final incidentType = data['incidentType'] as String? ?? 'Unknown';
+    final reporter = data['name'] as String? ?? 'Unknown';
+    final description = data['description'] as String? ?? 'No description';
+    final status = _normalizeStatusLabel(
+      data['status'] as String? ?? 'Unverified',
     );
 
-    if (shouldResolve != true) return;
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.white,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFAC1B22),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.report,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      incidentType.toUpperCase(),
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFAC1B22),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, size: 20),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF3F3),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFAC1B22)),
+                ),
+                child: Text(
+                  'Status: $status',
+                  style: const TextStyle(
+                    fontFamily: 'Roboto',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFFAC1B22),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Reported by $reporter',
+                style: const TextStyle(
+                  fontFamily: 'Roboto',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF1F2933),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                description,
+                style: const TextStyle(
+                  fontFamily: 'Roboto',
+                  fontSize: 13,
+                  height: 1.4,
+                  color: Color(0xFF4B5563),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFAC1B22),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text(
+                    'CLOSE',
+                    style: TextStyle(
+                      fontFamily: 'Roboto',
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
-    UserSession.clearActiveReport();
+  String _normalizeStatusLabel(String status) {
+    if (status.toLowerCase() == 'flagged') {
+      return 'Unverified';
+    }
+    return status;
+  }
 
-    if (mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const MainPage(initialIndex: 2)),
+  void _scheduleResponderRouteUpdate() {
+    if (_responderLocation == null || _userLocation == null) return;
+    _routeDebounce?.cancel();
+    _routeDebounce = Timer(const Duration(seconds: 2), () {
+      _updateResponderRoute();
+    });
+  }
+
+  Future<void> _updateResponderRoute() async {
+    final origin = _responderLocation;
+    final destination = _userLocation;
+    if (origin == null || destination == null) return;
+
+    if (_lastRouteOrigin != null && _lastRouteDestination != null) {
+      final originMoved = const Distance().as(
+        LengthUnit.Meter,
+        origin,
+        _lastRouteOrigin!,
       );
+      final destinationMoved = const Distance().as(
+        LengthUnit.Meter,
+        destination,
+        _lastRouteDestination!,
+      );
+      if (originMoved < 30 && destinationMoved < 5) {
+        return;
+      }
+    }
+
+    _lastRouteOrigin = origin;
+    _lastRouteDestination = destination;
+
+    List<LatLng> points = await _fetchRoutePoints(origin, destination);
+    if (points.isEmpty) {
+      points = _generateSimulatedRoute(origin, destination);
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _responderRoutePolylines = points.isEmpty
+          ? []
+          : [
+              Polyline(
+                points: points,
+                color: AppColors.appOffWhite.withOpacity(0.85),
+                strokeWidth: 6.0,
+                strokeCap: StrokeCap.round,
+                strokeJoin: StrokeJoin.round,
+              ),
+              Polyline(
+                points: points,
+                color: AppColors.appGreen.withOpacity(0.92),
+                strokeWidth: 3.5,
+                strokeCap: StrokeCap.round,
+                strokeJoin: StrokeJoin.round,
+              ),
+            ];
+    });
+  }
+
+  Future<List<LatLng>> _fetchRoutePoints(LatLng start, LatLng end) async {
+    final uri = Uri.parse(
+      'https://router.project-osrm.org/route/v1/driving/'
+      '${start.longitude},${start.latitude};'
+      '${end.longitude},${end.latitude}'
+      '?overview=simplified&geometries=geojson',
+    );
+    final response = await http.get(uri);
+    if (response.statusCode != 200) {
+      return [];
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final routes = data['routes'] as List<dynamic>?;
+    if (routes == null || routes.isEmpty) {
+      return [];
+    }
+    final route = routes.first as Map<String, dynamic>;
+    final geometry = route['geometry'] as Map<String, dynamic>?;
+    final coords = geometry?['coordinates'] as List<dynamic>?;
+    if (coords == null || coords.isEmpty) {
+      return [];
+    }
+    return coords
+        .map(
+          (coord) => LatLng(
+            (coord[1] as num).toDouble(),
+            (coord[0] as num).toDouble(),
+          ),
+        )
+        .toList();
+  }
+
+  List<LatLng> _generateSimulatedRoute(LatLng start, LatLng end) {
+    final points = <LatLng>[];
+    const segments = 20;
+
+    for (int i = 0; i <= segments; i++) {
+      final t = i / segments;
+      final lat = start.latitude + (end.latitude - start.latitude) * t;
+      final lng = start.longitude + (end.longitude - start.longitude) * t;
+      final curve = 0.001 * sin(t * pi);
+      points.add(LatLng(lat + curve, lng + curve));
+    }
+
+    return points;
+  }
+
+  void _subscribeToReportUpdates() {
+    _reportSubscription?.cancel();
+    _reportSubscription = FirebaseFirestore.instance
+        .collection('reports')
+        .doc(widget.reportId)
+        .snapshots()
+        .listen((snapshot) {
+      final data = snapshot.data();
+      if (data == null) return;
+      final responderLoc = data['responderLocation'];
+      if (responderLoc is GeoPoint) {
+        final point = LatLng(responderLoc.latitude, responderLoc.longitude);
+        if (!mounted) return;
+        setState(() {
+          _responderLocation = point;
+        });
+        _scheduleResponderRouteUpdate();
+      }
+    });
+  }
+
+  Future<void> _toggleWeatherCard() async {
+    if (_showWeatherCard) {
+      setState(() {
+        _showWeatherCard = false;
+      });
+      return;
+    }
+    setState(() {
+      _showWeatherCard = true;
+      _isWeatherLoading = true;
+      _weatherError = null;
+    });
+    try {
+      final data = await _fetchWeatherForAngeles();
+      if (!mounted) return;
+      setState(() {
+        _weatherData = data;
+        _weatherState = data.state;
+        _isWeatherLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _weatherError = 'Unable to load weather';
+        _isWeatherLoading = false;
+      });
+    }
+  }
+
+  void _goToCurrentLocation() {
+    if (_userLocation != null) {
+      _mapController.move(_userLocation!, 16.0);
+    }
+  }
+
+  String _weatherLabel(WeatherState state) {
+    switch (state) {
+      case WeatherState.sunny:
+        return 'Sunny';
+      case WeatherState.cloudy:
+        return 'Cloudy';
+      case WeatherState.rainy:
+        return 'Rainy';
+      case WeatherState.none:
+        return '';
+    }
+  }
+
+  IconData _weatherIcon(WeatherState state) {
+    switch (state) {
+      case WeatherState.sunny:
+        return Icons.wb_sunny_outlined;
+      case WeatherState.cloudy:
+        return Icons.cloud_outlined;
+      case WeatherState.rainy:
+        return Icons.grain;
+      case WeatherState.none:
+        return Icons.cloud_outlined;
+    }
+  }
+
+  Widget _buildBouncyPin({required Widget child}) {
+    return AnimatedBuilder(
+      animation: _pinBounceController,
+      child: child,
+      builder: (context, child) {
+        final eased = Curves.easeInOut.transform(_pinBounceController.value);
+        final offset = sin(eased * pi) * 4;
+        return Transform.translate(
+          offset: Offset(0, -offset),
+          child: child,
+        );
+      },
+    );
+  }
+
+  Widget _buildWeatherButton() {
+    return GestureDetector(
+      onTap: _toggleWeatherCard,
+      child: Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color(0xFF3A8DFF),
+              Color(0xFFE8F2FF),
+              Color(0xFFFFD54A),
+              Color(0xFFFF8A3D),
+            ],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.18),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Icon(
+          _weatherIcon(_weatherData?.state ?? WeatherState.cloudy),
+          color: const Color(0xFF1F2933),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWeatherCard() {
+    if (!_showWeatherCard) {
+      return const SizedBox.shrink();
+    }
+    return Positioned(
+      top: 76,
+      left: 16,
+      right: 16,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.7),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: Colors.white.withOpacity(0.35),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.12),
+                  blurRadius: 12,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: _buildWeatherCardContent(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWeatherCardContent() {
+    if (_isWeatherLoading) {
+      return const Row(
+        children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          SizedBox(width: 10),
+          Text(
+            'Loading weather...',
+            style: TextStyle(
+              fontFamily: 'RobotoCondensed',
+              fontWeight: FontWeight.w400,
+              color: Color(0xFF4B5563),
+            ),
+          ),
+        ],
+      );
+    }
+    if (_weatherError != null) {
+      return Text(
+        _weatherError!,
+        style: const TextStyle(
+          fontFamily: 'RobotoCondensed',
+          fontWeight: FontWeight.w400,
+          color: Color(0xFFB42318),
+        ),
+      );
+    }
+    final data = _weatherData;
+    if (data == null) {
+      return const Text(
+        'Weather unavailable',
+        style: TextStyle(
+          fontFamily: 'RobotoCondensed',
+          fontWeight: FontWeight.w400,
+          color: Color(0xFF4B5563),
+        ),
+      );
+    }
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF4F7FF),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(
+            _weatherIcon(data.state),
+            color: const Color(0xFF2563EB),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Angeles City',
+                style: TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontWeight: FontWeight.w400,
+                  fontSize: 14,
+                  color: Color(0xFF111827),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                data.description,
+                style: const TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontWeight: FontWeight.w400,
+                  fontSize: 12,
+                  color: Color(0xFF6B7280),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              '${data.temperature.round()}°',
+              style: const TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+                fontSize: 20,
+                color: Color(0xFF111827),
+              ),
+            ),
+            Text(
+              'H ${data.max.round()}°  L ${data.min.round()}°',
+              style: const TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+                fontSize: 11,
+                color: Color(0xFF6B7280),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<_WeatherData> _fetchWeatherForAngeles() async {
+    const lat = 15.1450;
+    const lon = 120.5887;
+    final uri = Uri.parse(
+      'https://api.open-meteo.com/v1/forecast'
+      '?latitude=$lat&longitude=$lon'
+      '&current_weather=true'
+      '&daily=temperature_2m_max,temperature_2m_min,weathercode'
+      '&timezone=auto',
+    );
+    final response = await http.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Weather request failed');
+    }
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final current = json['current_weather'] as Map<String, dynamic>?;
+    final daily = json['daily'] as Map<String, dynamic>?;
+    if (current == null || daily == null) {
+      throw Exception('Weather data missing');
+    }
+    final temperature = (current['temperature'] as num).toDouble();
+    final max = (daily['temperature_2m_max'] as List<dynamic>).first as num;
+    final min = (daily['temperature_2m_min'] as List<dynamic>).first as num;
+    final code = (daily['weathercode'] as List<dynamic>).first as num;
+    final state = _mapWeatherState(code.toInt());
+    final description = _mapWeatherDescription(code.toInt());
+    return _WeatherData(
+      temperature: temperature,
+      max: max.toDouble(),
+      min: min.toDouble(),
+      state: state,
+      description: description,
+    );
+  }
+
+  WeatherState _mapWeatherState(int code) {
+    if (code == 0) return WeatherState.sunny;
+    if (code == 1 || code == 2 || code == 3 || code == 45 || code == 48) {
+      return WeatherState.cloudy;
+    }
+    return WeatherState.rainy;
+  }
+
+  String _mapWeatherDescription(int code) {
+    switch (code) {
+      case 0:
+        return 'Clear';
+      case 1:
+        return 'Mostly clear';
+      case 2:
+        return 'Partly cloudy';
+      case 3:
+        return 'Overcast';
+      case 45:
+      case 48:
+        return 'Foggy';
+      case 51:
+      case 53:
+      case 55:
+        return 'Drizzle';
+      case 61:
+      case 63:
+      case 65:
+        return 'Rain';
+      case 71:
+      case 73:
+      case 75:
+        return 'Snow';
+      case 80:
+      case 81:
+      case 82:
+        return 'Showers';
+      case 95:
+      case 96:
+      case 99:
+        return 'Thunderstorm';
+      default:
+        return 'Cloudy';
     }
   }
 
@@ -369,23 +989,6 @@ class _ReportMapPageState extends State<ReportMapPage>
                           : 'Photo',
                     ),
                   const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: _resolveReport,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFFFC806),
-                        side: const BorderSide(color: Color(0xFFFFC806)),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      child: const Text(
-                        'REPORT RESOLVED',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
                   // Responder Information
                   if (widget.reportData['responderName'] != null ||
                       widget.reportData['responderStatus'] != null)
@@ -700,7 +1303,35 @@ class _ReportMapPageState extends State<ReportMapPage>
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.resq.emergency_app',
                 maxZoom: 19,
+                tileBuilder: (context, tileWidget, tile) {
+                  return ColorFiltered(
+                    colorFilter: const ColorFilter.matrix([
+                      1.05, 0.03, 0.02, 0, 10,
+                      0.03, 1.05, 0.02, 0, 10,
+                      0.03, 0.05, 1.02, 0, 10,
+                      0, 0, 0, 1, 0,
+                    ]),
+                    child: tileWidget,
+                  );
+                },
               ),
+
+              CircleLayer(
+                circles: [
+                  CircleMarker(
+                    point: _angelesCityCenter,
+                    radius: _angelesCityRadiusMeters,
+                    useRadiusInMeter: true,
+                    color: AppColors.appGreen.withOpacity(0.07),
+                    borderColor: AppColors.appGreen.withOpacity(0.45),
+                    borderStrokeWidth: 2.0,
+                  ),
+                ],
+              ),
+
+              // Responder route polyline
+              if (_responderRoutePolylines.isNotEmpty)
+                PolylineLayer(polylines: _responderRoutePolylines),
 
               // User location marker
               if (_userLocation != null && _locationShared)
@@ -710,18 +1341,72 @@ class _ReportMapPageState extends State<ReportMapPage>
                       point: _userLocation!,
                       width: 72,
                       height: 72,
-                      child: Image.asset(
-                        _getMarkerAssetForIncidentType(
-                          widget.reportData['incidentType'] ?? 'Unknown',
+                      child: _buildBouncyPin(
+                        child: GestureDetector(
+                          onTap: () => _showIncidentInfo(widget.reportData),
+                          child: const Icon(
+                            Icons.location_on,
+                            color: Color(0xFFAC1B22),
+                            size: 48,
+                          ),
                         ),
-                        width: 72,
-                        height: 72,
-                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ],
+                ),
+
+              if (_responderLocation != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _responderLocation!,
+                      width: 48,
+                      height: 48,
+                      child: _buildBouncyPin(
+                        child: const Icon(
+                          Icons.directions_car,
+                          color: Color(0xFF2563EB),
+                          size: 34,
+                        ),
                       ),
                     ),
                   ],
                 ),
             ],
+          ),
+
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: Alignment.center,
+                    radius: 1.1,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withOpacity(0.08),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      const Color(0xFFF6FBF6).withOpacity(0.25),
+                      Colors.transparent,
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
 
           // Custom Navigation Bar at the top
@@ -775,11 +1460,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                           Icons.my_location,
                           color: Colors.white,
                         ),
-                        onPressed: () {
-                          if (_userLocation != null) {
-                            _mapController.move(_userLocation!, 16.0);
-                          }
-                        },
+                        onPressed: _goToCurrentLocation,
                       ),
                     ],
                   ),
@@ -889,6 +1570,26 @@ class _ReportMapPageState extends State<ReportMapPage>
                 ),
               ),
             ),
+
+          Positioned(
+            bottom: 96,
+            right: 16,
+            child: Column(
+              children: [
+                _buildWeatherButton(),
+                const SizedBox(height: 12),
+                FloatingActionButton(
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFFAC1B22),
+                  elevation: 4,
+                  onPressed: _goToCurrentLocation,
+                  child: const Icon(Icons.my_location),
+                ),
+              ],
+            ),
+          ),
+
+          _buildWeatherCard(),
         ],
       ),
       bottomNavigationBar: widget.showBottomNav
