@@ -77,6 +77,13 @@ class _CommunityPageState extends State<CommunityPage> {
         final reportedAt = (data['reportedAt'] as Timestamp).toDate();
         final dateFormat = DateFormat('MMM dd. yyyy');
         final timeFormat = DateFormat('h:mm a');
+        final resolvedAtRaw = data['resolvedAt'];
+        DateTime? resolvedAt;
+        if (resolvedAtRaw is Timestamp) {
+          resolvedAt = resolvedAtRaw.toDate();
+        } else if (resolvedAtRaw is DateTime) {
+          resolvedAt = resolvedAtRaw;
+        }
 
         return {
           'id': doc.id,
@@ -88,6 +95,7 @@ class _CommunityPageState extends State<CommunityPage> {
           'greenFlags': data['greenFlags'] ?? 0,
           'redFlags': data['redFlags'] ?? 0,
           'status': data['status'] ?? 'Pending',
+          'resolvedAt': resolvedAt,
           'comments': data['comments'] ?? 0,
           'commentsList': <Map<String, dynamic>>[],
           'userVote': 'none',
@@ -120,6 +128,14 @@ class _CommunityPageState extends State<CommunityPage> {
     return _reports.where((report) {
       final status = (report['status'] as String? ?? '').toLowerCase();
       final category = (report['title'] as String? ?? '').toLowerCase();
+      final resolvedAt = report['resolvedAt'] as DateTime?;
+      if ((status == 'resolved' || status == 'incident resolved') &&
+          resolvedAt != null) {
+        final elapsed = DateTime.now().difference(resolvedAt);
+        if (elapsed >= const Duration(minutes: 30)) {
+          return false;
+        }
+      }
 
       bool matchesFilter;
       switch (_selectedFilter) {
@@ -782,6 +798,11 @@ class _CommunityPageState extends State<CommunityPage> {
                                     height: 10,
                                     decoration: BoxDecoration(
                                       color:
+                                          statusLower == 'resolved' ||
+                                                  statusLower ==
+                                                      'incident resolved'
+                                          ? const Color(0xFF4CAF50)
+                                          :
                                           statusLower == 'approved' ||
                                               statusLower == 'verified'
                                           ? statusGreen
@@ -800,6 +821,11 @@ class _CommunityPageState extends State<CommunityPage> {
                                       fontSize: 12,
                                       fontWeight: FontWeight.w400,
                                       color:
+                                          statusLower == 'resolved' ||
+                                                  statusLower ==
+                                                      'incident resolved'
+                                          ? const Color(0xFF4CAF50)
+                                          :
                                           statusLower == 'approved' ||
                                               statusLower == 'verified'
                                           ? statusGreen
@@ -1110,7 +1136,11 @@ class _CommentsPageState extends State<_CommentsPage> {
       // Safely extract report data
       final reportId = widget.report['id']?.toString() ?? '';
       final reportTitle = widget.report['title']?.toString() ?? '';
-      final reportStatus = widget.report['status']?.toString() ?? '';
+    final reportStatusRaw = widget.report['status']?.toString() ?? '';
+    final reportStatus = reportStatusRaw;
+    final statusLower = reportStatusRaw.toLowerCase();
+    final isResolved =
+        statusLower == 'resolved' || statusLower == 'incident resolved';
       final reportDate = widget.report['date']?.toString() ?? '';
       final reportTime = widget.report['time']?.toString() ?? '';
       final reportedBy = widget.report['name']?.toString() ?? '';

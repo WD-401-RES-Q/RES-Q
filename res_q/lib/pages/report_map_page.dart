@@ -61,7 +61,10 @@ class _ReportMapPageState extends State<ReportMapPage>
   _WeatherData? _weatherData;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
       _reportSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _commentsSubscription;
+  bool _commentsInitialized = false;
   LatLng? _responderLocation;
+  bool _resolvedDialogShown = false;
   List<Polyline> _responderRoutePolylines = [];
   Timer? _routeDebounce;
   LatLng? _lastRouteOrigin;
@@ -88,6 +91,7 @@ class _ReportMapPageState extends State<ReportMapPage>
       duration: const Duration(milliseconds: 1600),
     )..repeat(reverse: true);
     _subscribeToReportUpdates();
+    _subscribeToResponderComments();
 
     final source = widget.reportData['locationSource'] as String?;
     final latValue = widget.reportData['locationLat'];
@@ -114,6 +118,7 @@ class _ReportMapPageState extends State<ReportMapPage>
   void dispose() {
     _pinBounceController.dispose();
     _reportSubscription?.cancel();
+    _commentsSubscription?.cancel();
     _routeDebounce?.cancel();
     super.dispose();
   }
@@ -456,6 +461,15 @@ class _ReportMapPageState extends State<ReportMapPage>
         .listen((snapshot) {
       final data = snapshot.data();
       if (data == null) return;
+      final status = (data['status'] as String? ?? '').toLowerCase();
+      if ((status == 'resolved' || status == 'incident resolved') &&
+          !_resolvedDialogShown) {
+        _resolvedDialogShown = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _showResolvedDialog();
+        });
+      }
       final responderLoc = data['responderLocation'];
       if (responderLoc is GeoPoint) {
         final point = LatLng(responderLoc.latitude, responderLoc.longitude);
@@ -466,6 +480,119 @@ class _ReportMapPageState extends State<ReportMapPage>
         _scheduleResponderRouteUpdate();
       }
     });
+  }
+
+  void _subscribeToResponderComments() {
+    _commentsSubscription?.cancel();
+    _commentsSubscription = FirebaseFirestore.instance
+        .collection('reports')
+        .doc(widget.reportId)
+        .collection('comments')
+        .where('type', isEqualTo: 'admin')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .listen((snapshot) {
+      if (!_commentsInitialized) {
+        _commentsInitialized = true;
+        return;
+      }
+      if (snapshot.docChanges.isEmpty) return;
+      final hasNew = snapshot.docChanges.any(
+        (change) => change.type == DocumentChangeType.added,
+      );
+      if (!hasNew || !mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          duration: const Duration(seconds: 2),
+          content: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFAC1B22),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.notifications, color: Colors.white, size: 18),
+                SizedBox(width: 8),
+                Text(
+                  'Responder posted an update',
+                  style: TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontWeight: FontWeight.w400,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  void _showResolvedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Incident Resolved',
+          style: TextStyle(
+            fontFamily: 'Roboto',
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            color: Color(0xFF111827),
+          ),
+        ),
+        content: const Text(
+          'The incident has been resolved. THANK YOU',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF4B5563),
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const MainPage(initialIndex: 0),
+                ),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFAC1B22),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'RETURN',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _toggleWeatherCard() async {
@@ -539,6 +666,105 @@ class _ReportMapPageState extends State<ReportMapPage>
         return Transform.translate(
           offset: Offset(0, -offset),
           child: child,
+        );
+      },
+    );
+  }
+
+  Widget _buildResponderCommentsSection() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection('reports')
+          .doc(widget.reportId)
+          .collection('comments')
+          .where('type', isEqualTo: 'admin')
+          .orderBy('timestamp', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Padding(
+            padding: EdgeInsets.only(bottom: 16),
+            child: Text(
+              'Loading responder updates...',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+                fontSize: 13,
+                color: Color(0xFF6B7280),
+              ),
+            ),
+          );
+        }
+        final docs = snapshot.data?.docs ?? [];
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Responder Updates',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+                fontSize: 14,
+                color: Color(0xFF111827),
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (docs.isEmpty)
+              const Text(
+                'No responder updates yet.',
+                style: TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontWeight: FontWeight.w400,
+                  fontSize: 13,
+                  color: Color(0xFF6B7280),
+                ),
+              )
+            else
+              ...docs.take(5).map((doc) {
+                final data = doc.data();
+                final text = data['text'] as String? ?? '';
+                final timestamp = data['timestamp'] as Timestamp?;
+                final timeLabel = timestamp == null
+                    ? ''
+                    : DateFormat('h:mm a').format(timestamp.toDate());
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F8F8),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        text,
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontWeight: FontWeight.w400,
+                          fontSize: 13,
+                          color: Color(0xFF374151),
+                        ),
+                      ),
+                      if (timeLabel.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          timeLabel,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontWeight: FontWeight.w400,
+                            fontSize: 11,
+                            color: Color(0xFF6B7280),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                );
+              }),
+            const SizedBox(height: 20),
+          ],
         );
       },
     );
@@ -1047,6 +1273,8 @@ class _ReportMapPageState extends State<ReportMapPage>
                         const SizedBox(height: 20),
                       ],
                     ),
+
+                  _buildResponderCommentsSection(),
 
                   // Annotations
                   if (widget.reportData['annotations'] != null &&

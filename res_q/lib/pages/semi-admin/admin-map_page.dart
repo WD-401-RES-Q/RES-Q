@@ -547,10 +547,11 @@ class _AdminMapPageState extends State<AdminMapPage>
       await FirebaseFirestore.instance
           .collection('reports')
           .doc(reportId)
-          .collection('adminComments')
+          .collection('comments')
           .add({
         'text': trimmed,
         'author': 'Admin User',
+        'type': 'admin',
         'timestamp': Timestamp.now(),
       });
 
@@ -569,10 +570,39 @@ class _AdminMapPageState extends State<AdminMapPage>
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Comment posted on this incident'),
-          backgroundColor: Colors.green,
-          duration: Duration(seconds: 2),
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          duration: const Duration(seconds: 2),
+          content: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFAC1B22),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white, size: 18),
+                SizedBox(width: 8),
+                Text(
+                  'Comment posted on this incident',
+                  style: TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontWeight: FontWeight.w400,
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       );
     } catch (e) {
@@ -649,6 +679,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       );
     });
   }
+
 
   Future<void> _startResponderLocationSharing() async {
     final hasPermission = await LocationService.requestLocationPermission();
@@ -778,19 +809,43 @@ class _AdminMapPageState extends State<AdminMapPage>
     );
   }
 
-  void _showIncidentInfo(
+  Future<void> _showIncidentInfo(
     Map<String, dynamic> data,
     String reportId,
     LatLng position,
-  ) {
-    final incidentType = data['incidentType'] as String? ?? 'Unknown';
-    final reporter = data['name'] as String? ?? 'Unknown';
-    final description = data['description'] as String? ?? 'No description';
+  ) async {
+    Map<String, dynamic> activeData = data;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .get();
+      if (doc.data() != null) {
+        activeData = doc.data()!;
+      }
+    } catch (_) {}
+
+    final incidentType = activeData['incidentType'] as String? ?? 'Unknown';
+    final reporter = activeData['name'] as String? ?? 'Unknown';
+    final description = activeData['details'] as String? ??
+        activeData['description'] as String? ??
+        '';
+    final contactNumber = activeData['contactNumber'] as String? ?? 'Unknown';
+    final reportedAt = activeData['reportedAt'];
+    String? reportedAtLabel;
+    if (reportedAt is Timestamp) {
+      final date = reportedAt.toDate();
+      reportedAtLabel =
+          '${date.month}/${date.day}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    }
+    final mediaUrl = activeData['mediaUrl'] as String?;
+    final mediaType = (activeData['mediaType'] as String?)?.toLowerCase();
     _activeReportId = reportId;
     _destination = position;
     final initialStatus = _normalizeStatusLabel(
-      data['status'] as String? ?? 'Unverified',
+      activeData['status'] as String? ?? 'Unverified',
     );
+    await _loadAdminComments(reportId, position);
     final incidentComments = _adminComments
         .where((comment) => comment.reportId == reportId)
         .toList()
@@ -802,6 +857,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           final statusOptions = const [
+            'PENDING',
             'RESPONDING',
             'ON SCENE',
             'RESOLVED',
@@ -815,10 +871,13 @@ class _AdminMapPageState extends State<AdminMapPage>
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 560),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                   Row(
                     children: [
                       Container(
@@ -874,10 +933,12 @@ class _AdminMapPageState extends State<AdminMapPage>
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: statusOptions.map((option) {
+                  Center(
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: statusOptions.map((option) {
                       final isActive = status == option;
                       return OutlinedButton(
                         onPressed: () async {
@@ -918,8 +979,19 @@ class _AdminMapPageState extends State<AdminMapPage>
                         ),
                       );
                     }).toList(),
+                    ),
                   ),
                   const SizedBox(height: 12),
+                  const Text(
+                    'Report Details',
+                    style: TextStyle(
+                      fontFamily: 'Roboto',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF1F2933),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   Text(
                     'Reported by $reporter',
                     style: const TextStyle(
@@ -929,16 +1001,65 @@ class _AdminMapPageState extends State<AdminMapPage>
                       color: Color(0xFF1F2933),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Text(
-                    description,
+                    'Contact: $contactNumber',
                     style: const TextStyle(
                       fontFamily: 'Roboto',
-                      fontSize: 13,
-                      height: 1.4,
+                      fontSize: 12,
                       color: Color(0xFF4B5563),
                     ),
                   ),
+                  if (reportedAtLabel != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Reported at: $reportedAtLabel',
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 12,
+                        color: Color(0xFF4B5563),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  if (description.isNotEmpty)
+                    Text(
+                      description,
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 13,
+                        height: 1.4,
+                        color: Color(0xFF4B5563),
+                      ),
+                    ),
+                  if (mediaUrl != null && mediaUrl.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: mediaType == 'photo'
+                          ? Image.network(
+                              mediaUrl,
+                              height: 200,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                            )
+                          : Container(
+                              height: 200,
+                              width: double.infinity,
+                              color: const Color(0xFFF3F4F6),
+                              child: const Center(
+                                child: Text(
+                                  'Video attached',
+                                  style: TextStyle(
+                                    fontFamily: 'Roboto',
+                                    fontSize: 12,
+                                    color: Color(0xFF6B7280),
+                                  ),
+                                ),
+                              ),
+                            ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   const Text(
                     'Admin Comments',
@@ -964,6 +1085,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                       (comment) => Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Container(
+                          width: double.infinity,
                           padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
                             color: const Color(0xFFF8F8F8),
@@ -1049,6 +1171,8 @@ class _AdminMapPageState extends State<AdminMapPage>
                     ],
                   ),
                 ],
+                  ),
+                ),
               ),
             ),
           );
@@ -1057,10 +1181,43 @@ class _AdminMapPageState extends State<AdminMapPage>
     );
   }
 
+  Future<void> _loadAdminComments(String reportId, LatLng position) async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .collection('comments')
+          .where('type', isEqualTo: 'admin')
+          .orderBy('timestamp', descending: true)
+          .get();
+      final comments = snapshot.docs.map((doc) {
+        final data = doc.data();
+        final timestamp = data['timestamp'] as Timestamp?;
+        return AdminComment(
+          id: doc.id,
+          text: data['text'] as String? ?? '',
+          author: data['author'] as String? ?? 'Admin',
+          timestamp: timestamp?.toDate() ?? DateTime.now(),
+          position: position,
+          reportId: reportId,
+        );
+      }).toList();
+      if (!mounted) return;
+      setState(() {
+        _adminComments
+          ..removeWhere((c) => c.reportId == reportId)
+          ..addAll(comments);
+      });
+    } catch (e) {
+      debugPrint('❌ Failed to load admin comments: $e');
+    }
+  }
+
   String _normalizeStatusLabel(String status) {
     final normalized = status.trim().toLowerCase();
-    if (normalized == 'flagged' || normalized == 'unverified') {
-      return 'RESPONDING';
+    if (normalized == 'flagged' ||
+        normalized == 'unverified') {
+      return 'PENDING';
     }
     if (normalized == 'on-scene') {
       return 'ON SCENE';
@@ -1278,8 +1435,8 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   String _calculateEstimatedTime(double distanceKm) {
-    // Assume average speed of 40 km/h
-    final hours = distanceKm / 40;
+    // Typical urban response speed for 4-wheeled vehicles
+    final hours = distanceKm / 50;
     if (hours < 1) {
       final minutes = (hours * 60).round();
       return '$minutes mins';

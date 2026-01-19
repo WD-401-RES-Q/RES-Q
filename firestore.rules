@@ -40,6 +40,14 @@ service cloud.firestore {
         allow update: if true; // allow updating comment votes
         allow delete: if false; // prevent comment deletion
       }
+
+      // Nested admin comments subcollection
+      match /adminComments/{commentId} {
+        allow read: if true;
+        allow create: if true;
+        allow update: if true;
+        allow delete: if false;
+      }
     }
 
     // Root-level comments collection (fallback)
