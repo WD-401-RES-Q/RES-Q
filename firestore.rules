@@ -3,23 +3,39 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Public reads for login lookup; lock writes to authenticated users only.
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if user owns the document
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    // Admins collection - secure, no client writes
     match /admins/{docId} {
-      allow read: if true;
-      allow write: if false; // Only allow writes through admin scripts - not from client
+      allow read: if isAuthenticated();
+      allow write: if false; // Only backend admin scripts
     }
 
+    // Semi-admins collection - authenticated reads only
     match /semi_admins/{docId} {
-      allow read: if true;
-      allow write: if true; // Allow writes for app initialization/seeding
+      allow read: if isAuthenticated();
+      allow write: if false; // Only backend scripts
     }
 
+    // Users collection - authenticated users can only read/write their own
     match /users/{docId} {
-      allow read: if true; // needed for username/password lookup during login
-      allow write: if request.auth != null && request.auth.uid == docId;
+      allow read: if isAuthenticated() && (isOwner(docId) || request.auth.token.admin == true);
+      allow create: if isAuthenticated() && isOwner(docId);
+      allow update: if isOwner(docId);
+      allow delete: if false; // Prevent user self-deletion
     }
 
+    // Pending users - requires authentication to write
     match /pending_users/{docId} {
+<<<<<<< Updated upstream
       allow read, write: if true; // temporarily open for debugging
     }
 
@@ -55,10 +71,45 @@ service cloud.firestore {
       allow read: if true;
       allow create: if true;
       allow update: if true;
+=======
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(docId);
+      allow update: if isOwner(docId) || request.auth.token.admin == true;
+>>>>>>> Stashed changes
       allow delete: if false;
     }
 
-    // Fallback deny everything else
+    // Approved users - admin only
+    match /approved_users/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if request.auth.token.admin == true;
+    }
+
+    // Reports collection
+    match /reports/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isOwner(docId) || request.auth.token.admin == true;
+      allow delete: if false;
+
+      // Nested comments subcollection
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated();
+        allow update: if isOwner(commentId) || request.auth.token.admin == true;
+        allow delete: if false;
+      }
+    }
+
+    // Root-level comments collection
+    match /comments/{commentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isOwner(commentId) || request.auth.token.admin == true;
+      allow delete: if false;
+    }
+
+    // Deny all other access
     match /{document=**} {
       allow read, write: if false;
     }

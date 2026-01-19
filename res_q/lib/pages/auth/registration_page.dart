@@ -33,6 +33,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
   String? _idPhotoPath;
   bool _obscurePassword = true;
   bool _uploadingPhoto = false;
+  double _loadingProgress = 0.0;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final ImagePicker _imagePicker = ImagePicker();
@@ -135,6 +136,58 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }
 
   Future<void> _submit() async {
+    // Validate all required fields
+    if (_fullNameCtl.text.trim().isEmpty ||
+        _usernameCtl.text.trim().isEmpty ||
+        _emailCtl.text.trim().isEmpty ||
+        _passwordCtl.text.trim().isEmpty ||
+        _contactCtl.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please fill in all required fields'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Validate password strength (Firebase requirement: min 6 chars)
+    if (_passwordCtl.text.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Password must be at least 6 characters'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Validate email format
+    if (!_emailCtl.text.contains('@') || !_emailCtl.text.contains('.')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid email address'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Validate terms acceptance (Firestore rule requirement)
+    if (!_agree) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please agree to terms and conditions'),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     // Validate that photo is uploaded
     if (_idPhotoPath == null || _idPhotoPath!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -147,7 +200,19 @@ class _RegistrationPageState extends State<RegistrationPage> {
       return;
     }
 
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _loadingProgress = 0.0;
+    });
+
+    // Show loading dialog with progress
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => _buildLoadingDialog(),
+      );
+    }
 
     // Format phone number for Firebase (must be in E.164 format: +63XXXXXXXXXX)
     String phone = _contactCtl.text.replaceAll('-', '').trim();
@@ -169,30 +234,35 @@ class _RegistrationPageState extends State<RegistrationPage> {
     };
 
     try {
-      // For Web: Configure reCAPTCHA verifier
-      if (kIsWeb) {
-        await _auth.setSettings(
-          appVerificationDisabledForTesting: false,
-          forceRecaptchaFlow: true,
-        );
-      }
+      // Update progress
+      _updateProgress(20);
 
-      // Send OTP to phone number
+      // Enable Firebase Play Integrity verification for production
+      // This verifies app authenticity and prevents unauthorized access
+      // Set to false for production to comply with Firebase security requirements
+      await _auth.setSettings(appVerificationDisabledForTesting: false);
+
+      // Send OTP to phone number via Firebase Auth
       await _auth.verifyPhoneNumber(
         phoneNumber: phone,
-        timeout: const Duration(seconds: 60),
+        timeout: const Duration(seconds: 30),
         verificationCompleted: (PhoneAuthCredential credential) async {
           // Auto-verification (rare on most devices)
           // This happens automatically on some Android devices
         },
         verificationFailed: (FirebaseAuthException e) {
           setState(() => _loading = false);
+          Navigator.pop(context); // Close loading dialog
           String msg = e.message ?? 'Phone verification failed';
 
           if (e.code == 'invalid-phone-number') {
             msg = 'Invalid phone number. Please check and try again.';
           } else if (e.code == 'too-many-requests') {
             msg = 'Too many attempts. Please try again later.';
+          } else if (e.code == 'missing-phone-number') {
+            msg = 'Phone number is required.';
+          } else if (e.code == 'app-not-authorized') {
+            msg = 'App is not authorized. Please check Firebase Console.';
           }
 
           if (mounted) {
@@ -206,7 +276,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
           }
         },
         codeSent: (String verificationId, int? resendToken) {
+          _updateProgress(100);
           setState(() => _loading = false);
+
+          // Close loading dialog
+          Navigator.pop(context);
 
           // Navigate to OTP verification page
           if (mounted) {
@@ -227,6 +301,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
       );
     } catch (e) {
       setState(() => _loading = false);
+      Navigator.pop(context); // Close loading dialog
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -237,6 +312,69 @@ class _RegistrationPageState extends State<RegistrationPage> {
         );
       }
     }
+  }
+
+  void _updateProgress(double progress) {
+    if (mounted) {
+      setState(() => _loadingProgress = progress);
+    }
+  }
+
+  Widget _buildLoadingDialog() {
+    return Dialog(
+      backgroundColor: Colors.white,
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              height: 80,
+              width: 80,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  CircularProgressIndicator(
+                    value: _loadingProgress / 100,
+                    strokeWidth: 8,
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      Color(0xFFFFC806),
+                    ),
+                    backgroundColor: Colors.grey[300],
+                  ),
+                  Text(
+                    '${_loadingProgress.toInt()}%',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Sending Verification Code',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Please wait while we send an OTP to your phone',
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -256,17 +394,21 @@ class _RegistrationPageState extends State<RegistrationPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // BLUE BACK BUTTON
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new,
-                        color: AppTheme.appBlue,
-                      ),
+                    // BACK BUTTON AND LOGO ROW
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        IconButton(
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(
+                            Icons.arrow_back_ios_new,
+                            color: AppTheme.appBlue,
+                          ),
+                        ),
+                        const ResqLogo(),
+                        const SizedBox(width: 48), // Balance the row
+                      ],
                     ),
-                    const SizedBox(height: 6),
-
-                    const Center(child: ResqLogo()),
                     const SizedBox(height: 8),
 
                     Center(
