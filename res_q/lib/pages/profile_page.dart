@@ -8,7 +8,16 @@ class ProfilePage extends StatefulWidget {
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
-class _ProfilePageState extends State<ProfilePage> {
+class _ProfilePageState extends State<ProfilePage>
+    with AutomaticKeepAliveClientMixin {
+  bool _pushNotifications = true;
+  bool _emailNotifications = true;
+  bool _smsAlerts = false;
+  bool _soundEnabled = true;
+  bool _vibrationEnabled = true;
+
+  @override
+  bool get wantKeepAlive => true;
   static const String _ratingStarAsset = 'assets/icons/rating-star.png';
   static const String _ratingEmptyCircleAsset = 'assets/icons/rating-empty-circle.png';
 
@@ -89,6 +98,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         selectedProblemType,
                         (rating) => setDialogState(() => feedbackRating = rating),
                         (value) => setDialogState(() => selectedProblemType = value),
+                        setDialogState,
                       ),
                     ),
 
@@ -136,6 +146,7 @@ class _ProfilePageState extends State<ProfilePage> {
     String? selectedProblemType,
     ValueChanged<int> onRatingChanged,
     ValueChanged<String?> onProblemTypeChanged,
+    StateSetter setDialogState,
   ) {
     switch (title) {
       case 'Personal Information':
@@ -143,7 +154,7 @@ class _ProfilePageState extends State<ProfilePage> {
       case 'Account Security':
         return _buildAccountSecurityContent();
       case 'Notifications':
-        return _buildNotificationsContent();
+        return _buildNotificationsContent(setDialogState);
       case 'Help Center':
         return _buildHelpCenterContent();
       case 'Report a Problem':
@@ -283,25 +294,81 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
-  Widget _buildNotificationsContent() {
+  Widget _buildNotificationsContent(StateSetter setDialogState) {
     return SingleChildScrollView(
       child: Column(
         children: [
-          _buildNotificationToggle('Push Notifications', 'Receive alerts for new incidents', true),
+          _buildNotificationToggle(
+            'Push Notifications',
+            'Receive alerts for new incidents',
+            _pushNotifications,
+            (value) => _updateNotificationSetting(
+              setDialogState,
+              () => _pushNotifications = value,
+            ),
+          ),
           const SizedBox(height: 12),
-          _buildNotificationToggle('Email Notifications', 'Get updates via email', true),
+          _buildNotificationToggle(
+            'Email Notifications',
+            'Get updates via email',
+            _emailNotifications,
+            (value) => _updateNotificationSetting(
+              setDialogState,
+              () => _emailNotifications = value,
+            ),
+          ),
           const SizedBox(height: 12),
-          _buildNotificationToggle('SMS Alerts', 'Receive critical alerts via SMS', false),
+          _buildNotificationToggle(
+            'SMS Alerts',
+            'Receive critical alerts via SMS',
+            _smsAlerts,
+            (value) => _updateNotificationSetting(
+              setDialogState,
+              () => _smsAlerts = value,
+            ),
+          ),
           const SizedBox(height: 12),
-          _buildNotificationToggle('Sound', 'Play notification sounds', true),
+          _buildNotificationToggle(
+            'Sound',
+            'Play notification sounds',
+            _soundEnabled,
+            (value) => _updateNotificationSetting(
+              setDialogState,
+              () => _soundEnabled = value,
+            ),
+          ),
           const SizedBox(height: 12),
-          _buildNotificationToggle('Vibration', 'Vibrate on notifications', true),
+          _buildNotificationToggle(
+            'Vibration',
+            'Vibrate on notifications',
+            _vibrationEnabled,
+            (value) => _updateNotificationSetting(
+              setDialogState,
+              () => _vibrationEnabled = value,
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildNotificationToggle(String title, String subtitle, bool initialValue) {
+  void _updateNotificationSetting(
+    StateSetter setDialogState,
+    VoidCallback updateValue,
+  ) {
+    updateValue();
+    if (mounted) {
+      setState(() {});
+    }
+    setDialogState(() {});
+  }
+
+  Widget _buildNotificationToggle(
+    String title,
+    String subtitle,
+    bool value,
+    ValueChanged<bool> onChanged,
+  ) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -333,10 +400,8 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
           Switch(
-            value: initialValue,
-            onChanged: (value) {
-              // TODO: Update notification setting
-            },
+            value: value,
+            onChanged: onChanged,
             activeColor: const Color(0xFFAC1B22),
           ),
         ],
@@ -715,6 +780,7 @@ class _ProfilePageState extends State<ProfilePage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: SafeArea(

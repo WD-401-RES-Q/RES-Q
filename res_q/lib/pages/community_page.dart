@@ -1091,9 +1091,14 @@ class _CommentsPageState extends State<_CommentsPage> {
         '✅ Loaded ${snapshot.docs.length} comments from nested collection',
       );
 
-      final comments = snapshot.docs.map((doc) {
+      final comments = snapshot.docs
+          .map((doc) {
         final data = doc.data();
         final timestamp = (data['timestamp'] as Timestamp).toDate();
+        final type = (data['type'] as String?)?.toLowerCase();
+        if (type == 'admin') {
+          return null;
+        }
 
         return {
           'id': doc.id,
@@ -1112,7 +1117,9 @@ class _CommentsPageState extends State<_CommentsPage> {
           'reportTime': data['reportTime'] ?? '',
           'reportedBy': data['reportedBy'] ?? '',
         };
-      }).toList();
+      })
+          .whereType<Map<String, dynamic>>()
+          .toList();
 
       setState(() {
         _comments = comments;
@@ -1173,6 +1180,7 @@ class _CommentsPageState extends State<_CommentsPage> {
       final newComment = {
         'text': _commentController.text.trim(),
         'author': userName,
+        'type': 'user',
         'timestamp': Timestamp.now(),
         'greenFlags': 0,
         'redFlags': 0,

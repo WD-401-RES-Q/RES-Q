@@ -13,6 +13,7 @@ import 'package:latlong2/latlong.dart';
 import '../ui/app_theme.dart';
 
 import '../services/location_service.dart';
+import '../services/user_session.dart';
 import '../ui/widgets/bottom_nav_bar.dart';
 import 'home_page.dart';
 
@@ -63,6 +64,8 @@ class _ReportMapPageState extends State<ReportMapPage>
       _reportSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _commentsSubscription;
   bool _commentsInitialized = false;
+  List<Map<String, dynamic>> _responderCommentsFallback = [];
+  Map<String, dynamic>? _liveReportData;
   LatLng? _responderLocation;
   bool _resolvedDialogShown = false;
   List<Polyline> _responderRoutePolylines = [];
@@ -92,6 +95,7 @@ class _ReportMapPageState extends State<ReportMapPage>
     )..repeat(reverse: true);
     _subscribeToReportUpdates();
     _subscribeToResponderComments();
+    _liveReportData = Map<String, dynamic>.from(widget.reportData);
 
     final source = widget.reportData['locationSource'] as String?;
     final latValue = widget.reportData['locationLat'];
@@ -216,133 +220,168 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   void _showIncidentInfo(Map<String, dynamic> data) {
-    final incidentType = data['incidentType'] as String? ?? 'Unknown';
-    final reporter = data['name'] as String? ?? 'Unknown';
-    final description = data['description'] as String? ?? 'No description';
-    final status = _normalizeStatusLabel(
-      data['status'] as String? ?? 'Unverified',
-    );
-
     showDialog(
       context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.white,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+      builder: (context) => StreamBuilder<
+          DocumentSnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance
+            .collection('reports')
+            .doc(widget.reportId)
+            .snapshots(),
+        builder: (context, snapshot) {
+          final live = snapshot.data?.data();
+          final merged = {
+            ...data,
+            if (live != null) ...live,
+          };
+          final incidentType =
+              merged['incidentType'] as String? ?? 'Unknown';
+          final reporter = merged['name'] as String? ?? 'Unknown';
+          final description =
+              merged['details'] as String? ??
+              merged['description'] as String? ??
+              'No description';
+          final status = _normalizeStatusLabel(
+            merged['responderStatus'] as String? ??
+                merged['status'] as String? ??
+                'Unverified',
+          );
+          final statusColor = _getStatusColor(status);
+
+          return Dialog(
+            backgroundColor: Colors.white,
+            insetPadding:
+                const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFAC1B22),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(
-                      Icons.report,
-                      color: Colors.white,
-                      size: 20,
-                    ),
+                  Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFAC1B22),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.report,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          incidentType.toUpperCase(),
+                          style: const TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFFAC1B22),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close, size: 20),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: statusColor),
+                    ),
                     child: Text(
-                      incidentType.toUpperCase(),
-                      style: const TextStyle(
+                      'Status: $status',
+                      style: TextStyle(
                         fontFamily: 'Roboto',
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFFAC1B22),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: statusColor,
                       ),
                     ),
                   ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close, size: 20),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Reported by $reporter',
+                    style: const TextStyle(
+                      fontFamily: 'Roboto',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF1F2933),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    description,
+                    style: const TextStyle(
+                      fontFamily: 'Roboto',
+                      fontSize: 13,
+                      height: 1.4,
+                      color: Color(0xFF4B5563),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFAC1B22),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      child: const Text(
+                        'CLOSE',
+                        style: TextStyle(
+                          fontFamily: 'Roboto',
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF3F3),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFFAC1B22)),
-                ),
-                child: Text(
-                  'Status: $status',
-                  style: const TextStyle(
-                    fontFamily: 'Roboto',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFFAC1B22),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Reported by $reporter',
-                style: const TextStyle(
-                  fontFamily: 'Roboto',
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: Color(0xFF1F2933),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                description,
-                style: const TextStyle(
-                  fontFamily: 'Roboto',
-                  fontSize: 13,
-                  height: 1.4,
-                  color: Color(0xFF4B5563),
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFAC1B22),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  child: const Text(
-                    'CLOSE',
-                    style: TextStyle(
-                      fontFamily: 'Roboto',
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
   String _normalizeStatusLabel(String status) {
-    if (status.toLowerCase() == 'flagged') {
-      return 'Unverified';
+    final normalized = status.trim().toLowerCase();
+    if (normalized == 'flagged' ||
+        normalized == 'unverified' ||
+        normalized == 'pending') {
+      return 'PENDING';
     }
-    return status;
+    if (normalized == 'responding') {
+      return 'RESPONDING';
+    }
+    if (normalized == 'on scene' || normalized == 'on-scene') {
+      return 'ON SCENE';
+    }
+    if (normalized == 'resolved' || normalized == 'incident resolved') {
+      return 'RESOLVED';
+    }
+    return status.toUpperCase();
   }
 
   void _scheduleResponderRouteUpdate() {
@@ -461,10 +500,39 @@ class _ReportMapPageState extends State<ReportMapPage>
         .listen((snapshot) {
       final data = snapshot.data();
       if (data == null) return;
+      if (mounted) {
+        setState(() {
+          _liveReportData = Map<String, dynamic>.from(data);
+        });
+      }
+      final commentsRaw = data['responderComments'];
+      if (commentsRaw is List) {
+        final parsed = commentsRaw
+            .whereType<Map>()
+            .map((entry) => Map<String, dynamic>.from(entry))
+            .toList();
+        parsed.sort((a, b) {
+          final aTime = a['timestamp'];
+          final bTime = b['timestamp'];
+          final aDate = aTime is Timestamp
+              ? aTime.toDate()
+              : (aTime is DateTime ? aTime : DateTime.fromMillisecondsSinceEpoch(0));
+          final bDate = bTime is Timestamp
+              ? bTime.toDate()
+              : (bTime is DateTime ? bTime : DateTime.fromMillisecondsSinceEpoch(0));
+          return bDate.compareTo(aDate);
+        });
+        if (mounted) {
+          setState(() {
+            _responderCommentsFallback = parsed;
+          });
+        }
+      }
       final status = (data['status'] as String? ?? '').toLowerCase();
       if ((status == 'resolved' || status == 'incident resolved') &&
           !_resolvedDialogShown) {
         _resolvedDialogShown = true;
+        UserSession.clearActiveReport();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           _showResolvedDialog();
@@ -488,7 +556,6 @@ class _ReportMapPageState extends State<ReportMapPage>
         .collection('reports')
         .doc(widget.reportId)
         .collection('comments')
-        .where('type', isEqualTo: 'admin')
         .orderBy('timestamp', descending: true)
         .snapshots()
         .listen((snapshot) {
@@ -497,9 +564,16 @@ class _ReportMapPageState extends State<ReportMapPage>
         return;
       }
       if (snapshot.docChanges.isEmpty) return;
-      final hasNew = snapshot.docChanges.any(
-        (change) => change.type == DocumentChangeType.added,
-      );
+      final hasNew = snapshot.docChanges.any((change) {
+        if (change.type != DocumentChangeType.added) return false;
+        final data = change.doc.data();
+        if (data == null) return false;
+        final type = (data['type'] as String?)?.toLowerCase();
+        final role = (data['role'] as String?)?.toLowerCase();
+        return type == 'admin' ||
+            role == 'responder' ||
+            (type != 'user' && type != null);
+      });
       if (!hasNew || !mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -567,6 +641,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         actions: [
           ElevatedButton(
             onPressed: () {
+              UserSession.clearActiveReport();
               Navigator.pop(context);
               Navigator.pushReplacement(
                 context,
@@ -643,6 +718,16 @@ class _ReportMapPageState extends State<ReportMapPage>
     }
   }
 
+  String _formatReportedAt(Object? value) {
+    if (value is Timestamp) {
+      return DateFormat('MMM dd, yyyy h:mm a').format(value.toDate());
+    }
+    if (value is DateTime) {
+      return DateFormat('MMM dd, yyyy h:mm a').format(value);
+    }
+    return 'Unknown';
+  }
+
   IconData _weatherIcon(WeatherState state) {
     switch (state) {
       case WeatherState.sunny:
@@ -677,10 +762,23 @@ class _ReportMapPageState extends State<ReportMapPage>
           .collection('reports')
           .doc(widget.reportId)
           .collection('comments')
-          .where('type', isEqualTo: 'admin')
           .orderBy('timestamp', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const Padding(
+            padding: EdgeInsets.only(bottom: 16),
+            child: Text(
+              'Unable to load responder updates.',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+                fontSize: 13,
+                color: Color(0xFF6B7280),
+              ),
+            ),
+          );
+        }
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Padding(
             padding: EdgeInsets.only(bottom: 16),
@@ -695,7 +793,19 @@ class _ReportMapPageState extends State<ReportMapPage>
             ),
           );
         }
-        final docs = snapshot.data?.docs ?? [];
+        final docs = (snapshot.data?.docs ?? []).where((doc) {
+          final data = doc.data();
+          final type = (data['type'] as String?)?.toLowerCase();
+          final role = (data['role'] as String?)?.toLowerCase();
+          if (type == 'admin' || role == 'responder') {
+            return true;
+          }
+          if (type == null) {
+            return true;
+          }
+          return type != 'user';
+        }).toList();
+        final fallback = docs.isEmpty ? _responderCommentsFallback : [];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -709,7 +819,7 @@ class _ReportMapPageState extends State<ReportMapPage>
               ),
             ),
             const SizedBox(height: 8),
-            if (docs.isEmpty)
+            if (docs.isEmpty && fallback.isEmpty)
               const Text(
                 'No responder updates yet.',
                 style: TextStyle(
@@ -719,7 +829,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                   color: Color(0xFF6B7280),
                 ),
               )
-            else
+            else if (docs.isNotEmpty)
               ...docs.take(5).map((doc) {
                 final data = doc.data();
                 final text = data['text'] as String? ?? '';
@@ -759,6 +869,50 @@ class _ReportMapPageState extends State<ReportMapPage>
                           ),
                         ),
                       ],
+                    ],
+                  ),
+                );
+              })
+            else
+              ...fallback.take(5).map((data) {
+                final text = data['text'] as String? ?? '';
+                final timestamp = data['timestamp'];
+                final date = timestamp is Timestamp
+                    ? timestamp.toDate()
+                    : (timestamp is DateTime
+                        ? timestamp
+                        : DateTime.now());
+                final timeLabel = DateFormat('h:mm a').format(date);
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8F8F8),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFFE5E7EB)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        text,
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontWeight: FontWeight.w400,
+                          fontSize: 13,
+                          color: Color(0xFF374151),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        timeLabel,
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontWeight: FontWeight.w400,
+                          fontSize: 11,
+                          color: Color(0xFF6B7280),
+                        ),
+                      ),
                     ],
                   ),
                 );
@@ -1031,6 +1185,7 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   Widget _buildReportSheet(ScrollController scrollController) {
+    final reportData = _liveReportData ?? widget.reportData;
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -1122,7 +1277,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: Image.network(
-                        widget.reportData['mediaUrl'],
+                        reportData['mediaUrl'],
                         height: 200,
                         width: double.infinity,
                         fit: BoxFit.cover,
@@ -1160,7 +1315,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      widget.reportData['incidentType'] ?? 'Unknown',
+                      reportData['incidentType'] ?? 'Unknown',
                       style: GoogleFonts.poppins(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -1180,11 +1335,11 @@ class _ReportMapPageState extends State<ReportMapPage>
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _detailRow('Name', widget.reportData['name'] ?? 'Unknown'),
+                  _detailRow('Name', reportData['name'] ?? 'Unknown'),
                   const SizedBox(height: 8),
                   _detailRow(
                     'Contact',
-                    widget.reportData['contactNumber'] ?? 'Not provided',
+                    reportData['contactNumber'] ?? 'Not provided',
                   ),
                   const SizedBox(height: 20),
 
@@ -1200,24 +1355,21 @@ class _ReportMapPageState extends State<ReportMapPage>
                   const SizedBox(height: 12),
                   _detailRow(
                     'Date & Time',
-                    widget.reportData['reportedAt'] != null
-                        ? DateFormat(
-                            'MMM dd, yyyy h:mm a',
-                          ).format(widget.reportData['reportedAt'])
-                        : 'Unknown',
+                    _formatReportedAt(reportData['reportedAt']),
                   ),
                   const SizedBox(height: 8),
-                  if (widget.reportData['mediaType'] != null)
+                  if (reportData['mediaType'] != null)
                     _detailRow(
                       'Media Type',
-                      widget.reportData['mediaType'] == 'video'
+                      reportData['mediaType'] == 'video'
                           ? 'Video'
                           : 'Photo',
                     ),
                   const SizedBox(height: 20),
                   // Responder Information
-                  if (widget.reportData['responderName'] != null ||
-                      widget.reportData['responderStatus'] != null)
+                  if (reportData['responderName'] != null ||
+                      reportData['responderStatus'] != null ||
+                      reportData['status'] != null)
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1230,13 +1382,14 @@ class _ReportMapPageState extends State<ReportMapPage>
                           ),
                         ),
                         const SizedBox(height: 12),
-                        if (widget.reportData['responderName'] != null)
+                        if (reportData['responderName'] != null)
                           _detailRow(
                             'Responder',
-                            widget.reportData['responderName'],
+                            reportData['responderName'],
                           ),
                         const SizedBox(height: 8),
-                        if (widget.reportData['responderStatus'] != null)
+                        if (reportData['responderStatus'] != null ||
+                            reportData['status'] != null)
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -1255,12 +1408,17 @@ class _ReportMapPageState extends State<ReportMapPage>
                                 ),
                                 decoration: BoxDecoration(
                                   color: _getStatusColor(
-                                    widget.reportData['responderStatus'],
+                                    (reportData['responderStatus'] ??
+                                            reportData['status'])
+                                        ?.toString(),
                                   ),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Text(
-                                  widget.reportData['responderStatus'],
+                                  (reportData['responderStatus'] ??
+                                          reportData['status'])
+                                      ?.toString() ??
+                                      '',
                                   style: GoogleFonts.poppins(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
@@ -1462,9 +1620,9 @@ class _ReportMapPageState extends State<ReportMapPage>
 
   bool _canDismissReport() {
     // Can only dismiss if responder has arrived or completed the response
-    final status = widget.reportData['responderStatus']
-        ?.toString()
-        .toLowerCase();
+    final source = _liveReportData ?? widget.reportData;
+    final status = source['responderStatus']?.toString().toLowerCase() ??
+        source['status']?.toString().toLowerCase();
     if (status == null) return false;
 
     return status.contains('arrived') ||
@@ -1476,18 +1634,16 @@ class _ReportMapPageState extends State<ReportMapPage>
   Color _getStatusColor(String? status) {
     if (status == null) return Colors.grey;
 
-    switch (status.toLowerCase()) {
-      case 'responding':
-      case 'en route':
-        return Colors.blue;
-      case 'arrived':
-      case 'on scene':
-        return Colors.orange;
-      case 'completed':
-      case 'resolved':
-        return Colors.green;
-      case 'cancelled':
-        return Colors.red;
+    final normalized = _normalizeStatusLabel(status);
+    switch (normalized) {
+      case 'PENDING':
+        return const Color(0xFF2563EB);
+      case 'RESPONDING':
+        return AppColors.appRed;
+      case 'ON SCENE':
+        return AppColors.appBlue;
+      case 'RESOLVED':
+        return const Color(0xFF16A34A);
       default:
         return const Color(0xFFAC1B22);
     }

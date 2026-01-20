@@ -40,7 +40,7 @@ class AdminComment {
 }
 
 class _AdminMapPageState extends State<AdminMapPage>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   final MapController _mapController = MapController();
   late final AnimationController _pinBounceController;
   WeatherState _weatherState = WeatherState.none;
@@ -84,7 +84,6 @@ class _AdminMapPageState extends State<AdminMapPage>
   void initState() {
     super.initState();
     _loadReportsFromFirestore();
-    _addSampleComments();
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
     _syncUserLocation();
@@ -102,6 +101,9 @@ class _AdminMapPageState extends State<AdminMapPage>
     _pinBounceController.dispose();
     super.dispose();
   }
+
+  @override
+  bool get wantKeepAlive => true;
 
   Widget _buildIncidentMarker({
     required String assetPath,
@@ -544,15 +546,24 @@ class _AdminMapPageState extends State<AdminMapPage>
     if (trimmed.isEmpty) return;
 
     try {
+      final commentPayload = {
+        'text': trimmed,
+        'author': 'Admin User',
+        'type': 'admin',
+        'role': 'responder',
+        'timestamp': Timestamp.now(),
+      };
       await FirebaseFirestore.instance
           .collection('reports')
           .doc(reportId)
           .collection('comments')
-          .add({
-        'text': trimmed,
-        'author': 'Admin User',
-        'type': 'admin',
-        'timestamp': Timestamp.now(),
+          .add(commentPayload);
+
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .update({
+        'responderComments': FieldValue.arrayUnion([commentPayload]),
       });
 
       if (!mounted) return;
@@ -878,8 +889,8 @@ class _AdminMapPageState extends State<AdminMapPage>
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  Row(
-                    children: [
+                      Row(
+                        children: [
                       Container(
                         width: 36,
                         height: 36,
@@ -909,8 +920,8 @@ class _AdminMapPageState extends State<AdminMapPage>
                         onPressed: () => Navigator.pop(context),
                         icon: const Icon(Icons.close, size: 20),
                       ),
-                    ],
-                  ),
+                        ],
+                      ),
                   const SizedBox(height: 12),
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -933,52 +944,62 @@ class _AdminMapPageState extends State<AdminMapPage>
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Center(
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.center,
-                      children: statusOptions.map((option) {
-                      final isActive = status == option;
-                      return OutlinedButton(
-                        onPressed: () async {
-                          final confirm = await _confirmStatusChange(option);
-                          if (confirm != true) return;
-                          setDialogState(() {
-                            status = option;
-                          });
-                          await _updateIncidentStatus(reportId, option);
-                        },
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(
-                            color: isActive
-                                ? const Color(0xFFAC1B22)
-                                : const Color(0xFFE5E7EB),
-                          ),
-                          backgroundColor: isActive
-                              ? const Color(0xFFFFF3F3)
-                              : Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Center(
+                      child: SizedBox(
+                        width: 260,
+                        child: GridView.count(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                          childAspectRatio: 2.8,
+                          children: statusOptions.map((option) {
+                            final isActive = status == option;
+                            return OutlinedButton(
+                              onPressed: () async {
+                                final confirm =
+                                    await _confirmStatusChange(option);
+                                if (confirm != true) return;
+                                setDialogState(() {
+                                  status = option;
+                                });
+                                await _updateIncidentStatus(reportId, option);
+                              },
+                              style: OutlinedButton.styleFrom(
+                                side: BorderSide(
+                                  color: isActive
+                                      ? const Color(0xFFAC1B22)
+                                      : const Color(0xFFE5E7EB),
+                                ),
+                                backgroundColor: isActive
+                                    ? const Color(0xFFFFF3F3)
+                                    : Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              child: Text(
+                                option,
+                                style: TextStyle(
+                                  fontFamily: 'Roboto',
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: isActive
+                                      ? const Color(0xFFAC1B22)
+                                      : const Color(0xFF4B5563),
+                                ),
+                              ),
+                            );
+                          }).toList(),
                         ),
-                        child: Text(
-                          option,
-                          style: TextStyle(
-                            fontFamily: 'Roboto',
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: isActive
-                                ? const Color(0xFFAC1B22)
-                                : const Color(0xFF4B5563),
-                          ),
-                        ),
-                      );
-                    }).toList(),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -1170,7 +1191,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                       ),
                     ],
                   ),
-                ],
+                    ],
                   ),
                 ),
               ),
@@ -1187,11 +1208,18 @@ class _AdminMapPageState extends State<AdminMapPage>
           .collection('reports')
           .doc(reportId)
           .collection('comments')
-          .where('type', isEqualTo: 'admin')
           .orderBy('timestamp', descending: true)
           .get();
       final comments = snapshot.docs.map((doc) {
         final data = doc.data();
+        final type = (data['type'] as String?)?.toLowerCase();
+        final role = (data['role'] as String?)?.toLowerCase();
+        if (type != null && type == 'user') {
+          return null;
+        }
+        if (role != null && role != 'responder' && type != 'admin') {
+          return null;
+        }
         final timestamp = data['timestamp'] as Timestamp?;
         return AdminComment(
           id: doc.id,
@@ -1201,7 +1229,7 @@ class _AdminMapPageState extends State<AdminMapPage>
           position: position,
           reportId: reportId,
         );
-      }).toList();
+      }).whereType<AdminComment>().toList();
       if (!mounted) return;
       setState(() {
         _adminComments
@@ -1642,6 +1670,7 @@ class _AdminMapPageState extends State<AdminMapPage>
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Scaffold(
       body: Stack(
         children: [

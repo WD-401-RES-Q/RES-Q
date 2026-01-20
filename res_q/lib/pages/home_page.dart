@@ -23,20 +23,10 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   late int _currentIndex = widget.initialIndex;
-  late Widget _mapPage;
-  late final List<Widget> _pages;
 
   @override
   void initState() {
     super.initState();
-    _mapPage = _buildMapPage();
-    _pages = [
-      const _HomePageContent(),
-      const CommunityPage(),
-      _mapPage,
-      const NotificationsPage(),
-      const ProfilePage(),
-    ];
   }
 
   Widget _buildMapPage() {
@@ -57,6 +47,13 @@ class _MainPageState extends State<MainPage> {
 
   @override
   Widget build(BuildContext context) {
+    final pages = [
+      const _HomePageContent(),
+      const CommunityPage(),
+      _buildMapPage(),
+      const NotificationsPage(),
+      const ProfilePage(),
+    ];
     return Scaffold(
       backgroundColor: Color(0xFFF7F8F3),
       bottomNavigationBar: BottomNavBar(
@@ -64,7 +61,7 @@ class _MainPageState extends State<MainPage> {
         onTap: (i) => setState(() => _currentIndex = i),
       ),
       body: SafeArea(
-        child: IndexedStack(index: _currentIndex, children: _pages),
+        child: IndexedStack(index: _currentIndex, children: pages),
       ),
     );
   }
