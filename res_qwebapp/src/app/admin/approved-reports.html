@@ -51,27 +51,28 @@
           </button>
         </div>
 
-        <!-- COMMENTS SECTION -->
-        <div *ngIf="expandedReportId === report.id" class="comments-section">
-          <div *ngIf="loadingComments[report.id]" class="loading-comments">
-            <p>Loading comments...</p>
-          </div>
+      </div>
 
-          <div *ngIf="!loadingComments[report.id] && (!reportComments[report.id] || reportComments[report.id].length === 0)" class="no-comments">
-            <p>No comments yet for this report.</p>
-          </div>
+      <!-- COMMENTS SECTION: full-width at bottom of card -->
+      <div *ngIf="expandedReportId === report.id" class="comments-section">
+        <div *ngIf="loadingComments[report.id]" class="loading-comments">
+          <p>Loading comments...</p>
+        </div>
 
-          <div class="comments-list" *ngIf="!loadingComments[report.id] && reportComments[report.id] && reportComments[report.id].length > 0">
-            <div class="comment-item" *ngFor="let comment of reportComments[report.id]">
-              <div class="comment-header">
-                <span class="comment-author">{{ comment.author }}</span>
-                <span class="comment-time">{{ formatCommentTime(comment.timestamp) }}</span>
-              </div>
-              <p class="comment-text">{{ comment.text }}</p>
-              <div class="comment-flags">
-                <span class="flag-green">👍 {{ comment.greenFlags }}</span>
-                <span class="flag-red">👎 {{ comment.redFlags }}</span>
-              </div>
+        <div *ngIf="!loadingComments[report.id] && (!reportComments[report.id] || reportComments[report.id].length === 0)" class="no-comments">
+          <p>No comments yet for this report.</p>
+        </div>
+
+        <div class="comments-list" *ngIf="!loadingComments[report.id] && reportComments[report.id] && reportComments[report.id].length > 0">
+          <div class="comment-item" *ngFor="let comment of reportComments[report.id]">
+            <div class="comment-header">
+              <span class="comment-author">{{ comment.author }}</span>
+              <span class="comment-time">{{ formatCommentTime(comment.timestamp) }}</span>
+            </div>
+            <p class="comment-text">{{ comment.text }}</p>
+            <div class="comment-flags">
+              <span class="flag-green">👍 {{ comment.greenFlags }}</span>
+              <span class="flag-red">👎 {{ comment.redFlags }}</span>
             </div>
           </div>
         </div>
@@ -111,7 +112,7 @@
     margin: 0 0 4px;
     font-size: 28px;
     font-weight: 700;
-    font-family: "Poppins", sans-serif;
+    font-family: "Roboto", sans-serif;
     color: #212121;
   }
 
@@ -119,7 +120,7 @@
     margin-bottom: 18px;
     font-size: 14px;
     color: #555;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
   }
 
   .reports-list {
@@ -134,7 +135,7 @@
     border: 1px solid #e5e7eb;
     border-radius: 12px;
     padding: 18px;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
     color: #6b7280;
     text-align: center;
   }
@@ -151,6 +152,7 @@
 
   .report-card {
     display: flex;
+    flex-wrap: wrap; /* allow comments row to span full width */
     background: #ffffff;
     border-radius: 14px;
     border: 1px solid #e2e8f0;
@@ -169,13 +171,13 @@
 
   .report-info {
     flex: 1;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
   }
 
   .report-info h2 {
     margin: 0 0 10px;
     font-size: 22px;
-    font-family: "Poppins", sans-serif;
+    font-family: "Roboto", sans-serif;
     font-weight: 700;
     color: #ac1b22; /* RESQ Red */
   }
@@ -202,7 +204,7 @@
     border-radius: 6px;
     font-size: 14px;
     font-weight: 600;
-    font-family: "Poppins", sans-serif;
+    font-family: "Roboto", sans-serif;
   }
 
   .counter-green {
@@ -232,7 +234,7 @@
     border: none;
     font-size: 14px;
     font-weight: 600;
-    font-family: "Poppins", sans-serif;
+    font-family: "Roboto", sans-serif;
     cursor: pointer;
     color: white;
     min-width: 130px;
@@ -251,30 +253,36 @@
 
   /* COMMENTS SECTION */
   .comments-section {
-    margin-top: 16px;
-    padding-top: 16px;
-    border-top: 1px solid #e5e7eb;
+    flex-basis: 100%;
+    width: 100%;
+    margin-top: 8px;
+    padding-top: 12px;
+    border-top: 1px solid #d0d0d0; /* darker divider */
   }
 
   .loading-comments, .no-comments {
     text-align: center;
     padding: 20px;
     color: #6b7280;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
     font-size: 14px;
   }
 
   .comments-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 0;
   }
 
   .comment-item {
-    background: #f9fafb;
-    border-radius: 8px;
-    padding: 12px;
-    border-left: 3px solid #ac1b22;
+    background: transparent;
+    border-radius: 0;
+    padding: 12px 0;
+    border-bottom: 1px solid #d0d0d0; /* darker separators */
+  }
+
+  .comment-item:last-child {
+    border-bottom: none;
   }
 
   .comment-header {
@@ -286,7 +294,7 @@
 
   .comment-author {
     font-weight: 600;
-    font-family: "Poppins", sans-serif;
+    font-family: "Roboto", sans-serif;
     color: #212121;
     font-size: 13px;
   }
@@ -294,7 +302,7 @@
   .comment-time {
     font-size: 12px;
     color: #6b7280;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
   }
 
   .comment-text {
@@ -302,14 +310,14 @@
     font-size: 13px;
     line-height: 1.5;
     color: #374151;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
   }
 
   .comment-flags {
     display: flex;
     gap: 10px;
     font-size: 12px;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
   }
 
   .flag-green {
@@ -364,7 +372,7 @@
   .modal-header h2 {
     margin: 0;
     font-size: 22px;
-    font-family: "Poppins", sans-serif;
+    font-family: "Roboto", sans-serif;
     color: #212121;
   }
 
@@ -393,7 +401,7 @@
     text-align: center;
     padding: 40px 20px;
     color: #6b7280;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
   }
 
   .loading-comments {
@@ -401,14 +409,13 @@
     flex-direction: column;
     gap: 16px;
     padding: 20px 0;
-    text-align: left;
+    text-align: center;
   }
 
   .skeleton-loader {
     background: #f9fafb;
     border-radius: 8px;
     padding: 14px;
-    border-left: 3px solid #e5e7eb;
   }
 
   .skeleton-line {
@@ -444,17 +451,18 @@
     100% { background-position: -200% 0; }
   }
 
+  /* unify with flagged/pending: flat list + darker separators */
   .comments-list {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 0;
   }
 
   .comment-item {
-    background: #f9fafb;
-    border-radius: 8px;
-    padding: 14px;
-    border-left: 3px solid #ac1b22;
+    background: transparent;
+    border-radius: 0;
+    padding: 12px 0;
+    border-bottom: 1px solid #d0d0d0;
   }
 
   .comment-header {
@@ -466,7 +474,7 @@
 
   .comment-author {
     font-weight: 600;
-    font-family: "Poppins", sans-serif;
+    font-family: "Roboto", sans-serif;
     color: #212121;
     font-size: 14px;
   }
@@ -474,7 +482,7 @@
   .comment-time {
     font-size: 12px;
     color: #6b7280;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
   }
 
   .comment-text {
@@ -482,14 +490,14 @@
     font-size: 14px;
     line-height: 1.6;
     color: #374151;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
   }
 
   .comment-flags {
     display: flex;
     gap: 12px;
     font-size: 13px;
-    font-family: "Quicksand", sans-serif;
+    font-family: "Roboto Condensed", sans-serif;
   }
 
   .flag-green {

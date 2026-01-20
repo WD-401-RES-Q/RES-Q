@@ -19,6 +19,7 @@
             <span class="badge" *ngIf="(flaggedReportsCount$ | async) as count">{{ count > 0 ? count : '' }}</span>
           </a>
         </li>
+        <li><a routerLink="admin-posting" routerLinkActive="active">Admin Posting</a></li>
         <li><a routerLink="accounts" routerLinkActive="active">Accounts</a></li>
         <li>
           <a routerLink="unverified-accounts" routerLinkActive="active">

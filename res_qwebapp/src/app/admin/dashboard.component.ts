@@ -100,7 +100,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     scales: {
       x: {
         ticks: { color: '#555', font: { family: 'Roboto' } },
-        grid: { color: '#eeeeee' },
+        grid: { color: '#666666' },
         title: {
           display: true,
           text: 'Time Period',
@@ -115,7 +115,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       y: {
         beginAtZero: true,
         ticks: { color: '#555', font: { family: 'Roboto' } },
-        grid: { color: '#eeeeee' },
+        grid: { color: '#666666' },
         title: {
           display: true,
           text: 'Number of Reports',

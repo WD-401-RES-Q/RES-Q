@@ -108,7 +108,6 @@ export class AccountsComponent implements OnInit, OnDestroy {
     if (!this.accountToBan) return;
     
     console.log('Ban account', this.accountToBan);
-    alert(`Banned account: ${this.accountToBan.fullName}`);
     // TODO: Implement ban functionality
     
     this.showBanModal = false;

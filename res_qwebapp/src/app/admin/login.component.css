@@ -91,7 +91,7 @@ app-root,
   font-weight: 600;
   color: #ac1b22;
   font-size: 14px;
-  font-family: "Poppins", sans-serif;
+  font-family: "Roboto", sans-serif;
 }
 
 .form-group input {
@@ -144,7 +144,7 @@ app-root,
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-family: "Poppins", sans-serif;
+  font-family: "Roboto", sans-serif;
 }
 
 .login-button:hover:not(:disabled) {
