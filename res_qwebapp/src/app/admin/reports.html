@@ -1,11 +1,44 @@
-<section class="admin-page pending-page">
+<section class="admin-page reports-page">
   <header class="page-header">
-    <h1>Pending Reports</h1>
-    <p class="subtitle">Review and take action on user-submitted reports.</p>
+    <h1>Reports</h1>
+    <p class="subtitle">Review and manage all reports.</p>
   </header>
 
-  <div class="pending-list">
-    <article class="pending-card" *ngFor="let report of reports">
+  <!-- FILTER DROPDOWN -->
+  <div class="filter-dropdown-wrapper">
+    <button 
+      class="filter-dropdown-btn"
+      (click)="toggleFilterDropdown()">
+      {{ currentFilter | uppercase }}
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="6 9 12 15 18 9"></polyline>
+      </svg>
+    </button>
+    
+    <div class="filter-dropdown-menu" *ngIf="showFilterDropdown">
+      <button 
+        class="filter-option" 
+        [class.active]="currentFilter === 'pending'"
+        (click)="selectFilter('pending')">
+        Pending
+      </button>
+      <button 
+        class="filter-option" 
+        [class.active]="currentFilter === 'approved'"
+        (click)="selectFilter('approved')">
+        Approved
+      </button>
+      <button 
+        class="filter-option" 
+        [class.active]="currentFilter === 'flagged'"
+        (click)="selectFilter('flagged')">
+        Flagged
+      </button>
+    </div>
+  </div>
+
+  <div class="reports-list">
+    <article class="report-card" *ngFor="let report of filteredReports">
       <!-- IMAGE -->
       <div class="image-wrap">
         <img [src]="report.image" [alt]="report.title" class="report-image" />
@@ -64,19 +97,62 @@
           </div>
         </div>
 
+        <!-- ACTIONS: Different buttons based on status -->
         <div class="actions">
           <button class="btn btn-comments" (click)="toggleComments(report)">
             {{ expandedReportId === report.id ? 'Hide Comments' : 'View Comments' }}
           </button>
-          <button class="btn btn-approve" (click)="approve(report)">
-            Approve
-          </button>
 
-          <button class="btn btn-reject" (click)="reject(report)">
-            Reject
-          </button>
+          <!-- Pending: Approve & Reject -->
+          <ng-container *ngIf="report.status === 'Pending'">
+            <button class="btn btn-approve" (click)="approve(report)">
+              Approve
+            </button>
+            <button class="btn btn-reject" (click)="reject(report)">
+              Reject
+            </button>
+          </ng-container>
+
+          <!-- Approved: Revert -->
+          <ng-container *ngIf="report.status === 'Approved'">
+            <button class="btn btn-revert" (click)="revert(report)">
+              Revert to Pending
+            </button>
+          </ng-container>
+
+          <!-- Flagged: Revert -->
+          <ng-container *ngIf="report.status === 'Flagged'">
+            <button class="btn btn-revert" (click)="revert(report)">
+              Revert to Pending
+            </button>
+          </ng-container>
         </div>
 
+      </div>
+
+      <!-- APPROVAL TIMELINE -->
+      <div class="approval-timeline" *ngIf="report.status !== 'Pending'">
+        <h3 class="timeline-title">Timeline</h3>
+        
+        <div class="timeline-item" *ngIf="report.approvedBy">
+          <span class="timeline-label">Approved by:</span>
+          <span class="timeline-value">{{ report.approvedBy }}</span>
+        </div>
+
+        <div class="timeline-item" *ngIf="report.approvedAt">
+          <span class="timeline-label">Time approved:</span>
+          <span class="timeline-value">{{ report.approvedAt }}</span>
+        </div>
+
+        <div class="timeline-item" *ngIf="report.arrivedAt">
+          <span class="timeline-label">Arrived on scene:</span>
+          <span class="timeline-value">{{ report.arrivedAt }}</span>
+        </div>
+
+        <div class="timeline-item" *ngIf="report.resolvedAt">
+          <span class="timeline-label">Time resolved:</span>
+          <span class="timeline-value">{{ report.resolvedAt }}</span>
+        </div>
       </div>
 
       <!-- COMMENTS SECTION: full-width at bottom of card -->
@@ -97,21 +173,31 @@
             </div>
             <p class="comment-text">{{ comment.text }}</p>
             <div class="comment-flags">
-              <span class="flag-green">👍 {{ comment.greenFlags }}</span>
-              <span class="flag-red">👎 {{ comment.redFlags }}</span>
+              <span class="flag-green">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z"/>
+                </svg>
+                {{ comment.greenFlags }}
+              </span>
+              <span class="flag-red">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z"/>
+                </svg>
+                {{ comment.redFlags }}
+              </span>
             </div>
           </div>
         </div>
       </div>
     </article>
 
-    <div class="empty-state" *ngIf="!isLoading && reports.length === 0">
-      <p>No pending reports right now.</p>
+    <div class="empty-state" *ngIf="!isLoading && filteredReports.length === 0">
+      <p>No {{ currentFilter }} reports right now.</p>
     </div>
   </div>
 
   <div class="loading-overlay" *ngIf="isLoading">
-    <div class="loading-card">Loading pending reports…</div>
+    <div class="loading-card">Loading reports…</div>
   </div>
 
   <!-- APPROVE MODAL -->
@@ -137,12 +223,22 @@
       </div>
     </div>
   </div>
+
+  <!-- REVERT MODAL -->
+  <div class="modal-overlay" *ngIf="showRevertModal" (click)="cancelRevert()">
+    <div class="modal-content-confirm" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">REVERT THIS REPORT?</h3>
+      <p class="modal-subtitle">Move back to Pending?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-yes" (click)="confirmRevert()">YES</button>
+        <button type="button" class="btn-modal btn-no" (click)="cancelRevert()">NO</button>
+      </div>
+    </div>
+  </div>
 </section>
 
-
-
 <style>
-  .pending-page {
+  .reports-page {
     padding: 20px;
   }
 
@@ -161,7 +257,77 @@
     color: #6b7280;
   }
 
-  .pending-list {
+  /* FILTER DROPDOWN */
+  .filter-dropdown-wrapper {
+    position: relative;
+    margin-bottom: 24px;
+    display: inline-block;
+  }
+
+  .filter-dropdown-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: 'Roboto', sans-serif;
+    color: #212121;
+    transition: all 0.15s ease;
+  }
+
+  .filter-dropdown-btn:hover {
+    background: #f9fafb;
+    border-color: #d0d0d0;
+  }
+
+  .filter-dropdown-btn svg {
+    transition: transform 0.15s ease;
+  }
+
+  .filter-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    min-width: 160px;
+    z-index: 100;
+    overflow: hidden;
+  }
+
+  .filter-option {
+    display: block;
+    width: 100%;
+    padding: 12px 16px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font-size: 14px;
+    font-family: 'Roboto', sans-serif;
+    color: #374151;
+    transition: all 0.1s ease;
+  }
+
+  .filter-option:hover {
+    background: #f3f4f6;
+  }
+
+  .filter-option.active {
+    background: #ffc806;
+    color: #212121;
+    font-weight: 600;
+  }
+
+  .reports-list {
     display: flex;
     flex-direction: column;
     gap: 22px;
@@ -188,9 +354,9 @@
     z-index: 10;
   }
 
-  .pending-card {
+  .report-card {
     display: flex;
-    flex-wrap: wrap; /* allow comments row to span full width */
+    flex-wrap: wrap;
     gap: 22px;
     background: #ffffff;
     border-radius: 14px;
@@ -272,19 +438,20 @@
   }
 
   .counter-red {
-    background-color: rgba(255, 200, 6, 0.15);
-    color: #d4a005;
+    background-color: rgba(172, 27, 34, 0.1);
+    color: #ac1b22;
   }
 
   .counter-comments {
-    background-color: rgba(172, 27, 34, 0.1);
-    color: #ac1b22;
+    background-color: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
   }
 
   /* BUTTONS — Yellow & Red Theme */
   .actions {
     display: flex;
     gap: 12px;
+    flex-wrap: wrap;
   }
 
   .btn {
@@ -310,15 +477,37 @@
     box-shadow: 0 3px 8px rgba(107, 114, 128, 0.35);
   }
 
-  .btn-comments {
-    background-color: #6b7280;
+  .btn-approve {
+    background-color: #ffc806; /* Yellow */
+    color: #212121;
+  }
+
+  .btn-approve:hover {
+    background-color: #e5b400;
+    transform: translateY(-2px);
+    box-shadow: 0 3px 8px rgba(255, 200, 6, 0.35);
+  }
+
+  .btn-reject {
+    background-color: #ac1b22; /* RESQ Red */
     color: white;
   }
 
-  .btn-comments:hover {
-    background-color: #4b5563;
+  .btn-reject:hover {
+    background-color: #8f161c;
     transform: translateY(-2px);
-    box-shadow: 0 3px 8px rgba(107, 114, 128, 0.35);
+    box-shadow: 0 3px 8px rgba(172, 27, 34, 0.35);
+  }
+
+  .btn-revert {
+    background-color: #ac1b22; /* RESQ Red */
+    color: white;
+  }
+
+  .btn-revert:hover {
+    background-color: #8f161c;
+    transform: translateY(-2px);
+    box-shadow: 0 3px 8px rgba(172, 27, 34, 0.35);
   }
 
   /* COMMENTS SECTION */
@@ -327,10 +516,8 @@
     width: 100%;
     margin-top: 8px;
     padding-top: 12px;
-    border-top: 1px solid #d0d0d0; /* darker divider */
+    border-top: 1px solid #d0d0d0;
   }
-
-  .loading-comments, .no-comments {
     text-align: center;
     padding: 20px;
     color: #6b7280;
@@ -353,7 +540,7 @@
     background: transparent;
     border-radius: 0;
     padding: 12px 0;
-    border-bottom: 1px solid #d0d0d0; /* darker separators */
+    border-bottom: 1px solid #d0d0d0;
   }
 
   .comment-item:last-child {
@@ -394,35 +581,18 @@
     font-size: 12px;
     font-family: "Roboto Condensed", sans-serif;
   }
-
+  .flag-green,
+  .flag-red {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
   .flag-green {
     color: #00a458;
   }
 
   .flag-red {
-    color: #d4a005;
-  }
-
-  .btn-approve {
-    background-color: #ffc806; /* Yellow */
-    color: #212121;
-  }
-
-  .btn-approve:hover {
-    background-color: #e5b400;
-    transform: translateY(-2px);
-    box-shadow: 0 3px 8px rgba(255, 200, 6, 0.35);
-  }
-
-  .btn-reject {
-    background-color: #ac1b22; /* RESQ Red */
-    color: white;
-  }
-
-  .btn-reject:hover {
-    background-color: #8f161c;
-    transform: translateY(-2px);
-    box-shadow: 0 3px 8px rgba(172, 27, 34, 0.35);
+    color: #ac1b22;
   }
 
   /* MODAL STYLES */
@@ -436,166 +606,6 @@
     z-index: 1000;
   }
 
-  .modal-content {
-    background: white;
-    border-radius: 12px;
-    width: 90%;
-    max-width: 600px;
-    max-height: 80vh;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px;
-    border-bottom: 1px solid #e5e7eb;
-  }
-
-  .modal-header h2 {
-    margin: 0;
-    font-size: 22px;
-    font-family: "Roboto", sans-serif;
-    color: #212121;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: 32px;
-    cursor: pointer;
-    color: #6b7280;
-    line-height: 1;
-    padding: 0;
-    width: 32px;
-    height: 32px;
-  }
-
-  .close-btn:hover {
-    color: #ac1b22;
-  }
-
-  .modal-body {
-    padding: 20px;
-    overflow-y: auto;
-  }
-
-  .skeleton-loader {
-    background: #f9fafb;
-    border-radius: 8px;
-    padding: 14px;
-    border-left: 3px solid #e5e7eb;
-  }
-
-  .skeleton-line {
-    background: linear-gradient(90deg, #e5e7eb 25%, #f3f4f6 50%, #e5e7eb 75%);
-    background-size: 200% 100%;
-    animation: skeleton-loading 1.5s infinite;
-    border-radius: 4px;
-    height: 12px;
-    margin-bottom: 8px;
-  }
-
-  .skeleton-line:last-child {
-    margin-bottom: 0;
-  }
-
-  .skeleton-author {
-    height: 16px;
-    width: 40%;
-    margin-bottom: 12px;
-  }
-
-  .skeleton-text {
-    height: 12px;
-    width: 100%;
-  }
-
-  .skeleton-text.short {
-    width: 60%;
-  }
-
-  @keyframes skeleton-loading {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
-  }
-
-  /* unify with approved/flagged: flat list + darker separators */
-  .comments-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-  }
-
-  .comment-item {
-    background: transparent;
-    border-radius: 0;
-    padding: 12px 0;
-    border-bottom: 1px solid #d0d0d0;
-  }
-
-  .comment-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-  }
-
-  .comment-author {
-    font-weight: 600;
-    font-family: "Roboto", sans-serif;
-    color: #212121;
-    font-size: 14px;
-  }
-
-  .comment-time {
-    font-size: 12px;
-    color: #6b7280;
-    font-family: "Roboto Condensed", sans-serif;
-  }
-
-  .comment-text {
-    margin: 0 0 10px;
-    font-size: 14px;
-    line-height: 1.6;
-    color: #374151;
-    font-family: "Roboto Condensed", sans-serif;
-  }
-
-  .comment-flags {
-    display: flex;
-    gap: 12px;
-    font-size: 13px;
-    font-family: "Roboto Condensed", sans-serif;
-  }
-
-  .flag-green {
-    color: #00a458;
-  }
-
-  .flag-red {
-    color: #d4a005;
-  }
-
-  @media (max-width: 900px) {
-    .pending-card {
-      flex-direction: column;
-    }
-
-    .image-wrap {
-      width: 100%;
-    }
-
-    .modal-content {
-      width: 95%;
-      max-height: 90vh;
-    }
-  }
-
-  /* CONFIRMATION MODALS */
   .modal-content-confirm {
     background: white;
     border-radius: 12px;
@@ -660,5 +670,63 @@
     background-color: #e5b400;
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(255, 200, 6, 0.4);
+  }
+
+  /* APPROVAL TIMELINE */
+  .approval-timeline {
+    flex: 0 0 200px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .timeline-title {
+    margin: 0 0 8px;
+    font-size: 14px;
+    font-weight: 700;
+    font-family: 'Roboto', sans-serif;
+    color: #212121;
+  }
+
+  .timeline-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .timeline-label {
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'Roboto', sans-serif;
+    color: #444;
+  }
+
+  .timeline-value {
+    font-size: 13px;
+    font-family: 'Roboto Condensed', sans-serif;
+    color: #111;
+  }
+
+  @media (max-width: 900px) {
+    .report-card {
+      flex-direction: column;
+    }
+
+    .image-wrap {
+      width: 100%;
+    }
+
+    .approval-timeline {
+      flex: 0 0 auto;
+      width: 100%;
+    }
+
+    .filter-tabs {
+      flex-wrap: wrap;
+    }
   }
 </style>

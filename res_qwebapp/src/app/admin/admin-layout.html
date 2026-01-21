@@ -7,19 +7,12 @@
       <ul>
         <li><a routerLink="dashboard" routerLinkActive="active">Dashboard</a></li>
         <li>
-          <a routerLink="pending-reports" routerLinkActive="active">
-            Pending Reports
+          <a routerLink="reports" routerLinkActive="active">
+            Reports
             <span class="badge" *ngIf="(pendingReportsCount$ | async) as count">{{ count > 0 ? count : '' }}</span>
           </a>
         </li>
-        <li><a routerLink="approved-reports" routerLinkActive="active">Approved Reports</a></li>
-        <li>
-          <a routerLink="flagged-reports" routerLinkActive="active">
-            Flagged Reports
-            <span class="badge" *ngIf="(flaggedReportsCount$ | async) as count">{{ count > 0 ? count : '' }}</span>
-          </a>
-        </li>
-        <li><a routerLink="admin-posting" routerLinkActive="active">Admin Posting</a></li>
+        <li><a routerLink="announcements" routerLinkActive="active">Announcements</a></li>
         <li><a routerLink="accounts" routerLinkActive="active">Accounts</a></li>
         <li>
           <a routerLink="unverified-accounts" routerLinkActive="active">
