@@ -68,6 +68,7 @@ class _ReportMapPageState extends State<ReportMapPage>
   Map<String, dynamic>? _liveReportData;
   LatLng? _responderLocation;
   bool _resolvedDialogShown = false;
+  bool _flaggedDialogShown = false;
   List<Polyline> _responderRoutePolylines = [];
   Timer? _routeDebounce;
   LatLng? _lastRouteOrigin;
@@ -369,9 +370,10 @@ class _ReportMapPageState extends State<ReportMapPage>
 
   String _normalizeStatusLabel(String status) {
     final normalized = status.trim().toLowerCase();
-    if (normalized == 'flagged' ||
-        normalized == 'unverified' ||
-        normalized == 'pending') {
+    if (normalized == 'flagged' || normalized == 'unverified') {
+      return 'FLAGGED';
+    }
+    if (normalized == 'pending') {
       return 'PENDING';
     }
     if (normalized == 'responding') {
@@ -597,10 +599,17 @@ class _ReportMapPageState extends State<ReportMapPage>
       if ((status == 'resolved' || status == 'incident resolved') &&
           !_resolvedDialogShown) {
         _resolvedDialogShown = true;
-        UserSession.clearActiveReport();
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           _showResolvedDialog();
+        });
+      }
+      if ((status == 'flagged' || status == 'unverified') &&
+          !_flaggedDialogShown) {
+        _flaggedDialogShown = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _showFlaggedDialog();
         });
       }
       final responderLoc = data['responderLocation'];
@@ -706,14 +715,8 @@ class _ReportMapPageState extends State<ReportMapPage>
         actions: [
           ElevatedButton(
             onPressed: () {
-              UserSession.clearActiveReport();
               Navigator.pop(context);
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const MainPage(initialIndex: 0),
-                ),
-              );
+              _handleResolvedNavigation();
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFAC1B22),
@@ -731,6 +734,142 @@ class _ReportMapPageState extends State<ReportMapPage>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showFlaggedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'False Report',
+          style: TextStyle(
+            fontFamily: 'Roboto',
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            color: Color(0xFF111827),
+          ),
+        ),
+        content: const Text(
+          'Your report has been flagged as not valid. Repeated false reports may lead to account suspension or ban.',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF4B5563),
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _handleResolvedNavigation();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFAC1B22),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'UNDERSTOOD',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleResolvedNavigation() {
+    UserSession.removeActiveReport(widget.reportId);
+    final nextReport = UserSession.latestActiveReport;
+    if (nextReport != null) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ReportMapPage(
+            reportId: nextReport.reportId,
+            reportData: nextReport.reportData,
+            showBottomNav: false,
+          ),
+        ),
+      );
+      return;
+    }
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const MainPage(initialIndex: 0),
+      ),
+    );
+  }
+
+  void _showReportSwitcher() {
+    final activeReports = UserSession.activeReports;
+    if (activeReports.length <= 1) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: ListView.separated(
+          shrinkWrap: true,
+          itemCount: activeReports.length,
+          separatorBuilder: (_, __) => const Divider(height: 1),
+          itemBuilder: (context, index) {
+            final report = activeReports[index];
+            final data = report.reportData;
+            final title = (data['incidentType'] as String?) ?? 'Incident';
+            final isCurrent = report.reportId == widget.reportId;
+
+            return ListTile(
+              title: Text(
+                title,
+                style: const TextStyle(
+                  fontFamily: 'Roboto',
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              subtitle: Text(
+                report.reportId,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                ),
+              ),
+              trailing: isCurrent
+                  ? const Icon(Icons.check_circle, color: Color(0xFF00A458))
+                  : const Icon(Icons.chevron_right),
+              onTap: () {
+                Navigator.pop(context);
+                if (isCurrent) return;
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ReportMapPage(
+                      reportId: report.reportId,
+                      reportData: report.reportData,
+                      showBottomNav: false,
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }
@@ -1758,6 +1897,8 @@ class _ReportMapPageState extends State<ReportMapPage>
         return AppColors.appRed;
       case 'ON SCENE':
         return AppColors.appBlue;
+      case 'FLAGGED':
+        return const Color(0xFFDC2626);
       case 'RESOLVED':
         return const Color(0xFF16A34A);
       default:
@@ -1955,12 +2096,24 @@ class _ReportMapPageState extends State<ReportMapPage>
                           ),
                         ],
                       ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.my_location,
-                          color: Colors.white,
-                        ),
-                        onPressed: _goToCurrentLocation,
+                      Row(
+                        children: [
+                          if (UserSession.activeReports.length > 1)
+                            IconButton(
+                              icon: const Icon(
+                                Icons.swap_horiz,
+                                color: Colors.white,
+                              ),
+                              onPressed: _showReportSwitcher,
+                            ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.my_location,
+                              color: Colors.white,
+                            ),
+                            onPressed: _goToCurrentLocation,
+                          ),
+                        ],
                       ),
                     ],
                   ),

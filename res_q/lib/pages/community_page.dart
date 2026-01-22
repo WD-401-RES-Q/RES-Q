@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:typed_data';
+import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -28,12 +29,20 @@ class _CommunityPageState extends State<CommunityPage> {
   String _selectedFilter = 'All';
   String _selectedCategory = 'All';
   List<Map<String, dynamic>> _reports = [];
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+      _reportsSubscription;
 
   @override
   void initState() {
     super.initState();
-    _loadReportsFromFirestore();
+    _subscribeToReports();
     _ensureCommentsCollectionExists(); // Initialize comments collection
+  }
+
+  @override
+  void dispose() {
+    _reportsSubscription?.cancel();
+    super.dispose();
   }
 
   /// Ensure the comments collection exists by creating a marker document if needed
@@ -65,54 +74,67 @@ class _CommunityPageState extends State<CommunityPage> {
     }
   }
 
-  Future<void> _loadReportsFromFirestore() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('reports')
-          .orderBy('reportedAt', descending: true)
-          .get();
-
-      final reports = snapshot.docs.map((doc) {
-        final data = doc.data();
-        final reportedAt = (data['reportedAt'] as Timestamp).toDate();
-        final dateFormat = DateFormat('MMM dd. yyyy');
-        final timeFormat = DateFormat('h:mm a');
-        final resolvedAtRaw = data['resolvedAt'];
-        DateTime? resolvedAt;
-        if (resolvedAtRaw is Timestamp) {
-          resolvedAt = resolvedAtRaw.toDate();
-        } else if (resolvedAtRaw is DateTime) {
-          resolvedAt = resolvedAtRaw;
-        }
-
-        return {
-          'id': doc.id,
-          'image': data['mediaUrl'] ?? '',
-          'date': dateFormat.format(reportedAt).toUpperCase(),
-          'time': timeFormat.format(reportedAt).toUpperCase(),
-          'title': data['incidentType'] ?? 'Unknown',
-          'desc': data['details'] ?? 'No description provided.',
-          'greenFlags': data['greenFlags'] ?? 0,
-          'redFlags': data['redFlags'] ?? 0,
-          'status': data['status'] ?? 'Pending',
-          'resolvedAt': resolvedAt,
-          'comments': data['comments'] ?? 0,
-          'commentsList': <Map<String, dynamic>>[],
-          'userVote': 'none',
-          'name': data['name'] ?? 'Unknown',
-          'mediaType': data['mediaType'] ?? 'photo',
-        };
-      }).toList();
-
+  void _subscribeToReports() {
+    _reportsSubscription?.cancel();
+    _reportsSubscription = FirebaseFirestore.instance
+        .collection('reports')
+        .orderBy('reportedAt', descending: true)
+        .snapshots()
+        .listen((snapshot) {
+      final previousVotes = {
+        for (final report in _reports)
+          report['id']?.toString() ?? '': report['userVote'],
+      };
+      final reports = snapshot.docs.map(_mapReportFromDoc).toList();
+      for (final report in reports) {
+        final reportId = report['id']?.toString() ?? '';
+        report['userVote'] = previousVotes[reportId] ?? 'none';
+      }
+      if (!mounted) return;
       setState(() {
         _reports = reports;
       });
-
       debugPrint('✅ Loaded ${reports.length} reports from Firestore');
-    } catch (e) {
+    }, onError: (e) {
       debugPrint('❌ Failed to load reports: $e');
-      setState(() {});
+    });
+  }
+
+  Map<String, dynamic> _mapReportFromDoc(
+    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data();
+    final reportedAtRaw = data['reportedAt'];
+    final reportedAt = reportedAtRaw is Timestamp
+        ? reportedAtRaw.toDate()
+        : DateTime.now();
+    final dateFormat = DateFormat('MMM dd. yyyy');
+    final timeFormat = DateFormat('h:mm a');
+    final resolvedAtRaw = data['resolvedAt'];
+    DateTime? resolvedAt;
+    if (resolvedAtRaw is Timestamp) {
+      resolvedAt = resolvedAtRaw.toDate();
+    } else if (resolvedAtRaw is DateTime) {
+      resolvedAt = resolvedAtRaw;
     }
+
+    return {
+      'id': doc.id,
+      'image': data['mediaUrl'] ?? '',
+      'date': dateFormat.format(reportedAt).toUpperCase(),
+      'time': timeFormat.format(reportedAt).toUpperCase(),
+      'title': data['incidentType'] ?? 'Unknown',
+      'desc': data['details'] ?? 'No description provided.',
+      'greenFlags': data['greenFlags'] ?? 0,
+      'redFlags': data['redFlags'] ?? 0,
+      'status': data['status'] ?? 'Pending',
+      'resolvedAt': resolvedAt,
+      'comments': data['comments'] ?? 0,
+      'commentsList': <Map<String, dynamic>>[],
+      'userVote': 'none',
+      'name': data['name'] ?? 'Unknown',
+      'mediaType': data['mediaType'] ?? 'photo',
+    };
   }
 
   static const List<String> _categories = [
@@ -132,7 +154,7 @@ class _CommunityPageState extends State<CommunityPage> {
       if ((status == 'resolved' || status == 'incident resolved') &&
           resolvedAt != null) {
         final elapsed = DateTime.now().difference(resolvedAt);
-        if (elapsed >= const Duration(minutes: 30)) {
+        if (elapsed >= const Duration(hours: 1)) {
           return false;
         }
       }
@@ -466,6 +488,7 @@ class _CommunityPageState extends State<CommunityPage> {
   Future<void> _onGreenFlagPressed(int index) async {
     final report = _reports[index];
     final String vote = report['userVote'];
+    final reportId = report['id']?.toString() ?? '';
 
     // Already green → quick unverify
     if (vote == 'green') {
@@ -473,6 +496,7 @@ class _CommunityPageState extends State<CommunityPage> {
         if (report['greenFlags'] > 0) report['greenFlags']--;
         report['userVote'] = 'none';
       });
+      await _updateReportFlags(reportId, greenDelta: -1);
       return;
     }
 
@@ -498,11 +522,17 @@ class _CommunityPageState extends State<CommunityPage> {
       report['greenFlags']++;
       report['userVote'] = 'green';
     });
+    await _updateReportFlags(
+      reportId,
+      greenDelta: 1,
+      redDelta: vote == 'red' ? -1 : 0,
+    );
   }
 
   Future<void> _onRedFlagPressed(int index) async {
     final report = _reports[index];
     final String vote = report['userVote'];
+    final reportId = report['id']?.toString() ?? '';
 
     // Already red → quick unflag
     if (vote == 'red') {
@@ -510,6 +540,7 @@ class _CommunityPageState extends State<CommunityPage> {
         if (report['redFlags'] > 0) report['redFlags']--;
         report['userVote'] = 'none';
       });
+      await _updateReportFlags(reportId, redDelta: -1);
       return;
     }
 
@@ -536,6 +567,35 @@ class _CommunityPageState extends State<CommunityPage> {
       report['redFlags']++;
       report['userVote'] = 'red';
     });
+    await _updateReportFlags(
+      reportId,
+      greenDelta: vote == 'green' ? -1 : 0,
+      redDelta: 1,
+    );
+  }
+
+  Future<void> _updateReportFlags(
+    String reportId, {
+    int greenDelta = 0,
+    int redDelta = 0,
+  }) async {
+    if (reportId.isEmpty) return;
+    final updates = <String, dynamic>{};
+    if (greenDelta != 0) {
+      updates['greenFlags'] = FieldValue.increment(greenDelta);
+    }
+    if (redDelta != 0) {
+      updates['redFlags'] = FieldValue.increment(redDelta);
+    }
+    if (updates.isEmpty) return;
+    try {
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .update(updates);
+    } catch (e) {
+      debugPrint('⚠️ Failed to update report flags: $e');
+    }
   }
 
   // ───────────────── COMMENTS BOTTOM SHEET ─────────────────
@@ -1229,6 +1289,12 @@ class _CommentsPageState extends State<_CommentsPage> {
             .doc(reportId)
             .update({'comments': FieldValue.increment(1)});
         debugPrint('✅ Report comment count incremented');
+        if (mounted) {
+          setState(() {
+            final currentCount = widget.report['comments'] as int? ?? 0;
+            widget.report['comments'] = currentCount + 1;
+          });
+        }
       } catch (updateError) {
         debugPrint('⚠️ Warning: Could not update comment count: $updateError');
         // Don't fail the entire operation if count update fails

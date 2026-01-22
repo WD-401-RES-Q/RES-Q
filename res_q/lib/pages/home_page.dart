@@ -31,14 +31,13 @@ class _MainPageState extends State<MainPage> {
   }
 
   Widget _buildMapPage() {
-    final reportId = UserSession.activeReportId;
-    final reportData = UserSession.activeReportData;
+    final activeReport = UserSession.latestActiveReport;
 
-    if (reportId != null && reportData != null) {
+    if (activeReport != null) {
       return ReportMapPage(
-        key: ValueKey('report-map-$reportId'),
-        reportId: reportId,
-        reportData: reportData,
+        key: ValueKey('report-map-${activeReport.reportId}'),
+        reportId: activeReport.reportId,
+        reportData: activeReport.reportData,
         showBottomNav: false,
       );
     }

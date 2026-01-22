@@ -37,6 +37,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
   // Sample incident markers
   final List<Marker> _incidentMarkers = [];
+  static const Duration _resolvedRetention = Duration(hours: 1);
+  final Map<String, Timer> _resolvedRemovalTimers = {};
+  List<Map<String, dynamic>> _resolvedReports = [];
 
   // Route related variables
   LatLng? _userLocation;
@@ -70,6 +73,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   void dispose() {
     _reportsSubscription?.cancel();
     _trackingTimer?.cancel();
+    for (final timer in _resolvedRemovalTimers.values) {
+      timer.cancel();
+    }
     _pinBounceController.dispose();
     super.dispose();
   }
@@ -273,10 +279,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   String _normalizeStatusLabel(String status) {
-    if (status.toLowerCase() == 'flagged') {
-      return 'Unverified';
+    final normalized = status.trim().toLowerCase();
+    if (normalized == 'flagged' || normalized == 'unverified') {
+      return 'FLAGGED';
     }
-    return status;
+    if (normalized == 'on-scene') {
+      return 'ON SCENE';
+    }
+    return status.toUpperCase();
   }
 
   Future<void> _calculateRoute() async {
@@ -630,40 +640,284 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
   void _applyReportSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
     _incidentMarkers.clear();
+    final resolvedReports = <Map<String, dynamic>>[];
     for (var doc in snapshot.docs) {
       final data = doc.data();
       final location = data['location'] as GeoPoint?;
       if (location != null) {
+        final reportId = doc.id;
         final status = (data['status'] as String? ?? '').toLowerCase();
-        if (status == 'resolved' || status == 'incident resolved') {
-          continue;
+        final resolvedAt = _parseResolvedAt(data);
+        final flaggedAt = _parseFlaggedAt(data) ?? _parseReportedAt(data);
+        final isResolved =
+            status == 'resolved' || status == 'incident resolved';
+        final isFlagged = status == 'flagged' || status == 'unverified';
+        final isInactive = isResolved || isFlagged;
+        if (isInactive) {
+          final inactiveAt = isResolved ? resolvedAt : flaggedAt;
+          final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
+          if (!shouldKeep) {
+            continue;
+          }
+          if (isResolved) {
+            resolvedReports.add({'id': reportId, 'data': data});
+          }
+        } else {
+          _cancelResolvedRemoval(reportId);
         }
         final point = LatLng(location.latitude, location.longitude);
         final incidentType = data['incidentType'] as String? ?? 'Unknown';
 
-        _incidentMarkers.add(
-          Marker(
-            point: point,
-            width: 72,
-            height: 72,
-            child: _buildBouncyPin(
-              child: GestureDetector(
-                onTap: () => _showIncidentInfo(data),
-                child: Image.asset(
+        final markerSize = isInactive ? 56.0 : 72.0;
+        final badge = _buildStatusBadge(status, markerSize);
+        final markerContent = _buildBouncyPin(
+          child: GestureDetector(
+            onTap: () => _showIncidentInfo(data),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Image.asset(
                   _getMarkerAssetForIncidentType(incidentType),
-                  width: 72,
-                  height: 72,
+                  width: markerSize,
+                  height: markerSize,
                   fit: BoxFit.contain,
                 ),
-              ),
+                if (badge != null)
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: badge,
+                  ),
+              ],
             ),
+          ),
+        );
+
+        _incidentMarkers.add(
+          Marker(
+            key: ValueKey('incident-$reportId'),
+            point: point,
+            width: markerSize,
+            height: markerSize,
+            child: isInactive
+                ? Opacity(
+                    opacity: 0.45,
+                    child: IgnorePointer(ignoring: true, child: markerContent),
+                  )
+                : markerContent,
           ),
         );
       }
     }
 
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {
+        _resolvedReports = resolvedReports;
+      });
+    }
     print('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+  }
+
+  DateTime? _parseResolvedAt(Map<String, dynamic> data) {
+    final resolvedAtRaw = data['resolvedAt'];
+    if (resolvedAtRaw is Timestamp) {
+      return resolvedAtRaw.toDate();
+    }
+    if (resolvedAtRaw is DateTime) {
+      return resolvedAtRaw;
+    }
+    return null;
+  }
+
+  DateTime? _parseFlaggedAt(Map<String, dynamic> data) {
+    final flaggedAtRaw = data['flaggedAt'];
+    if (flaggedAtRaw is Timestamp) {
+      return flaggedAtRaw.toDate();
+    }
+    if (flaggedAtRaw is DateTime) {
+      return flaggedAtRaw;
+    }
+    return null;
+  }
+
+  DateTime? _parseReportedAt(Map<String, dynamic> data) {
+    final reportedAtRaw = data['reportedAt'];
+    if (reportedAtRaw is Timestamp) {
+      return reportedAtRaw.toDate();
+    }
+    if (reportedAtRaw is DateTime) {
+      return reportedAtRaw;
+    }
+    return null;
+  }
+  bool _shouldKeepResolved(String reportId, DateTime? resolvedAt) {
+    if (resolvedAt == null) {
+      return false;
+    }
+    final elapsed = DateTime.now().difference(resolvedAt);
+    if (elapsed >= _resolvedRetention) {
+      _cancelResolvedRemoval(reportId);
+      return false;
+    }
+    _scheduleResolvedRemoval(reportId, resolvedAt, elapsed);
+    return true;
+  }
+
+  void _scheduleResolvedRemoval(
+    String reportId,
+    DateTime resolvedAt,
+    Duration elapsed,
+  ) {
+    if (_resolvedRemovalTimers.containsKey(reportId)) {
+      return;
+    }
+    final remaining = _resolvedRetention - elapsed;
+    if (remaining <= Duration.zero) {
+      _removeIncidentMarker(reportId);
+      return;
+    }
+    _resolvedRemovalTimers[reportId] = Timer(remaining, () {
+      _removeIncidentMarker(reportId);
+    });
+  }
+
+  void _cancelResolvedRemoval(String reportId) {
+    final timer = _resolvedRemovalTimers.remove(reportId);
+    timer?.cancel();
+  }
+
+  void _removeIncidentMarker(String reportId) {
+    if (!mounted) return;
+    setState(() {
+      _incidentMarkers.removeWhere(
+        (marker) => marker.key == ValueKey('incident-$reportId'),
+      );
+    });
+    _cancelResolvedRemoval(reportId);
+  }
+
+  Widget? _buildStatusBadge(String statusLower, double markerSize) {
+    final isResolved = statusLower == 'resolved' ||
+        statusLower == 'incident resolved';
+    final isFlagged =
+        statusLower == 'flagged' || statusLower == 'unverified';
+    final isAttention = statusLower == 'pending' ||
+        statusLower == 'on scene' ||
+        statusLower == 'responding';
+
+    if (!isResolved && !isAttention && !isFlagged) return null;
+
+    final badgeSize = markerSize <= 60 ? 14.0 : 16.0;
+    final iconSize = markerSize <= 60 ? 10.0 : 12.0;
+    final color = isResolved
+        ? const Color(0xFF00A458)
+        : isFlagged
+            ? const Color(0xFFDC2626)
+            : const Color(0xFFAC1B22);
+    final icon = isResolved
+        ? Icons.check
+        : isFlagged
+            ? Icons.close
+            : Icons.priority_high;
+
+    return Container(
+      width: badgeSize,
+      height: badgeSize,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 1),
+      ),
+      child: Icon(icon, color: Colors.white, size: iconSize),
+    );
+  }
+
+  String _formatResolvedTimestamp(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '$month/$day/${date.year} $hour:$minute';
+  }
+
+  void _openResolvedReportsSheet() {
+    if (_resolvedReports.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No resolved reports available.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Resolved Reports (Last Hour)',
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                  color: Color(0xFF111827),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _resolvedReports.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final entry = _resolvedReports[index];
+                    final data =
+                        entry['data'] as Map<String, dynamic>? ?? {};
+                    final incidentType =
+                        data['incidentType'] as String? ?? 'Incident';
+                    final resolvedAt = _parseResolvedAt(data);
+                    final resolvedLabel = resolvedAt != null
+                        ? _formatResolvedTimestamp(resolvedAt)
+                        : 'Resolved recently';
+
+                    return ListTile(
+                      title: Text(
+                        incidentType,
+                        style: const TextStyle(
+                          fontFamily: 'Roboto',
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      subtitle: Text(
+                        'Resolved: $resolvedLabel',
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                        ),
+                      ),
+                      trailing: const Icon(Icons.info_outline),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _showIncidentInfo(data);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildBouncyPin({required Widget child}) {
@@ -1331,6 +1585,40 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             child: Column(
               children: [
                 _buildWeatherButton(),
+                const SizedBox(height: 12),
+                FloatingActionButton.small(
+                  heroTag: 'resolved_reports',
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFFAC1B22),
+                  onPressed:
+                      _resolvedReports.isEmpty ? null : _openResolvedReportsSheet,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const Icon(Icons.history),
+                      if (_resolvedReports.isNotEmpty)
+                        Positioned(
+                          right: -6,
+                          top: -6,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFAC1B22),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Text(
+                              '${_resolvedReports.length}',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
                 const SizedBox(height: 12),
                 FloatingActionButton(
                   backgroundColor: const Color(0xFFAC1B22),

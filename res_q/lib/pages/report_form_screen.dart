@@ -222,6 +222,13 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         return;
       }
     }
+
+    final hasReachedLimit = await _hasReachedReportLimit();
+    if (hasReachedLimit) {
+      if (!mounted) return;
+      await _showReportLimitDialog();
+      return;
+    }
     final location = await _resolveReportLocation();
     if (location == null) return;
 
@@ -273,11 +280,15 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       }
 
       print('💾 Saving to Firestore...');
+      final reporterUsername =
+          UserSession.currentUserData?['username'] as String?;
       final docRef = await FirebaseFirestore.instance
           .collection('reports')
           .add({
             'name': _fullName ?? 'Unknown',
             'contactNumber': _contactNumber ?? 'Unknown',
+            if (reporterUsername != null && reporterUsername.isNotEmpty)
+              'reporterUsername': reporterUsername,
             'incidentType': widget.incidentType,
             'details': _informationController.text.trim(),
             if (_isVehicularIncident()) ...{
@@ -346,6 +357,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 final reportData = {
                   'name': _fullName ?? 'Unknown',
                   'contactNumber': _contactNumber ?? 'Unknown',
+                  if (reporterUsername != null && reporterUsername.isNotEmpty)
+                    'reporterUsername': reporterUsername,
                   'incidentType': widget.incidentType,
                   'details': _informationController.text.trim(),
                   if (_isVehicularIncident()) ...{
@@ -366,7 +379,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   'locationLat': location.latitude,
                   'locationLng': location.longitude,
                 };
-                UserSession.setActiveReport(
+                UserSession.addActiveReport(
                   reportId: docRef.id,
                   reportData: reportData,
                 );
@@ -413,6 +426,122 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  Future<bool> _hasReachedReportLimit() async {
+    if (UserSession.activeReportCount >= 2) {
+      return true;
+    }
+
+    final reporterUsername =
+        UserSession.currentUserData?['username'] as String?;
+    final contactNumber =
+        _contactNumber ??
+        (UserSession.currentUserData?['contactNumber'] as String?);
+    final fallbackName =
+        _fullName ??
+        (UserSession.currentUserData?['fullName'] as String?) ??
+        (UserSession.currentUserData?['username'] as String?);
+
+    if (reporterUsername == null &&
+        contactNumber == null &&
+        fallbackName == null) {
+      return false;
+    }
+
+    try {
+      Query<Map<String, dynamic>> query =
+          FirebaseFirestore.instance.collection('reports');
+      if (reporterUsername != null && reporterUsername.isNotEmpty) {
+        query = query.where('reporterUsername', isEqualTo: reporterUsername);
+      } else if (contactNumber != null && contactNumber.isNotEmpty) {
+        query = query.where('contactNumber', isEqualTo: contactNumber);
+      } else if (fallbackName != null && fallbackName.isNotEmpty) {
+        query = query.where('name', isEqualTo: fallbackName);
+      }
+
+      final snapshot = await query.get();
+      var activeCount = 0;
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        final status = (data['status'] as String? ?? '').toLowerCase();
+        final resolvedAt = data['resolvedAt'];
+        final isResolved =
+            status == 'resolved' || status == 'incident resolved';
+        final isFlagged = status == 'flagged' || status == 'unverified';
+        if (!isResolved && !isFlagged && resolvedAt == null) {
+          activeCount += 1;
+        }
+      }
+
+      return activeCount >= 2;
+    } catch (e) {
+      debugPrint('⚠️ Could not check report limit: $e');
+      return UserSession.activeReportCount >= 2;
+    }
+  }
+
+  Future<void> _showReportLimitDialog() async {
+    await showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: const Color(0xFFAC1B22),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.error_outline, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Active Report Limit',
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  color: Color(0xFF111827),
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'You already have 2 active reports. Please wait for them to be resolved before submitting a new one.',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF4B5563),
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFAC1B22),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'OK',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<LatLng?> _resolveReportLocation() async {
