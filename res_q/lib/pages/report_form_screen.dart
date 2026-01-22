@@ -25,9 +25,13 @@ class ReportFormScreen extends StatefulWidget {
 
 class _ReportFormScreenState extends State<ReportFormScreen> {
   final TextEditingController _informationController = TextEditingController();
+  final TextEditingController _plateNumberController = TextEditingController();
+  final TextEditingController _barangayController = TextEditingController();
   String? _fullName;
   String? _contactNumber;
   late final String _reportDate;
+  String? _vehicleBodyType;
+  String? _vehicleColor;
 
   LocationSelectionMode _locationMode = LocationSelectionMode.current;
   LatLng? _selectedLocation;
@@ -47,6 +51,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   @override
   void dispose() {
     _informationController.dispose();
+    _plateNumberController.dispose();
+    _barangayController.dispose();
     super.dispose();
   }
 
@@ -190,6 +196,32 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   Future<void> _confirmReport() async {
+    if (_isVehicularIncident()) {
+      final plateNumber = _plateNumberController.text.trim();
+      if (plateNumber.isEmpty ||
+          _vehicleBodyType == null ||
+          _vehicleColor == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please complete all vehicle details.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+    }
+    if (_isFireOrFloodIncident()) {
+      final barangay = _barangayController.text.trim();
+      if (barangay.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please enter the barangay.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+    }
     final location = await _resolveReportLocation();
     if (location == null) return;
 
@@ -248,6 +280,14 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             'contactNumber': _contactNumber ?? 'Unknown',
             'incidentType': widget.incidentType,
             'details': _informationController.text.trim(),
+            if (_isVehicularIncident()) ...{
+              'vehiclePlateNumber': _plateNumberController.text.trim(),
+              'vehicleBodyType': _vehicleBodyType,
+              'vehicleColor': _vehicleColor,
+            },
+            if (_isFireOrFloodIncident()) ...{
+              'barangay': _barangayController.text.trim(),
+            },
             'reportedAt': Timestamp.fromDate(now),
             'gpsSharingEnabled': _locationMode == LocationSelectionMode.current,
             'locationSource': _locationMode == LocationSelectionMode.current
@@ -308,6 +348,14 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   'contactNumber': _contactNumber ?? 'Unknown',
                   'incidentType': widget.incidentType,
                   'details': _informationController.text.trim(),
+                  if (_isVehicularIncident()) ...{
+                    'vehiclePlateNumber': _plateNumberController.text.trim(),
+                    'vehicleBodyType': _vehicleBodyType,
+                    'vehicleColor': _vehicleColor,
+                  },
+                  if (_isFireOrFloodIncident()) ...{
+                    'barangay': _barangayController.text.trim(),
+                  },
                   'mediaUrl': mediaUrl,
                   'mediaType': mediaType,
                   'reportedAt': now,
@@ -582,6 +630,15 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 ),
 
                 const SizedBox(height: 16),
+
+                if (_isVehicularIncident())
+                  _buildVehicleDetailsRow(),
+
+                if (_isVehicularIncident()) const SizedBox(height: 16),
+
+                if (_isFireOrFloodIncident()) _buildBarangayField(),
+
+                if (_isFireOrFloodIncident()) const SizedBox(height: 16),
 
                 // Information TextArea
                 Container(
@@ -883,6 +940,371 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
               color: Colors.black,
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  bool _isVehicularIncident() {
+    return widget.incidentType.toUpperCase() == 'VEHICULAR';
+  }
+
+  bool _isFireOrFloodIncident() {
+    final incident = widget.incidentType.toUpperCase();
+    return incident == 'FIRE' || incident == 'FLOOD';
+  }
+
+  Widget _buildVehicleDetailsRow() {
+    const vehicleBodies = [
+      'Sedan',
+      'SUV',
+      'Hatchback',
+      'Pickup',
+      'Van',
+      'Motorcycle',
+      'Bus',
+      'Truck',
+      'Other',
+    ];
+    const vehicleColors = [
+      'Black',
+      'White',
+      'Gray',
+      'Red',
+      'Orange',
+      'Yellow',
+      'Green',
+      'Blue',
+      'Purple',
+    ];
+    const colorSwatches = {
+      'Black': Colors.black,
+      'White': Colors.white,
+      'Gray': Color(0xFF9CA3AF),
+      'Red': Color(0xFFDC2626),
+      'Orange': Color(0xFFF97316),
+      'Yellow': Color(0xFFFACC15),
+      'Green': Color(0xFF22C55E),
+      'Blue': Color(0xFF2563EB),
+      'Purple': Color(0xFF7C3AED),
+    };
+    return Row(
+      children: [
+        Expanded(
+          child: _buildLabeledField(
+            label: 'Plate Number *',
+            child: TextField(
+              controller: _plateNumberController,
+              textCapitalization: TextCapitalization.characters,
+              textAlignVertical: TextAlignVertical.center,
+              style: const TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+                color: Colors.black,
+              ),
+              decoration: const InputDecoration(
+                hintText: 'ABC123',
+                hintStyle: TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                  color: Colors.black54,
+                ),
+                border: InputBorder.none,
+                isCollapsed: true,
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 14,
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildLabeledField(
+            label: 'Body Type *',
+            child: DropdownButtonHideUnderline(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: DropdownButton<String>(
+                  value: _vehicleBodyType,
+                  hint: const Text(
+                    'Select',
+                    style: TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
+                  ),
+                  isExpanded: true,
+                  isDense: true,
+                  icon: Icon(
+                    Icons.keyboard_arrow_down,
+                    color: Color(0xFFAC1B22),
+                  ),
+                  dropdownColor: Colors.white,
+                  items: vehicleBodies
+                      .map(
+                        (value) => DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(
+                            value,
+                            style: const TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 12,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    setState(() => _vehicleBodyType = value);
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildLabeledField(
+            label: 'Color *',
+            child: DropdownButtonHideUnderline(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: DropdownButton<String>(
+                  value: _vehicleColor,
+                  hint: const Text(
+                    'Select',
+                    style: TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
+                  ),
+                  isExpanded: true,
+                  isDense: true,
+                  icon: Icon(
+                    Icons.keyboard_arrow_down,
+                    color: Color(0xFFAC1B22),
+                  ),
+                  selectedItemBuilder: (context) {
+                    return vehicleColors.map((value) {
+                      final color = colorSwatches[value] ?? Colors.transparent;
+                      return Row(
+                        children: [
+                          _buildColorSwatch(color),
+                          const SizedBox(width: 8),
+                          Text(
+                            value,
+                            style: const TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 12,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ],
+                      );
+                    }).toList();
+                  },
+                  items: vehicleColors
+                      .map(
+                        (value) => DropdownMenuItem<String>(
+                          value: value,
+                          child: Row(
+                            children: [
+                              _buildColorSwatch(
+                                colorSwatches[value] ?? Colors.transparent,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                value,
+                                style: const TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontSize: 12,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    setState(() => _vehicleColor = value);
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildColorSwatch(Color color) {
+    return Container(
+      width: 12,
+      height: 12,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(2),
+        border: Border.all(color: Colors.black12, width: 1),
+      ),
+    );
+  }
+
+  Widget _buildBarangayField() {
+    const barangays = [
+      'Agapito del Rosario',
+      'Amsic',
+      'Anunas',
+      'Balibago',
+      'Capaya',
+      'Claro M. Recto',
+      'Cuayan',
+      'Cutcut',
+      'Cutud',
+      'Lourdes North West',
+      'Lourdes Sur',
+      'Lourdes Sur East',
+      'Malabanias',
+      'Margot',
+      'Marisol',
+      'Mining',
+      'Ninoy Aquino',
+      'Pampang',
+      'Pandan',
+      'Poblacion',
+      'Pulungbulu',
+      'Pulung Cacutud',
+      'Pulung Maragul',
+      'Salapungan',
+      'San Jose',
+      'San Nicolas',
+      'Santa Teresita',
+      'Santa Trinidad',
+      'Santo Cristo',
+      'Santo Domingo',
+      'Santo Rosario',
+      'Sapalibutad',
+      'Sula',
+      'Tabun',
+      'Virgen delos Remedios',
+    ];
+    return _buildLabeledField(
+      label: 'Barangay *',
+      child: Autocomplete<String>(
+        initialValue: TextEditingValue(text: _barangayController.text),
+        optionsBuilder: (TextEditingValue value) {
+          final query = value.text.trim().toLowerCase();
+          if (query.isEmpty) {
+            return const Iterable<String>.empty();
+          }
+          return barangays.where(
+            (option) => option.toLowerCase().contains(query),
+          );
+        },
+        onSelected: (selection) {
+          _barangayController.text = selection;
+        },
+        fieldViewBuilder: (
+          context,
+          textEditingController,
+          focusNode,
+          onFieldSubmitted,
+        ) {
+          return TextField(
+            controller: textEditingController,
+            focusNode: focusNode,
+            textCapitalization: TextCapitalization.words,
+            onChanged: (value) => _barangayController.text = value,
+            style: const TextStyle(
+              fontFamily: 'RobotoCondensed',
+              fontSize: 12,
+              fontWeight: FontWeight.w400,
+              color: Colors.black,
+            ),
+            decoration: const InputDecoration(
+              hintText: 'Enter barangay',
+              hintStyle: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+                color: Colors.black54,
+              ),
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 12,
+              ),
+            ),
+          );
+        },
+        optionsViewBuilder: (context, onSelected, options) {
+          return Align(
+            alignment: Alignment.topLeft,
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(8),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: ListView.separated(
+                  padding: EdgeInsets.zero,
+                  shrinkWrap: true,
+                  itemBuilder: (context, index) {
+                    final option = options.elementAt(index);
+                    return ListTile(
+                      dense: true,
+                      title: Text(
+                        option,
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 12,
+                        ),
+                      ),
+                      onTap: () => onSelected(option),
+                    );
+                  },
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemCount: options.length,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildLabeledField({
+    required String label,
+    required Widget child,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontSize: 12,
+            fontWeight: FontWeight.w400,
+            color: Colors.black,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          height: 48,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.black, width: 1.5),
+          ),
+          child: child,
         ),
       ],
     );

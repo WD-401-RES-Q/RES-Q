@@ -693,23 +693,27 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Color(0xFF3A8DFF),
-              Color(0xFFE8F2FF),
-              Color(0xFFFFD54A),
-              Color(0xFFFF8A3D),
+              Color(0xFFAC1B22),
+              Color(0xFFE34B3F),
+              Color(0xFFFFC806),
+              Color(0xFFFFE6A8),
             ],
+          ),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.7),
+            width: 1.2,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.18),
-              blurRadius: 10,
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 12,
               offset: const Offset(0, 4),
             ),
           ],
         ),
         child: Icon(
           _weatherIcon(_weatherData?.state ?? WeatherState.cloudy),
-          color: const Color(0xFF1F2933),
+          color: Colors.white,
         ),
       ),
     );

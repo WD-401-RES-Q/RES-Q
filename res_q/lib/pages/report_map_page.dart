@@ -72,6 +72,8 @@ class _ReportMapPageState extends State<ReportMapPage>
   Timer? _routeDebounce;
   LatLng? _lastRouteOrigin;
   LatLng? _lastRouteDestination;
+  double? _responderRouteDistanceKm;
+  String? _responderRouteEta;
 
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
@@ -416,9 +418,17 @@ class _ReportMapPageState extends State<ReportMapPage>
     _lastRouteOrigin = origin;
     _lastRouteDestination = destination;
 
-    List<LatLng> points = await _fetchRoutePoints(origin, destination);
+    _RouteResult? route = await _fetchRouteFromOsrm(origin, destination);
+    List<LatLng> points = route?.points ?? [];
+    double? distanceKm =
+        route != null ? route.distanceMeters / 1000 : null;
+    String? eta = route != null
+        ? _formatDurationFromSeconds(route.durationSeconds)
+        : null;
     if (points.isEmpty) {
       points = _generateSimulatedRoute(origin, destination);
+      distanceKm = _calculateDistance(points);
+      eta = _calculateEstimatedTime(distanceKm);
     }
 
     if (!mounted) return;
@@ -441,32 +451,44 @@ class _ReportMapPageState extends State<ReportMapPage>
                 strokeJoin: StrokeJoin.round,
               ),
             ];
+      _responderRouteDistanceKm = points.isEmpty ? null : distanceKm;
+      _responderRouteEta = points.isEmpty ? null : eta;
     });
   }
 
-  Future<List<LatLng>> _fetchRoutePoints(LatLng start, LatLng end) async {
+  Future<_RouteResult?> _fetchRouteFromOsrm(
+    LatLng start,
+    LatLng end,
+  ) async {
     final uri = Uri.parse(
       'https://router.project-osrm.org/route/v1/driving/'
       '${start.longitude},${start.latitude};'
       '${end.longitude},${end.latitude}'
-      '?overview=simplified&geometries=geojson',
+      '?overview=full&geometries=geojson&alternatives=true',
     );
     final response = await http.get(uri);
     if (response.statusCode != 200) {
-      return [];
+      return null;
     }
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     final routes = data['routes'] as List<dynamic>?;
     if (routes == null || routes.isEmpty) {
-      return [];
+      return null;
     }
-    final route = routes.first as Map<String, dynamic>;
+    final route = routes
+        .whereType<Map<String, dynamic>>()
+        .reduce((best, current) {
+      final bestDistance = (best['distance'] as num?)?.toDouble() ?? double.maxFinite;
+      final currentDistance =
+          (current['distance'] as num?)?.toDouble() ?? double.maxFinite;
+      return currentDistance < bestDistance ? current : best;
+    });
     final geometry = route['geometry'] as Map<String, dynamic>?;
     final coords = geometry?['coordinates'] as List<dynamic>?;
     if (coords == null || coords.isEmpty) {
-      return [];
+      return null;
     }
-    return coords
+    final points = coords
         .map(
           (coord) => LatLng(
             (coord[1] as num).toDouble(),
@@ -474,6 +496,13 @@ class _ReportMapPageState extends State<ReportMapPage>
           ),
         )
         .toList();
+    final distanceMeters = (route['distance'] as num?)?.toDouble() ?? 0.0;
+    final durationSeconds = (route['duration'] as num?)?.toDouble() ?? 0.0;
+    return _RouteResult(
+      points: points,
+      distanceMeters: distanceMeters,
+      durationSeconds: durationSeconds,
+    );
   }
 
   List<LatLng> _generateSimulatedRoute(LatLng start, LatLng end) {
@@ -489,6 +518,42 @@ class _ReportMapPageState extends State<ReportMapPage>
     }
 
     return points;
+  }
+
+  double _calculateDistance(List<LatLng> points) {
+    double totalDistance = 0.0;
+    for (int i = 0; i < points.length - 1; i++) {
+      totalDistance += const Distance().as(
+        LengthUnit.Kilometer,
+        points[i],
+        points[i + 1],
+      );
+    }
+    return totalDistance;
+  }
+
+  String _calculateEstimatedTime(double distanceKm) {
+    const speedKmh = 50.0;
+    final hours = distanceKm / speedKmh;
+    final minutes = (hours * 60).round();
+    return _formatDurationFromMinutes(minutes);
+  }
+
+  String _formatDurationFromSeconds(double seconds) {
+    final minutes = (seconds / 60).round();
+    return _formatDurationFromMinutes(minutes);
+  }
+
+  String _formatDurationFromMinutes(int minutes) {
+    if (minutes < 60) {
+      return '${minutes} min';
+    }
+    final hours = minutes ~/ 60;
+    final remaining = minutes % 60;
+    if (remaining == 0) {
+      return '${hours} hr';
+    }
+    return '${hours} hr ${remaining} min';
   }
 
   void _subscribeToReportUpdates() {
@@ -936,23 +1001,27 @@ class _ReportMapPageState extends State<ReportMapPage>
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Color(0xFF3A8DFF),
-              Color(0xFFE8F2FF),
-              Color(0xFFFFD54A),
-              Color(0xFFFF8A3D),
+              Color(0xFFAC1B22),
+              Color(0xFFE34B3F),
+              Color(0xFFFFC806),
+              Color(0xFFFFE6A8),
             ],
+          ),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.7),
+            width: 1.2,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.18),
-              blurRadius: 10,
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 12,
               offset: const Offset(0, 4),
             ),
           ],
         ),
         child: Icon(
           _weatherIcon(_weatherData?.state ?? WeatherState.cloudy),
-          color: const Color(0xFF1F2933),
+          color: Colors.white,
         ),
       ),
     );
@@ -1365,6 +1434,40 @@ class _ReportMapPageState extends State<ReportMapPage>
                           ? 'Video'
                           : 'Photo',
                     ),
+                  if ((reportData['incidentType'] ?? '')
+                          .toString()
+                          .toUpperCase() ==
+                      'VEHICULAR') ...[
+                    const SizedBox(height: 8),
+                    _detailRow(
+                      'Plate Number',
+                      reportData['vehiclePlateNumber'] ?? 'Not provided',
+                    ),
+                    const SizedBox(height: 8),
+                    _detailRow(
+                      'Body Type',
+                      reportData['vehicleBodyType'] ?? 'Not provided',
+                    ),
+                    const SizedBox(height: 8),
+                    _detailRow(
+                      'Color',
+                      reportData['vehicleColor'] ?? 'Not provided',
+                    ),
+                  ],
+                  if ((reportData['incidentType'] ?? '')
+                          .toString()
+                          .toUpperCase() ==
+                      'FIRE' ||
+                      (reportData['incidentType'] ?? '')
+                              .toString()
+                              .toUpperCase() ==
+                          'FLOOD') ...[
+                    const SizedBox(height: 8),
+                    _detailRow(
+                      'Barangay',
+                      reportData['barangay'] ?? 'Not provided',
+                    ),
+                  ],
                   const SizedBox(height: 20),
                   // Responder Information
                   if (reportData['responderName'] != null ||
@@ -1428,6 +1531,19 @@ class _ReportMapPageState extends State<ReportMapPage>
                               ),
                             ],
                           ),
+                        if (_responderRouteDistanceKm != null ||
+                            _responderRouteEta != null) ...[
+                          const SizedBox(height: 8),
+                          if (_responderRouteDistanceKm != null)
+                            _detailRow(
+                              'Distance',
+                              '${_responderRouteDistanceKm!.toStringAsFixed(1)} km',
+                            ),
+                          if (_responderRouteEta != null) ...[
+                            const SizedBox(height: 8),
+                            _detailRow('ETA', _responderRouteEta!),
+                          ],
+                        ],
                         const SizedBox(height: 20),
                       ],
                     ),
@@ -1996,4 +2112,16 @@ class _ReportMapPageState extends State<ReportMapPage>
 
   @override
   bool get wantKeepAlive => true;
+}
+
+class _RouteResult {
+  const _RouteResult({
+    required this.points,
+    required this.distanceMeters,
+    required this.durationSeconds,
+  });
+
+  final List<LatLng> points;
+  final double distanceMeters;
+  final double durationSeconds;
 }

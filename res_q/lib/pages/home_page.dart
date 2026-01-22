@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -67,8 +68,31 @@ class _MainPageState extends State<MainPage> {
   }
 }
 
-class _HomePageContent extends StatelessWidget {
+class _HomePageContent extends StatefulWidget {
   const _HomePageContent();
+
+  @override
+  State<_HomePageContent> createState() => _HomePageContentState();
+}
+
+class _HomePageContentState extends State<_HomePageContent>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _borderController;
+
+  @override
+  void initState() {
+    super.initState();
+    _borderController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _borderController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -125,51 +149,82 @@ class _HomePageContent extends StatelessWidget {
                       color: const Color(0xFFF7F8F3),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: GridView.count(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisCount: 2,
-                      crossAxisSpacing: 16,
-                      mainAxisSpacing: 16,
-                      childAspectRatio: 1.05,
-                      children: [
-                        _incidentCard(
-                          context,
-                          "EARTHQUAKE",
-                          "assets/icons/FINAL-EARTHQUAKE-ICON.png",
-                          fontSize: 19.0, // Larger
-                        ),
-                        _incidentCard(
-                          context,
-                          "FLOOD",
-                          "assets/icons/FINAL-FLOOD-ICON.png",
-                          fontSize: 22.0, // Larger
-                        ),
-                        _incidentCard(
-                          context,
-                          "FIRE",
-                          "assets/icons/FINAL-FIRE-ICON.png",
-                          fontSize: 22.0, // Larger
-                        ),
-                        _incidentCard(
-                          context,
-                          "VEHICULAR",
-                          "assets/icons/FINAL-CRASH-ICON.png",
-                          fontSize: 20.0, // Larger
-                        ),
-                        _incidentCard(
-                          context,
-                          "ROAD OBSTRUCTION",
-                          "assets/icons/FINAL-ROAD-ICON.png",
-                          fontSize: 12.0, // Smaller (longer text)
-                        ),
-                        _incidentCard(
-                          context,
-                          "OTHERS",
-                          "assets/icons/FINAL-OTHERS-ICON.png",
-                          fontSize: 20.0, // Larger
-                        ),
-                      ],
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final itemWidth = (constraints.maxWidth - 16) / 2;
+                        final itemHeight = itemWidth / 1.05;
+                        return Column(
+                          children: [
+                            Row(
+                              children: [
+                                SizedBox(
+                                  width: itemWidth,
+                                  height: itemHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "EARTHQUAKE",
+                                    "assets/icons/FINAL-EARTHQUAKE-ICON.png",
+                                    fontSize: 19.0,
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                SizedBox(
+                                  width: itemWidth,
+                                  height: itemHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "FLOOD",
+                                    "assets/icons/FINAL-FLOOD-ICON.png",
+                                    fontSize: 22.0,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                SizedBox(
+                                  width: itemWidth,
+                                  height: itemHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "FIRE",
+                                    "assets/icons/FINAL-FIRE-ICON.png",
+                                    fontSize: 22.0,
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                SizedBox(
+                                  width: itemWidth,
+                                  height: itemHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "VEHICULAR",
+                                    "assets/icons/FINAL-CRASH-ICON.png",
+                                    fontSize: 20.0,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: itemWidth,
+                                  height: itemHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "OTHERS",
+                                    "assets/icons/FINAL-OTHERS-ICON.png",
+                                    fontSize: 20.0,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
 
@@ -186,27 +241,20 @@ class _HomePageContent extends StatelessWidget {
                         ),
                       );
                     },
-                    child: Container(
-                      width: 130,
-                      height: 130,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: const Color(0xFFAC1B22),
-                        border: Border.all(
-                          color: const Color(0xFFFFC806),
-                          width: 9,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.3),
-                            spreadRadius: 2,
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
+                    child: _buildAnimatedBorder(
+                      borderRadius: BorderRadius.circular(999),
+                      borderWidth: 9,
+                      isCircle: true,
+                      child: const SizedBox(
+                        width: 130,
+                        height: 130,
+                        child: Center(
+                          child: Icon(
+                            Icons.phone,
+                            size: 70,
+                            color: Colors.white,
                           ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Icon(Icons.phone, size: 70, color: Colors.white),
+                        ),
                       ),
                     ),
                   ),
@@ -238,20 +286,9 @@ class _HomePageContent extends StatelessWidget {
             ),
           );
         },
-        child: Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFAC1B22),
-            borderRadius: BorderRadius.circular(40),
-            border: Border.all(color: const Color(0xFFFFC806), width: 6),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.25),
-                spreadRadius: 2,
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
+        child: _buildAnimatedBorder(
+          borderRadius: BorderRadius.circular(40),
+          borderWidth: 6,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -292,4 +329,50 @@ class _HomePageContent extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildAnimatedBorder({
+    required BorderRadius borderRadius,
+    required double borderWidth,
+    required Widget child,
+    bool isCircle = false,
+  }) {
+    return AnimatedBuilder(
+      animation: _borderController,
+      builder: (context, _) {
+        final angle = _borderController.value * 2 * math.pi;
+        return Container(
+          decoration: BoxDecoration(
+            shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
+            borderRadius: isCircle ? null : borderRadius,
+            gradient: SweepGradient(
+              colors: const [
+                Color(0xFFFFC806),
+                Color(0xFFFFE27A),
+                Color(0xFFFFC806),
+              ],
+              transform: GradientRotation(angle),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.25),
+                spreadRadius: 2,
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          padding: EdgeInsets.all(borderWidth),
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFFAC1B22),
+              shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
+              borderRadius: isCircle ? null : borderRadius,
+            ),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+
 }

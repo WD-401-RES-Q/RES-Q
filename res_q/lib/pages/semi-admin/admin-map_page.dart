@@ -253,23 +253,27 @@ class _AdminMapPageState extends State<AdminMapPage>
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Color(0xFF3A8DFF),
-              Color(0xFFE8F2FF),
-              Color(0xFFFFD54A),
-              Color(0xFFFF8A3D),
+              Color(0xFFAC1B22),
+              Color(0xFFE34B3F),
+              Color(0xFFFFC806),
+              Color(0xFFFFE6A8),
             ],
+          ),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.7),
+            width: 1.2,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.18),
-              blurRadius: 10,
+              color: Colors.black.withOpacity(0.2),
+              blurRadius: 12,
               offset: const Offset(0, 4),
             ),
           ],
         ),
         child: Icon(
           _weatherIcon(_weatherData?.state ?? WeatherState.cloudy),
-          color: const Color(0xFF1F2933),
+          color: Colors.white,
         ),
       ),
     );
@@ -842,6 +846,13 @@ class _AdminMapPageState extends State<AdminMapPage>
         activeData['description'] as String? ??
         '';
     final contactNumber = activeData['contactNumber'] as String? ?? 'Unknown';
+    final vehiclePlateNumber =
+        activeData['vehiclePlateNumber'] as String? ?? 'Not provided';
+    final vehicleBodyType =
+        activeData['vehicleBodyType'] as String? ?? 'Not provided';
+    final vehicleColor =
+        activeData['vehicleColor'] as String? ?? 'Not provided';
+    final barangay = activeData['barangay'] as String? ?? 'Not provided';
     final reportedAt = activeData['reportedAt'];
     String? reportedAtLabel;
     if (reportedAt is Timestamp) {
@@ -851,6 +862,9 @@ class _AdminMapPageState extends State<AdminMapPage>
     }
     final mediaUrl = activeData['mediaUrl'] as String?;
     final mediaType = (activeData['mediaType'] as String?)?.toLowerCase();
+    final incidentUpper = incidentType.toUpperCase();
+    final isVehicular = incidentUpper == 'VEHICULAR';
+    final isFireOrFlood = incidentUpper == 'FIRE' || incidentUpper == 'FLOOD';
     _activeReportId = reportId;
     _destination = position;
     final initialStatus = _normalizeStatusLabel(
@@ -1031,6 +1045,46 @@ class _AdminMapPageState extends State<AdminMapPage>
                       color: Color(0xFF4B5563),
                     ),
                   ),
+                  if (isVehicular) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Plate Number: $vehiclePlateNumber',
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 12,
+                        color: Color(0xFF4B5563),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Body Type: $vehicleBodyType',
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 12,
+                        color: Color(0xFF4B5563),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Color: $vehicleColor',
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 12,
+                        color: Color(0xFF4B5563),
+                      ),
+                    ),
+                  ],
+                  if (isFireOrFlood) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      'Barangay: $barangay',
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 12,
+                        color: Color(0xFF4B5563),
+                      ),
+                    ),
+                  ],
                   if (reportedAtLabel != null) ...[
                     const SizedBox(height: 6),
                     Text(
@@ -1416,7 +1470,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       'https://router.project-osrm.org/route/v1/driving/'
       '${start.longitude},${start.latitude};'
       '${end.longitude},${end.latitude}'
-      '?overview=simplified&geometries=geojson',
+      '?overview=full&geometries=geojson&alternatives=true',
     );
     final response = await http.get(uri);
     if (response.statusCode != 200) {
@@ -1427,7 +1481,15 @@ class _AdminMapPageState extends State<AdminMapPage>
     if (routes == null || routes.isEmpty) {
       return null;
     }
-    final route = routes.first as Map<String, dynamic>;
+    final route = routes
+        .whereType<Map<String, dynamic>>()
+        .reduce((best, current) {
+      final bestDistance =
+          (best['distance'] as num?)?.toDouble() ?? double.maxFinite;
+      final currentDistance =
+          (current['distance'] as num?)?.toDouble() ?? double.maxFinite;
+      return currentDistance < bestDistance ? current : best;
+    });
     final geometry = route['geometry'] as Map<String, dynamic>?;
     final coords = geometry?['coordinates'] as List<dynamic>?;
     if (coords == null || coords.isEmpty) {
