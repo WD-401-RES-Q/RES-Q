@@ -1,4 +1,4 @@
-package com.example.res_q
+package com.resqteam.res_q
 
 import io.flutter.embedding.android.FlutterActivity
 

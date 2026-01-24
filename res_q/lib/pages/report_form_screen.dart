@@ -39,7 +39,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   XFile? _capturedMedia;
   final ImagePicker _picker = ImagePicker();
   bool _submitting = false;
-  int _navIndex = 1;
+  int _navIndex = 0;
 
   @override
   void initState() {
@@ -697,23 +697,39 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
             child: Column(
               children: [
-                // Logo - Tap to go back to home
-                GestureDetector(
-                  onTap: () {
-                    Navigator.pop(context);
-                  },
-                  child: SizedBox(
-                    height: 50,
-                    child: SvgPicture.asset(
-                      "assets/icons/RESQ-LOGO.svg",
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) => const Icon(
-                        Icons.image_not_supported,
-                        size: 30,
-                        color: Colors.blue,
+                // Back button + logo row
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(
+                        Icons.arrow_back_ios_new,
+                        color: Color(0xFFAC1B22),
                       ),
                     ),
-                  ),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: SizedBox(
+                          height: 50,
+                          child: Align(
+                            alignment: Alignment.center,
+                            child: SvgPicture.asset(
+                              "assets/icons/RESQ-LOGO.svg",
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) =>
+                                  const Icon(
+                                    Icons.image_not_supported,
+                                    size: 30,
+                                    color: Colors.blue,
+                                  ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 48),
+                  ],
                 ),
 
                 const SizedBox(height: 32),
@@ -1038,8 +1054,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           setState(() {
             _navIndex = index;
           });
-          // Navigate back to MainPage
-          Navigator.pushReplacementNamed(context, '/main');
+          // Navigate back to MainPage with selected tab
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => MainPage(initialIndex: index),
+            ),
+          );
         },
       ),
     );

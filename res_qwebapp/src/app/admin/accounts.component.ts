@@ -1,6 +1,7 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FirestoreService } from '../firestore.service';
+import { FirebaseStorageService } from '../firebase-storage.service';
 import { Subscription, Observable } from 'rxjs';
 
 interface Account {
@@ -30,9 +31,14 @@ export class AccountsComponent implements OnInit, OnDestroy {
   selected: Account | null = null;
   showBanModal = false;
   accountToBan: Account | null = null;
+  showIdModal = false;
+  idModalUrl: string | null = null;
   private subscription?: Subscription;
 
-  constructor(private firestoreService: FirestoreService) {
+  constructor(
+    private firestoreService: FirestoreService,
+    private firebaseStorageService: FirebaseStorageService
+  ) {
     console.log('AccountsComponent constructor called');
     // Expose the observables directly
     this.accounts$ = this.firestoreService.approvedUsers$;
@@ -104,6 +110,20 @@ export class AccountsComponent implements OnInit, OnDestroy {
     this.accountToBan = null;
   }
 
+  openIdModal(account: Account) {
+    const url = this.getIdPhotoUrl(account);
+    if (!url) {
+      return;
+    }
+    this.idModalUrl = url;
+    this.showIdModal = true;
+  }
+
+  closeIdModal() {
+    this.showIdModal = false;
+    this.idModalUrl = null;
+  }
+
   async confirmBan() {
     if (!this.accountToBan) return;
     
@@ -116,5 +136,16 @@ export class AccountsComponent implements OnInit, OnDestroy {
 
   trackById(_: number, acc: Account) {
     return acc.id;
+  }
+
+  getIdPhotoUrl(account: Account): string | null {
+    const path = (account.idPhotoPath || '').trim();
+    if (!path) {
+      return null;
+    }
+    if (path.startsWith('http')) {
+      return path;
+    }
+    return this.firebaseStorageService.getDownloadUrl(path);
   }
 }

@@ -35,25 +35,25 @@ export class AuthService {
         adminsRef,
         where('username', '==', username),
         where('password', '==', password),
-          where('role', '==', 'admin')
+        where('role', '==', 'admin')
       );
-      
+
       const querySnapshot = await getDocs(q);
-      
+
       if (!querySnapshot.empty) {
         const adminDoc = querySnapshot.docs[0];
         const adminData = {
           id: adminDoc.id,
           ...adminDoc.data()
         } as Admin;
-        
+
         // Store admin data
         this.currentAdminSignal.set(adminData);
         localStorage.setItem('currentAdmin', JSON.stringify(adminData));
-        
+
         return true;
       }
-      
+
       return false;
     } catch (error) {
       console.error('Login error:', error);

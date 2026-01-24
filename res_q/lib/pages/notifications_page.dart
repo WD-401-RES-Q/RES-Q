@@ -1,5 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 
 class NotificationsPage extends StatelessWidget {
   const NotificationsPage({super.key});
@@ -10,30 +12,190 @@ class NotificationsPage extends StatelessWidget {
   static const appBlack = Color(0xFF212121);
   static const appWhite = Color(0xFFF7F8F3);
 
-  // sample data
-  List<Map<String, String>> _sampleNotifications() => [
-    {
-      'image': 'assets/images/NOTIF-1.png',
-      'date': 'OCT 12 2025',
-      'desc':
-          'As we celebrate Fiestang La Naval, may our city be filled with joy, unity, and gratitude. Let us honor the traditions and culture that shape Angeles city and...',
-    },
-    {
-      'image': 'assets/images/NOTIF-2.png',
-      'date': 'NOV 23 2025',
-      'desc': 'Flood advisory issued for low-lying areas.',
-    },
-    {
-      'image': 'assets/images/NOTIF-3.png',
-      'date': 'NOV 20 2025',
-      'desc': 'Fire contained — avoid the industrial park.',
-    },
-  ];
+  void _showImageZoom(BuildContext context, String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          backgroundColor: Colors.transparent,
+          child: Stack(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: InteractiveViewer(
+                    minScale: 1,
+                    maxScale: 4,
+                    child: Image.network(
+                      imageUrl,
+                      fit: BoxFit.contain,
+                      loadingBuilder: (context, child, loadingProgress) {
+                        if (loadingProgress == null) return child;
+                        return const SizedBox(
+                          height: 260,
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          ),
+                        );
+                      },
+                      errorBuilder: (context, error, stackTrace) {
+                        return const SizedBox(
+                          height: 260,
+                          child: Center(
+                            child: Icon(
+                              Icons.error_outline,
+                              color: Colors.white,
+                              size: 48,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.6),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.close, color: Colors.white),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showAnnouncementDialog(
+    BuildContext context,
+    Map<String, dynamic> data,
+  ) {
+    final title = (data['title'] as String?) ?? '';
+    final content = (data['content'] as String?) ?? '';
+    final imageUrl = (data['imageUrl'] as String?) ?? '';
+    final ts = data['createdAt'];
+    DateTime date = DateTime.now();
+    if (ts is Timestamp) {
+      date = ts.toDate();
+    } else if (ts is DateTime) {
+      date = ts;
+    }
+    final dateText = DateFormat('MMM d yyyy').format(date);
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: FractionallySizedBox(
+            widthFactor: 0.95,
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                  if (imageUrl.isNotEmpty)
+                    GestureDetector(
+                      onTap: () => _showImageZoom(context, imageUrl),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: SizedBox(
+                          height: 180,
+                          width: double.infinity,
+                          child: Image.network(
+                            imageUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) {
+                              return const Center(
+                                child: Icon(
+                                  Icons.error_outline,
+                                  color: appBlack,
+                                  size: 48,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (imageUrl.isNotEmpty) const SizedBox(height: 12),
+                  Text(
+                    title.isNotEmpty ? title : 'Announcement',
+                    style: GoogleFonts.poppins(
+                      fontSize: 16,
+                      color: appBlack,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    dateText.toUpperCase(),
+                    style: GoogleFonts.poppins(
+                      fontSize: 12,
+                      color: appBlack.withOpacity(0.7),
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (content.isNotEmpty)
+                    Text(
+                      content,
+                      style: GoogleFonts.poppins(
+                        fontSize: 13,
+                        color: appBlack,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text(
+                        'CLOSE',
+                        style: TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontWeight: FontWeight.w600,
+                          color: appBlue,
+                        ),
+                      ),
+                    ),
+                  ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final items = _sampleNotifications();
-
     return Container(
       color: appWhite, // background using official off-white
       child: Padding(
@@ -41,17 +203,17 @@ class NotificationsPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ───────── TITLE ─────────
+            // TITLE
             Center(
               child: RichText(
                 textAlign: TextAlign.center,
-                text: TextSpan(
+                text: const TextSpan(
                   style: TextStyle(
                     fontSize: 45,
                     fontWeight: FontWeight.w900,
                     fontFamily: 'Roboto',
                   ),
-                  children: const [
+                  children: [
                     TextSpan(
                       text: 'N',
                       style: TextStyle(color: appBlue),
@@ -71,77 +233,164 @@ class NotificationsPage extends StatelessWidget {
 
             const SizedBox(height: 12),
 
-            // ───────── LIST ─────────
+            // LIST
             Expanded(
-              child: ListView.separated(
-                itemCount: items.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 16),
-                itemBuilder: (context, index) {
-                  final it = items[index];
-
-                  return Center(
-                    child: Container(
-                      width: 343,
-                      height: 303,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: appBlack.withOpacity(0.2)),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.12),
-                            blurRadius: 12,
-                            spreadRadius: 1,
-                            offset: const Offset(0, 6),
-                          ),
-                        ],
+              child: StreamBuilder<QuerySnapshot>(
+                stream:
+                    FirebaseFirestore.instance
+                        .collection('announcements')
+                        .orderBy('createdAt', descending: true)
+                        .snapshots(),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                      child: CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation<Color>(appBlue),
                       ),
-                      clipBehavior: Clip.hardEdge,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // top image
-                          SizedBox(
-                            width: double.infinity,
-                            height: 160,
-                            child: Image.asset(it['image']!, fit: BoxFit.cover),
-                          ),
+                    );
+                  }
 
-                          const SizedBox(height: 12),
-
-                          // date
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12.0,
-                            ),
-                            child: Text(
-                              it['date']!,
-                              style: GoogleFonts.poppins(
-                                fontSize: 14,
-                                color: appBlack,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 8),
-
-                          // description
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12.0,
-                            ),
-                            child: Text(
-                              it['desc']!,
-                              style: GoogleFonts.poppins(
-                                fontSize: 12,
-                                color: appBlack.withOpacity(0.9),
-                              ),
-                            ),
-                          ),
-                        ],
+                  if (snapshot.hasError) {
+                    debugPrint(
+                      'NotificationsPage error: ${snapshot.error}',
+                    );
+                    return Center(
+                      child: Text(
+                        'Failed to load announcements.',
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                          color: appBlack.withOpacity(0.7),
+                        ),
                       ),
-                    ),
+                    );
+                  }
+
+                  final docs = snapshot.data?.docs ?? [];
+                  debugPrint(
+                    'NotificationsPage announcements fetched: ${docs.length}',
+                  );
+                  final visibleDocs =
+                      docs.where((doc) {
+                        final data = doc.data() as Map<String, dynamic>;
+                        return data['isPlaceholder'] != true;
+                      }).toList();
+                  debugPrint(
+                    'NotificationsPage visible announcements: ${visibleDocs.length}',
+                  );
+                  if (visibleDocs.isEmpty) {
+                    debugPrint('Announcements collection initialized: ${docs.isNotEmpty}');
+                    return Center(
+                      child: Text(
+                        'No announcements yet.',
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                          color: appBlack.withOpacity(0.7),
+                        ),
+                      ),
+                    );
+                  }
+
+                  return ListView.separated(
+                    itemCount: visibleDocs.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 16),
+                    itemBuilder: (context, index) {
+                      final data =
+                          visibleDocs[index].data() as Map<String, dynamic>;
+                      final title = (data['title'] as String?) ?? '';
+                      final content = (data['content'] as String?) ?? '';
+                      final imageUrl = (data['imageUrl'] as String?) ?? '';
+                      final ts = data['createdAt'];
+                      DateTime date = DateTime.now();
+                      if (ts is Timestamp) {
+                        date = ts.toDate();
+                      } else if (ts is DateTime) {
+                        date = ts;
+                      }
+                      final dateText = DateFormat('MMM d yyyy').format(date);
+                      final contentPadding = EdgeInsets.symmetric(
+                        horizontal: 14.0,
+                        vertical: 12.0,
+                      );
+
+                      return Center(
+                        child: GestureDetector(
+                          onTap: () => _showAnnouncementDialog(context, data),
+                          child: Container(
+                            width: 343,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: appBlack.withOpacity(0.2),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.12),
+                                  blurRadius: 12,
+                                  spreadRadius: 1,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                            clipBehavior: Clip.hardEdge,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (imageUrl.isNotEmpty)
+                                  SizedBox(
+                                    width: double.infinity,
+                                    height: 160,
+                                    child: Image.network(
+                                      imageUrl,
+                                      fit: BoxFit.cover,
+                                    ),
+                                  ),
+                                Padding(
+                                  padding: contentPadding,
+                                  child: Text(
+                                    title.isNotEmpty ? title : content,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 14,
+                                      color: appBlack,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Padding(
+                                  padding: contentPadding.copyWith(top: 0),
+                                  child: Text(
+                                    dateText.toUpperCase(),
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 12,
+                                      color: appBlack.withOpacity(0.7),
+                                      fontWeight: FontWeight.w400,
+                                    ),
+                                  ),
+                                ),
+                                if (title.isNotEmpty && content.isNotEmpty)
+                                  Padding(
+                                    padding: contentPadding.copyWith(top: 0),
+                                    child: Text(
+                                      content,
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 12,
+                                        color: appBlack.withOpacity(0.75),
+                                        fontWeight: FontWeight.w400,
+                                      ),
+                                    ),
+                                  ),
+                                const SizedBox(height: 12),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   );
                 },
               ),

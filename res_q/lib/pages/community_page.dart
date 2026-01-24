@@ -22,6 +22,7 @@ class _CommunityPageState extends State<CommunityPage> {
   static const appYellow = Color(0xFFFFC806); // Yellow for under review
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
+  static const commentBlue = Color(0xFF2563EB);
   static const statusGreen = Color(0xFF00A458); // Approved
   static const statusYellow = Color(0xFFFFC806); // Under Review
   static const statusRed = Color(0xFFAC1B22); // Flagged
@@ -35,6 +36,7 @@ class _CommunityPageState extends State<CommunityPage> {
   @override
   void initState() {
     super.initState();
+    _selectedFilter = _normalizeFilter(_selectedFilter);
     _subscribeToReports();
     _ensureCommentsCollectionExists(); // Initialize comments collection
   }
@@ -117,12 +119,19 @@ class _CommunityPageState extends State<CommunityPage> {
     } else if (resolvedAtRaw is DateTime) {
       resolvedAt = resolvedAtRaw;
     }
+    final locationText = (data['locationName'] ??
+            data['address'] ??
+            data['barangay'] ??
+            '')
+        .toString()
+        .trim();
 
     return {
       'id': doc.id,
       'image': data['mediaUrl'] ?? '',
       'date': dateFormat.format(reportedAt).toUpperCase(),
       'time': timeFormat.format(reportedAt).toUpperCase(),
+      'location': locationText.isNotEmpty ? locationText : 'Not provided',
       'title': data['incidentType'] ?? 'Unknown',
       'desc': data['details'] ?? 'No description provided.',
       'greenFlags': data['greenFlags'] ?? 0,
@@ -160,15 +169,17 @@ class _CommunityPageState extends State<CommunityPage> {
       }
 
       bool matchesFilter;
-      switch (_selectedFilter) {
-        case 'Verified':
-          matchesFilter = status == 'approved' || status == 'verified';
-          break;
+        switch (_selectedFilter) {
+          case 'Approved':
+            matchesFilter = status == 'approved' ||
+                status == 'resolved' ||
+                status == 'incident resolved';
+            break;
         case 'Under Review':
           matchesFilter = status == 'pending' || status == 'under review';
           break;
-        case 'Unverified':
-          matchesFilter = status == 'flagged' || status == 'unverified';
+        case 'Flagged':
+          matchesFilter = status == 'flagged';
           break;
         default:
           matchesFilter = true;
@@ -180,6 +191,22 @@ class _CommunityPageState extends State<CommunityPage> {
 
       return matchesFilter && matchesCategory;
     }).toList();
+  }
+
+  String _normalizeFilter(String value) {
+    switch (value) {
+      case 'Verified':
+        return 'Approved';
+      case 'Unverified':
+        return 'Flagged';
+      case 'Approved':
+      case 'Under Review':
+      case 'Flagged':
+      case 'All':
+        return value;
+      default:
+        return 'All';
+    }
   }
 
   // ───────────────── DIALOG HELPERS ─────────────────
@@ -444,6 +471,18 @@ class _CommunityPageState extends State<CommunityPage> {
 
   Widget _buildMediaWidget(Map<String, dynamic> report) {
     final mediaUrl = (report['image'] as String? ?? '').trim();
+    final resolvedBy = (report['resolvedBy'] ??
+            report['resolvedByName'] ??
+            report['resolved_by'] ??
+            '')
+        .toString()
+        .trim();
+    final approvedBy = (report['approvedBy'] ??
+            report['approvedByName'] ??
+            report['approved_by'] ??
+            '')
+        .toString()
+        .trim();
     final mediaType = (report['mediaType'] as String? ?? 'photo').toLowerCase();
 
     // Debug: log what we're trying to load
@@ -467,11 +506,19 @@ class _CommunityPageState extends State<CommunityPage> {
       debugPrint('🔗 Converted storage path to download URL: $downloadUrl');
     }
 
-    // Firebase Storage URLs are network images - wrapped in GestureDetector for tap to zoom
-    return GestureDetector(
-      onTap: () => _showImageZoom(downloadUrl),
-      child: _NetworkImageLoader(url: downloadUrl),
-    );
+    // Firebase Storage URLs are network images
+    return _NetworkImageLoader(url: downloadUrl);
+  }
+
+  String _resolveMediaUrl(String mediaUrl) {
+    if (mediaUrl.isEmpty) {
+      return mediaUrl;
+    }
+    if (mediaUrl.startsWith('https')) {
+      return mediaUrl;
+    }
+    final bucket = 'res-q-93ca6.firebasestorage.app';
+    return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(mediaUrl)}?alt=media';
   }
 
   // ───────────────── IMAGE ZOOM DIALOG ─────────────────
@@ -480,6 +527,285 @@ class _CommunityPageState extends State<CommunityPage> {
     showDialog(
       context: context,
       builder: (context) => _ImageZoomDialog(imageUrl: imageUrl),
+    );
+  }
+
+  void _showReportDetailsDialog(Map<String, dynamic> report) {
+    final statusLower = (report['status'] as String? ?? '').toLowerCase();
+    final isResolved =
+        statusLower == 'resolved' || statusLower == 'incident resolved';
+    final mediaUrl = (report['image'] as String? ?? '').trim();
+    final resolvedBy = (report['resolvedBy'] ??
+            report['resolvedByName'] ??
+            report['resolved_by'] ??
+            '')
+        .toString()
+        .trim();
+    final approvedBy = (report['approvedBy'] ??
+            report['approvedByName'] ??
+            report['approved_by'] ??
+            '')
+        .toString()
+        .trim();
+    final sourceIndex = _reports.indexWhere(
+      (item) => item['id'] == report['id'],
+    );
+    final int reportIndex = sourceIndex == -1 ? 0 : sourceIndex;
+    final vote = report['userVote'] as String? ?? 'none';
+    final bool greenSelected = vote == 'green';
+    final bool redSelected = vote == 'red';
+    final Color greenIconColor =
+        greenSelected ? appGreen : appGreen.withOpacity(0.6);
+    final Color redIconColor =
+        redSelected ? appRed : appRed.withOpacity(0.6);
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: FractionallySizedBox(
+            widthFactor: 0.98,
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                  if (mediaUrl.isNotEmpty)
+                    GestureDetector(
+                      onTap: () => _showImageZoom(_resolveMediaUrl(mediaUrl)),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: SizedBox(
+                          height: 180,
+                          width: double.infinity,
+                          child: _buildMediaWidget(report),
+                        ),
+                      ),
+                    ),
+                  if (mediaUrl.isNotEmpty) const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          report['title'] ?? 'Report',
+                          style: const TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            color: appBlack,
+                          ),
+                        ),
+                      ),
+                      if (isResolved)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF4CAF50),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Text(
+                            'RESOLVED',
+                            style: TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'STATUS: ${report['status']}',
+                    style: const TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontSize: 12,
+                      color: appBlack,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'DATE: ${report['date']}',
+                        style: TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 12,
+                          color: appBlack.withOpacity(0.7),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'TIME: ${report['time']}',
+                        style: TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 12,
+                          color: appBlack.withOpacity(0.7),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Reported by: ${report['name'] ?? 'Unknown'}',
+                    style: TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontSize: 12,
+                      color: appBlack.withOpacity(0.8),
+                    ),
+                  ),
+                  if (resolvedBy.isNotEmpty) const SizedBox(height: 6),
+                  if (resolvedBy.isNotEmpty)
+                    Text(
+                      'Resolved by: $resolvedBy',
+                      style: TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontSize: 12,
+                        color: appBlack.withOpacity(0.8),
+                      ),
+                    ),
+                  if (approvedBy.isNotEmpty) const SizedBox(height: 6),
+                  if (approvedBy.isNotEmpty)
+                    Text(
+                      'Approved by: $approvedBy',
+                      style: TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontSize: 12,
+                        color: appBlack.withOpacity(0.8),
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          InkWell(
+                            onTap: () => _onGreenFlagPressed(reportIndex),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.flag,
+                                    size: 18,
+                                    color: greenIconColor,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${report['greenFlags']}',
+                                    style: const TextStyle(
+                                      fontFamily: 'RobotoCondensed',
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          InkWell(
+                            onTap: () => _onRedFlagPressed(reportIndex),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.flag,
+                                    size: 18,
+                                    color: redIconColor,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${report['redFlags']}',
+                                    style: const TextStyle(
+                                      fontFamily: 'RobotoCondensed',
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          InkWell(
+                            onTap: () => _openComments(reportIndex),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 4,
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(
+                                    Icons.comment,
+                                    size: 18,
+                                    color: commentBlue,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${report['comments']}',
+                                    style: const TextStyle(
+                                      fontFamily: 'RobotoCondensed',
+                                      fontSize: 12,
+                                      color: appBlack,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 18,
+                            vertical: 10,
+                          ),
+                          side: const BorderSide(color: appBlue, width: 1.5),
+                          shape: const StadiumBorder(),
+                        ),
+                        child: const Text(
+                          'CLOSE',
+                          style: TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontWeight: FontWeight.w600,
+                            color: appBlue,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -552,7 +878,7 @@ class _CommunityPageState extends State<CommunityPage> {
       reasons: const [
         'False/Misleading Information',
         'Inappropriate Content',
-        'Unverified/Lack of Evidence',
+        'Flagged/Lack of Evidence',
         'Spam/Irrelevant Content',
         'Other...',
       ],
@@ -687,16 +1013,16 @@ class _CommunityPageState extends State<CommunityPage> {
                           items: const [
                             DropdownMenuItem(value: 'All', child: Text('All')),
                             DropdownMenuItem(
-                              value: 'Verified',
-                              child: Text('Verified'),
+                              value: 'Approved',
+                              child: Text('Approved'),
                             ),
                             DropdownMenuItem(
                               value: 'Under Review',
                               child: Text('Under Review'),
                             ),
                             DropdownMenuItem(
-                              value: 'Unverified',
-                              child: Text('Unverified'),
+                              value: 'Flagged',
+                              child: Text('Flagged'),
                             ),
                           ],
                           onChanged: (v) => setState(
@@ -814,254 +1140,290 @@ class _CommunityPageState extends State<CommunityPage> {
                       ? appRed
                       : appRed.withOpacity(0.6);
 
-                  return Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: appBlack.withOpacity(0.25),
-                        width: 1,
+                  return GestureDetector(
+                    onTap: () => _showReportDetailsDialog(report),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: appBlack.withOpacity(0.25),
+                          width: 1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.12),
+                            blurRadius: 12,
+                            spreadRadius: 1,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.12),
-                          blurRadius: 12,
-                          spreadRadius: 1,
-                          offset: const Offset(0, 6),
-                        ),
-                      ],
-                    ),
-                    clipBehavior: Clip.hardEdge,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // IMAGE
-                        SizedBox(
-                          height: 160,
-                          width: double.infinity,
-                          child: _buildMediaWidget(report),
-                        ),
+                      clipBehavior: Clip.hardEdge,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // IMAGE
+                          SizedBox(
+                            height: 160,
+                            width: double.infinity,
+                            child: _buildMediaWidget(report),
+                          ),
 
-                        const SizedBox(height: 12),
+                          const SizedBox(height: 12),
 
-                        // STATUS + DATE/TIME
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 10,
-                                    height: 10,
+                          // STATUS + DATE/TIME
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12.0,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    Container(
+                                      width: 10,
+                                      height: 10,
+                                      decoration: BoxDecoration(
+                                        color:
+                                            statusLower == 'resolved' ||
+                                                    statusLower ==
+                                                        'incident resolved'
+                                                ? const Color(0xFF4CAF50)
+                                                : statusLower == 'approved'
+                                                ? statusGreen
+                                                : statusLower == 'flagged' ||
+                                                        statusLower ==
+                                                            'flagged'
+                                                ? statusRed
+                                                : statusYellow,
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      statusLower == 'resolved' ||
+                                              statusLower ==
+                                                  'incident resolved'
+                                          ? 'Approved'
+                                          : report['status'],
+                                      style: TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w400,
+                                        color:
+                                            statusLower == 'resolved' ||
+                                                    statusLower ==
+                                                        'incident resolved'
+                                                ? const Color(0xFF4CAF50)
+                                                : statusLower == 'approved'
+                                                ? statusGreen
+                                                : statusLower == 'flagged' ||
+                                                        statusLower ==
+                                                            'flagged'
+                                                ? statusRed
+                                                : statusYellow,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    if (statusLower == 'resolved' ||
+                                        statusLower == 'incident resolved')
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF4CAF50),
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                        ),
+                                        child: const Text(
+                                          'RESOLVED',
+                                          style: TextStyle(
+                                            fontFamily: 'RobotoCondensed',
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w700,
+                                            color: Colors.white,
+                                            letterSpacing: 0.5,
+                                          ),
+                                        ),
+                                      ),
+                                    if (statusLower == 'resolved' ||
+                                        statusLower == 'incident resolved')
+                                      const SizedBox(height: 6),
+                                    Text(
+                                      'DATE: ${report['date']}',
+                                      style: const TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w400,
+                                        color: appBlack,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'TIME: ${report['time']}',
+                                      style: const TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w400,
+                                        color: appBlack,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(height: 8),
+
+                          // TITLE
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12.0,
+                            ),
+                            child: Text(
+                              report['title'],
+                              style: const TextStyle(
+                                fontFamily: 'Roboto',
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                color: appBlack,
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 6),
+
+                          // DESCRIPTION
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12.0,
+                            ),
+                            child: Text(
+                              report['desc'],
+                              style: const TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontSize: 16,
+                                fontWeight: FontWeight.w400,
+                                color: appBlack,
+                              ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 12),
+
+                          // FLAGS + COMMENTS
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12.0,
+                              vertical: 4,
+                            ),
+                            child: Row(
+                              children: [
+                                // GREEN FLAG + count
+                                InkWell(
+                                  onTap: () => _onGreenFlagPressed(reportIndex),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Container(
                                     decoration: BoxDecoration(
-                                      color:
-                                          statusLower == 'resolved' ||
-                                                  statusLower ==
-                                                      'incident resolved'
-                                          ? const Color(0xFF4CAF50)
-                                          :
-                                          statusLower == 'approved' ||
-                                              statusLower == 'verified'
-                                          ? statusGreen
-                                          : statusLower == 'flagged' ||
-                                                statusLower == 'unverified'
-                                          ? statusRed
-                                          : statusYellow,
-                                      shape: BoxShape.circle,
+                                      color: greenSelected
+                                          ? appGreen.withOpacity(1)
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(8),
                                     ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    report['status'],
-                                    style: TextStyle(
-                                      fontFamily: 'RobotoCondensed',
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w400,
-                                      color:
-                                          statusLower == 'resolved' ||
-                                                  statusLower ==
-                                                      'incident resolved'
-                                          ? const Color(0xFF4CAF50)
-                                          :
-                                          statusLower == 'approved' ||
-                                              statusLower == 'verified'
-                                          ? statusGreen
-                                          : statusLower == 'flagged' ||
-                                                statusLower == 'unverified'
-                                          ? statusRed
-                                          : statusYellow,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 4,
                                     ),
-                                  ),
-                                ],
-                              ),
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
-                                children: [
-                                  Text(
-                                    'DATE: ${report['date']}',
-                                    style: const TextStyle(
-                                      fontFamily: 'RobotoCondensed',
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w400,
-                                      color: appBlack,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'TIME: ${report['time']}',
-                                    style: const TextStyle(
-                                      fontFamily: 'RobotoCondensed',
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w400,
-                                      color: appBlack,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        // TITLE
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                          child: Text(
-                            report['title'],
-                            style: const TextStyle(
-                              fontFamily: 'Roboto',
-                              fontSize: 18,
-                              fontWeight: FontWeight.w900,
-                              color: appBlack,
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 6),
-
-                        // DESCRIPTION
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                          child: Text(
-                            report['desc'],
-                            style: const TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 16,
-                              fontWeight: FontWeight.w400,
-                              color: appBlack,
-                            ),
-                          ),
-                        ),
-
-                        const SizedBox(height: 12),
-
-                        // FLAGS + COMMENTS
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12.0,
-                            vertical: 4,
-                          ),
-                          child: Row(
-                            children: [
-                              // GREEN FLAG + count
-                              InkWell(
-                                onTap: () => _onGreenFlagPressed(reportIndex),
-                                borderRadius: BorderRadius.circular(8),
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: greenSelected
-                                        ? appGreen.withOpacity(1)
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 4,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.flag,
-                                        size: 22,
-                                        color: greenIconColor,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        '${report['greenFlags']}',
-                                        style: const TextStyle(
-                                          fontFamily: 'RobotoCondensed',
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w400,
-                                          color: appBlack,
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.flag,
+                                          size: 22,
+                                          color: greenIconColor,
                                         ),
-                                      ),
-                                    ],
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          '${report['greenFlags']}',
+                                          style: const TextStyle(
+                                            fontFamily: 'RobotoCondensed',
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w400,
+                                            color: appBlack,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
 
-                              const SizedBox(width: 20),
+                                const SizedBox(width: 20),
 
-                              // RED FLAG + count
-                              InkWell(
-                                onTap: () => _onRedFlagPressed(reportIndex),
-                                borderRadius: BorderRadius.circular(8),
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: redSelected
-                                        ? appRed.withOpacity(1)
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 4,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        Icons.flag,
-                                        size: 22,
-                                        color: redIconColor,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        '${report['redFlags']}',
-                                        style: const TextStyle(
-                                          fontFamily: 'RobotoCondensed',
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w400,
-                                          color: appBlack,
+                                // RED FLAG + count
+                                InkWell(
+                                  onTap: () => _onRedFlagPressed(reportIndex),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: redSelected
+                                          ? appRed.withOpacity(1)
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 4,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.flag,
+                                          size: 22,
+                                          color: redIconColor,
                                         ),
-                                      ),
-                                    ],
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          '${report['redFlags']}',
+                                          style: const TextStyle(
+                                            fontFamily: 'RobotoCondensed',
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w400,
+                                            color: appBlack,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
 
-                              const SizedBox(width: 20),
+                                const SizedBox(width: 20),
 
-                              // COMMENTS
-                              InkWell(
-                                onTap: () => _openComments(reportIndex),
-                                borderRadius: BorderRadius.circular(8),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 4,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.comment,
-                                        size: 22,
-                                        color: appBlue,
-                                      ),
-                                      const SizedBox(width: 6),
+                                // COMMENTS
+                                InkWell(
+                                  onTap: () => _openComments(reportIndex),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                      vertical: 4,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.comment,
+                                          size: 22,
+                                          color: commentBlue,
+                                        ),
+                                        const SizedBox(width: 6),
                                       Text(
                                         '${report['comments']}',
                                         style: const TextStyle(
@@ -1071,16 +1433,17 @@ class _CommunityPageState extends State<CommunityPage> {
                                           color: appBlack,
                                         ),
                                       ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
 
-                        const SizedBox(height: 8),
-                      ],
+                          const SizedBox(height: 8),
+                        ],
+                      ),
                     ),
                   );
                 },
@@ -1113,6 +1476,7 @@ class _CommentsPageState extends State<_CommentsPage> {
   static const appYellow = Color(0xFFFFC806);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
+  static const commentBlue = Color(0xFF2563EB);
 
   final TextEditingController _commentController = TextEditingController();
   String _commentFilter = 'All Comments';
@@ -1667,6 +2031,7 @@ class _CommentsPageState extends State<_CommentsPage> {
                             Text(
                               comment['text'],
                               style: const TextStyle(
+                                inherit: false,
                                 fontFamily: 'RobotoCondensed',
                                 fontSize: 13,
                                 fontWeight: FontWeight.w400,
@@ -1858,94 +2223,79 @@ class _CommentsPageState extends State<_CommentsPage> {
 // IMAGE ZOOM DIALOG
 // ═══════════════════════════════════════════════════════════════════════════
 
-class _ImageZoomDialog extends StatefulWidget {
+class _ImageZoomDialog extends StatelessWidget {
   final String imageUrl;
 
   const _ImageZoomDialog({required this.imageUrl});
 
   @override
-  State<_ImageZoomDialog> createState() => _ImageZoomDialogState();
-}
-
-class _ImageZoomDialogState extends State<_ImageZoomDialog> {
-  double _scale = 1.0;
-  double _baseScale = 1.0;
-
-  @override
   Widget build(BuildContext context) {
     return Dialog(
-      backgroundColor: Colors.black.withOpacity(0.9),
-      insetPadding: EdgeInsets.zero,
-      child: GestureDetector(
-        onScaleStart: (details) {
-          _baseScale = _scale;
-        },
-        onScaleUpdate: (details) {
-          setState(() {
-            _scale = (_baseScale * details.scale).clamp(1.0, 3.0);
-          });
-        },
-        child: Stack(
-          children: [
-            // ZOOMED IMAGE
-            Center(
+      insetPadding: const EdgeInsets.all(16),
+      backgroundColor: Colors.transparent,
+      child: Stack(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
               child: InteractiveViewer(
                 minScale: 1.0,
-                maxScale: 3.0,
+                maxScale: 4.0,
                 child: Image.network(
-                  widget.imageUrl,
+                  imageUrl,
                   fit: BoxFit.contain,
                   filterQuality: FilterQuality.high,
                   loadingBuilder: (context, child, loadingProgress) {
                     if (loadingProgress == null) {
                       return child;
                     }
-                    return Center(
-                      child: CircularProgressIndicator(
-                        value: loadingProgress.expectedTotalBytes != null
-                            ? loadingProgress.cumulativeBytesLoaded /
-                                  (loadingProgress.expectedTotalBytes ?? 1)
-                            : null,
-                        valueColor: const AlwaysStoppedAnimation<Color>(
-                          Colors.white,
+                    return const SizedBox(
+                      height: 260,
+                      child: Center(
+                        child: CircularProgressIndicator(
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(Colors.white),
                         ),
                       ),
                     );
                   },
                   errorBuilder: (context, error, stackTrace) {
-                    return const Center(
-                      child: Icon(
-                        Icons.error_outline,
-                        color: Colors.white,
-                        size: 48,
+                    return const SizedBox(
+                      height: 260,
+                      child: Center(
+                        child: Icon(
+                          Icons.error_outline,
+                          color: Colors.white,
+                          size: 48,
+                        ),
                       ),
                     );
                   },
                 ),
               ),
             ),
-
-            // CLOSE BUTTON
-            Positioned(
-              top: 16,
-              right: 16,
-              child: GestureDetector(
-                onTap: () => Navigator.pop(context),
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.6),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Center(
-                    child: Icon(Icons.close, color: Colors.white, size: 28),
-                  ),
+          ),
+          Positioned(
+            top: 10,
+            right: 10,
+            child: GestureDetector(
+              onTap: () => Navigator.pop(context),
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  shape: BoxShape.circle,
                 ),
+                child: const Icon(Icons.close, color: Colors.white),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

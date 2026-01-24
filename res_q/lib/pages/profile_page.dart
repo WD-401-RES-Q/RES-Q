@@ -1,5 +1,12 @@
+import 'dart:io';
+import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_cropper/image_cropper.dart';
+import 'package:image_picker/image_picker.dart';
+import '../ui/app_theme.dart';
+import '../services/user_session.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -15,6 +22,9 @@ class _ProfilePageState extends State<ProfilePage>
   bool _smsAlerts = false;
   bool _soundEnabled = true;
   bool _vibrationEnabled = true;
+  final ImagePicker _imagePicker = ImagePicker();
+  XFile? _profilePhoto;
+  Uint8List? _profilePhotoBytes;
 
   @override
   bool get wantKeepAlive => true;
@@ -136,6 +146,144 @@ class _ProfilePageState extends State<ProfilePage>
           },
         );
       },
+    );
+  }
+
+  Future<void> _captureProfilePhoto() async {
+    try {
+      final photo = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 80,
+        maxWidth: 1024,
+        maxHeight: 1024,
+      );
+      if (!mounted) return;
+      if (photo != null) {
+        await Future.delayed(const Duration(milliseconds: 200));
+        await _cropProfilePhoto(photo);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to capture profile photo: $e');
+    }
+  }
+
+  Future<void> _pickProfilePhoto() async {
+    try {
+      final photo = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80,
+        maxWidth: 1024,
+        maxHeight: 1024,
+      );
+      if (!mounted) return;
+      if (photo != null) {
+        await Future.delayed(const Duration(milliseconds: 200));
+        await _cropProfilePhoto(photo);
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to pick profile photo: $e');
+    }
+  }
+
+  Future<void> _cropProfilePhoto(XFile photo) async {
+    try {
+      final uiSettings = <PlatformUiSettings>[
+        AndroidUiSettings(
+          toolbarTitle: 'Crop',
+          toolbarColor: const Color(0xFFAC1B22),
+          toolbarWidgetColor: Colors.white,
+          activeControlsWidgetColor: const Color(0xFFAC1B22),
+          lockAspectRatio: true,
+        ),
+        IOSUiSettings(
+          title: 'Crop',
+          aspectRatioLockEnabled: true,
+        ),
+        if (kIsWeb)
+          WebUiSettings(
+            context: context,
+            presentStyle: WebPresentStyle.dialog,
+          ),
+      ];
+
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: photo.path,
+        aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+        compressQuality: 90,
+        uiSettings: uiSettings,
+      );
+
+      if (!mounted || cropped == null) return;
+
+      if (kIsWeb) {
+        final bytes = await cropped.readAsBytes();
+        if (!mounted) return;
+        setState(() {
+          _profilePhotoBytes = bytes;
+          _profilePhoto = XFile(cropped.path);
+        });
+      } else {
+        setState(() => _profilePhoto = XFile(cropped.path));
+      }
+    } catch (e) {
+      debugPrint('⚠️ Failed to crop profile photo: $e');
+    }
+  }
+
+  void _showProfilePhotoOptions() {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: const Color(0xFFF7F8F3),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'PROFILE PICTURE',
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFFAC1B22),
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 40,
+                child: OutlinedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _captureProfilePhoto();
+                  },
+                  style: AppTheme.pillOutlineButtonStyle,
+                  child: const Text(
+                    'CAPTURE NOW',
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 40,
+                child: OutlinedButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _pickProfilePhoto();
+                  },
+                  style: AppTheme.pillOutlineButtonStyle,
+                  child: const Text(
+                    'CHOOSE FROM GALLERY',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -781,6 +929,15 @@ class _ProfilePageState extends State<ProfilePage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final profileName =
+        (UserSession.currentUserData?['fullName'] ??
+                UserSession.currentUserData?['username'] ??
+                '')
+            .toString()
+            .trim();
+    final profileInitial =
+        profileName.isNotEmpty ? profileName[0].toUpperCase() : '?';
+    final hasProfilePhoto = _profilePhotoBytes != null || _profilePhoto != null;
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: SafeArea(
@@ -833,9 +990,51 @@ class _ProfilePageState extends State<ProfilePage>
               const SizedBox(height: 12),
 
               // ───────── PROFILE AVATAR ─────────
-              const CircleAvatar(
-                radius: 55,
-                backgroundColor: Color(0xFFDCC6FF),
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  CircleAvatar(
+                    radius: 55,
+                    backgroundColor: const Color(0xFFAC1B22),
+                    backgroundImage: _profilePhotoBytes != null
+                        ? MemoryImage(_profilePhotoBytes!)
+                        : (_profilePhoto != null
+                            ? FileImage(File(_profilePhoto!.path))
+                            : null),
+                    child: hasProfilePhoto
+                        ? null
+                        : Text(
+                            profileInitial,
+                            style: const TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 32,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                  ),
+                  Positioned(
+                    bottom: 2,
+                    right: 2,
+                    child: GestureDetector(
+                      onTap: _showProfilePhotoOptions,
+                      child: Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: Color(0xFFAC1B22),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        child: const Icon(
+                          Icons.camera_alt,
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
 
               const SizedBox(height: 24),

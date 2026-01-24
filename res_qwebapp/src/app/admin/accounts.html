@@ -69,9 +69,9 @@
         <p><strong>Approved On:</strong> {{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'medium') : 'N/A' }}</p>
       </div>
 
-      <div class="id-preview" *ngIf="acc.idPhotoPath">
+      <div class="id-preview" *ngIf="getIdPhotoUrl(acc)">
         <p><strong>Valid ID Status:</strong></p>
-        <span class="id-badge">✓ Uploaded</span>
+        <button type="button" class="id-badge id-link" (click)="openIdModal(acc)">Uploaded (View)</button>
       </div>
 
       <button type="button" class="btn btn-ban big" (click)="ban(acc)">Ban Account</button>
@@ -86,6 +86,19 @@
       <div class="modal-actions">
         <button type="button" class="btn-modal btn-yes" (click)="confirmBan()">YES</button>
         <button type="button" class="btn-modal btn-no" (click)="cancelBan()">NO</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ID PREVIEW MODAL -->
+  <div class="modal-overlay" *ngIf="showIdModal" (click)="closeIdModal()">
+    <div class="modal-content id-modal" (click)="$event.stopPropagation()">
+      <div class="id-modal-header">
+        <h3 class="modal-title">VALID ID</h3>
+        <button type="button" class="id-modal-close" (click)="closeIdModal()">×</button>
+      </div>
+      <div class="id-modal-body">
+        <img *ngIf="idModalUrl" [src]="idModalUrl" alt="Valid ID" />
       </div>
     </div>
   </div>
@@ -267,14 +280,74 @@
   }
 
   /* ID Badge */
+  .id-preview {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .id-preview p {
+    margin: 0;
+  }
+
   .id-badge {
     display: inline-block;
-    margin-top: 6px;
     padding: 6px 10px;
     border-radius: 999px;
     background: #e8fff1;
     color: #0f7a38;
     font-weight: 700;
+    border: none;
+    cursor: pointer;
+    font-family: "Roboto Condensed", sans-serif;
+    font-size: 13px;
+  }
+
+  .id-link {
+    text-decoration: none;
+  }
+
+  .id-link:hover {
+    background: #d9f9e4;
+    text-decoration: underline;
+  }
+
+  .id-modal {
+    max-width: 720px;
+    width: min(92vw, 720px);
+    padding: 18px 20px 22px;
+  }
+
+  .id-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .id-modal-close {
+    border: none;
+    background: transparent;
+    font-size: 22px;
+    cursor: pointer;
+    color: #111827;
+    line-height: 1;
+  }
+
+  .id-modal-body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #f7f8f3;
+    border-radius: 10px;
+    padding: 10px;
+  }
+
+  .id-modal-body img {
+    max-width: 100%;
+    max-height: 70vh;
+    border-radius: 8px;
+    object-fit: contain;
   }
 
   /* Hint */

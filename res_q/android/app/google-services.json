@@ -7,9 +7,9 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:406150939556:android:040fbee0a77df46c7a3731",
+        "mobilesdk_app_id": "1:406150939556:android:834a3a7adb3a25e27a3731",
         "android_client_info": {
-          "package_name": "com.example.res_q"
+          "package_name": "com.resqteam.res_q"
         }
       },
       "oauth_client": [],

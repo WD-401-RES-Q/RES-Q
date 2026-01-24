@@ -14,7 +14,6 @@ import {
   faKitMedical,
   faCarBurst,
   faFire,
-  faTriangleExclamation,
   faCloudBolt,
   faPrint,
 } from '@fortawesome/free-solid-svg-icons';
@@ -44,14 +43,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
   otherEmergencies = 0;
   vehicularEmergencies = 0;
   fireEmergencies = 0;
-  roadObstructions = 0;
   naturalHazards = 0;
 
   // FontAwesome icons
   faOther = faKitMedical;
   faVehicular = faCarBurst;
   faFire = faFire;
-  faRoad = faTriangleExclamation;
   faHazard = faCloudBolt;
   faPrint = faPrint;
 
@@ -66,7 +63,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
     'Other Emergencies',
     'Vehicular Emergencies',
     'Fire Emergencies',
-    'Road Obstruction',
     'Natural Hazards'
   ];
 
@@ -172,7 +168,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.otherEmergencies = 0;
     this.vehicularEmergencies = 0;
     this.fireEmergencies = 0;
-    this.roadObstructions = 0;
     this.naturalHazards = 0;
   }
 
@@ -212,11 +207,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
       if (type.includes('other')) {
         this.otherEmergencies += 1;
-        return;
-      }
-
-      if (type.includes('road') || type.includes('obstruction') || type.includes('block')) {
-        this.roadObstructions += 1;
         return;
       }
 
@@ -273,7 +263,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
       case 'Other Emergencies': return '#00a458';
       case 'Vehicular Emergencies': return '#f09002';
       case 'Fire Emergencies': return '#ac1b22';
-      case 'Road Obstruction': return '#ffc806';
       case 'Natural Hazards': return 'rgb(60, 131, 237)';
       default: return '#AC1B22';
     }
@@ -372,8 +361,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
           return type.includes('vehic') || type.includes('car') || type.includes('traffic');
         case 'Other Emergencies':
           return type.includes('other');
-        case 'Road Obstruction':
-          return type.includes('road') || type.includes('obstruction') || type.includes('block');
         case 'Natural Hazards':
           return type.includes('flood') ||
                  type.includes('earthquake') ||
@@ -532,7 +519,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
       { label: 'Other Emergencies', value: this.otherEmergencies, color: [0, 164, 88] },
       { label: 'Vehicular Emergencies', value: this.vehicularEmergencies, color: [240, 144, 2] },
       { label: 'Fire Emergencies', value: this.fireEmergencies, color: [172, 27, 34] },
-      { label: 'Road Obstruction', value: this.roadObstructions, color: [255, 200, 6] },
       { label: 'Natural Hazards', value: this.naturalHazards, color: [60, 131, 237] },
     ];
 

@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { FirestoreService } from '../firestore.service';
 import { FirebaseStorageService } from '../firebase-storage.service';
 import { Subscription } from 'rxjs';
-import { collection, onSnapshot, query, where, Timestamp } from 'firebase/firestore';
+import { collection, onSnapshot, orderBy, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase.config';
 
 interface Report {
@@ -323,20 +323,19 @@ export class ReportsComponent implements OnInit, OnDestroy {
     this.loadingComments[report.id] = true;
 
     try {
-      this.ngZone.runOutsideAngular(() => {
-        const rootRef = collection(db, 'comments');
-        const unsubscribe = onSnapshot(rootRef, (snapshot) => {
-          const comments = snapshot.docs
-            .map(doc => this.mapComment(doc))
-            .filter(comment => comment.reportId === report.id);
+    this.ngZone.runOutsideAngular(() => {
+      const commentsRef = collection(db, 'reports', report.id, 'comments');
+      const commentsQuery = query(commentsRef, orderBy('timestamp', 'desc'));
+      onSnapshot(commentsQuery, (snapshot) => {
+        const comments = snapshot.docs.map(doc => this.mapComment(doc, report.id));
 
-          this.ngZone.run(() => {
-            this.reportComments[report.id] = comments;
-            this.loadingComments[report.id] = false;
-            this.cdr.markForCheck();
-          });
+        this.ngZone.run(() => {
+          this.reportComments[report.id] = comments;
+          this.loadingComments[report.id] = false;
+          this.cdr.markForCheck();
         });
       });
+    });
     } catch (err) {
       console.error('Error loading comments:', err);
       this.ngZone.run(() => {
@@ -347,8 +346,9 @@ export class ReportsComponent implements OnInit, OnDestroy {
     }
   }
 
-  private mapComment(doc: any): Comment {
-    const timestamp = doc.data().timestamp;
+  private mapComment(doc: any, reportId: string): Comment {
+    const data = doc.data();
+    const timestamp = data.timestamp;
     let timestampDate: Date;
 
     if (timestamp && typeof timestamp.toDate === 'function') {
@@ -359,14 +359,14 @@ export class ReportsComponent implements OnInit, OnDestroy {
 
     return {
       id: doc.id,
-      text: doc.data().text || '',
-      author: doc.data().author || 'Anonymous',
+      text: data.text || '',
+      author: data.author || 'Anonymous',
       timestamp: timestampDate,
-      greenFlags: doc.data().greenFlags || 0,
-      redFlags: doc.data().redFlags || 0,
-      reportId: doc.data().reportId || '',
-      reportTitle: doc.data().reportTitle || '',
-      reportStatus: doc.data().reportStatus || '',
+      greenFlags: data.greenFlags || 0,
+      redFlags: data.redFlags || 0,
+      reportId: data.reportId || reportId,
+      reportTitle: data.reportTitle || '',
+      reportStatus: data.reportStatus || '',
     };
   }
 

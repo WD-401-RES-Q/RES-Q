@@ -69,6 +69,19 @@ class AppTheme {
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
 
+  static final ButtonStyle pillOutlineButtonStyle = OutlinedButton.styleFrom(
+    foregroundColor: AppColors.appBlue,
+    backgroundColor: Colors.white,
+    side: const BorderSide(color: AppColors.appBlue, width: 1.2),
+    shape: const StadiumBorder(),
+    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+    textStyle: const TextStyle(
+      fontFamily: 'RobotoCondensed',
+      fontSize: 12,
+      fontWeight: FontWeight.w400,
+    ),
+  );
+
   static ThemeData theme = ThemeData(
     primaryColor: AppColors.appBlue,
     scaffoldBackgroundColor: AppColors.appOffWhite,

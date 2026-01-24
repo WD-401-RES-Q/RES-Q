@@ -1,5 +1,6 @@
 import { Component, signal, OnInit, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
+import { getApp } from 'firebase/app';
 import { FirestoreService } from './firestore.service';
 
 @Component({
@@ -15,5 +16,6 @@ export class App implements OnInit {
   ngOnInit() {
     console.log('=== APP COMPONENT INITIALIZED ===');
     console.log('FirestoreService injected and initialized');
+    console.log('Firebase projectId:', getApp().options.projectId);
   }
 }

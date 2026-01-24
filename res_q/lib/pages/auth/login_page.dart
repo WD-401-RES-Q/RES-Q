@@ -134,8 +134,8 @@ class _LoginPageState extends State<LoginPage> {
 
       if (approvedQuery.docs.isNotEmpty) {
         final userData = approvedQuery.docs.first.data();
-        final storedPassword = userData['password'] as String?;
         final accountStatus = userData['accountStatus'] as String?;
+        final storedPassword = userData['password'] as String?;
 
         // Must be explicitly approved
         if (accountStatus != null && accountStatus != 'approved') {

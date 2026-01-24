@@ -65,6 +65,8 @@ class AuthTextField extends StatelessWidget {
   final TextInputType? keyboardType;
   final List<TextInputFormatter>? inputFormatters;
   final Widget? suffixIcon;
+  final String? Function(String?)? validator;
+  final AutovalidateMode? autovalidateMode;
 
   const AuthTextField({
     super.key,
@@ -74,6 +76,8 @@ class AuthTextField extends StatelessWidget {
     this.keyboardType,
     this.inputFormatters,
     this.suffixIcon,
+    this.validator,
+    this.autovalidateMode,
   });
 
   @override
@@ -83,6 +87,8 @@ class AuthTextField extends StatelessWidget {
       obscureText: obscureText,
       keyboardType: keyboardType,
       inputFormatters: inputFormatters,
+      validator: validator,
+      autovalidateMode: autovalidateMode,
       decoration: InputDecoration(
         labelText: label,
         labelStyle: GoogleFonts.poppins(fontSize: 12, color: AppTheme.appBlack),
@@ -219,12 +225,20 @@ class DateOfBirthInput extends StatelessWidget {
   final TextEditingController monthController;
   final TextEditingController dayController;
   final TextEditingController yearController;
+  final String? Function(String?)? monthValidator;
+  final String? Function(String?)? dayValidator;
+  final String? Function(String?)? yearValidator;
+  final AutovalidateMode? autovalidateMode;
 
   const DateOfBirthInput({
     super.key,
     required this.monthController,
     required this.dayController,
     required this.yearController,
+    this.monthValidator,
+    this.dayValidator,
+    this.yearValidator,
+    this.autovalidateMode,
   });
 
   InputDecoration _fieldDecoration(String label) {
@@ -270,6 +284,8 @@ class DateOfBirthInput extends StatelessWidget {
                 controller: monthController,
                 keyboardType: TextInputType.number,
                 decoration: _fieldDecoration('MM'),
+                validator: monthValidator,
+                autovalidateMode: autovalidateMode,
               ),
             ),
             const SizedBox(width: 8),
@@ -278,6 +294,8 @@ class DateOfBirthInput extends StatelessWidget {
                 controller: dayController,
                 keyboardType: TextInputType.number,
                 decoration: _fieldDecoration('DD'),
+                validator: dayValidator,
+                autovalidateMode: autovalidateMode,
               ),
             ),
             const SizedBox(width: 8),
@@ -286,6 +304,8 @@ class DateOfBirthInput extends StatelessWidget {
                 controller: yearController,
                 keyboardType: TextInputType.number,
                 decoration: _fieldDecoration('YYYY'),
+                validator: yearValidator,
+                autovalidateMode: autovalidateMode,
               ),
             ),
           ],
