@@ -7,6 +7,7 @@ import { UnverifiedAccountsComponent } from './admin/unverified-accounts.compone
 import { SettingsComponent } from './admin/settings.component';
 import { AnnouncementsComponent } from './admin/announcements.component';
 import { AdminLoginComponent } from './admin/login.component';
+import { ResponderMapComponent } from './admin/responder-map.component';
 import { authGuard } from './guards/auth.guard';
 
 export const routes: Routes = [
@@ -20,6 +21,7 @@ export const routes: Routes = [
       { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
       { path: 'dashboard', component: DashboardComponent },
       { path: 'reports', component: ReportsComponent },
+      { path: 'responder-map', component: ResponderMapComponent },
       { path: 'announcements', component: AnnouncementsComponent },
       { path: 'accounts', component: AccountsComponent },
       { path: 'unverified-accounts', component: UnverifiedAccountsComponent },

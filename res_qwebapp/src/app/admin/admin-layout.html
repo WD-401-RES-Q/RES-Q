@@ -12,6 +12,7 @@
             <span class="badge" *ngIf="(pendingReportsCount$ | async) as count">{{ count > 0 ? count : '' }}</span>
           </a>
         </li>
+        <li><a routerLink="responder-map" routerLinkActive="active">Responder Map</a></li>
         <li><a routerLink="announcements" routerLinkActive="active">Announcements</a></li>
         <li><a routerLink="accounts" routerLinkActive="active">Accounts</a></li>
         <li>

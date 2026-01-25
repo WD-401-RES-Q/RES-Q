@@ -127,6 +127,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   };
 
   private allReports: ReportRecord[] = [];
+  latestReports: ReportRecord[] = [];
   private sub?: Subscription;
 
   onTimeRangeChange(value: string) {
@@ -143,6 +144,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.sub = this.firestoreService.reports$.subscribe({
       next: (reports) => {
         this.allReports = reports;
+        this.latestReports = this.buildLatestReports(reports);
         this.totalReports = reports.length;
         this.computeStatusCounts(reports);
         this.computeCategoryCounts(reports);
@@ -151,6 +153,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       error: (err) => {
         console.error('Failed to load reports:', err);
         this.allReports = [];
+        this.latestReports = [];
         this.totalReports = 0;
         this.approvedReports = 0;
         this.flaggedReports = 0;
@@ -390,6 +393,75 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
 
     return { date: null };
+  }
+
+  private buildLatestReports(reports: ReportRecord[]): ReportRecord[] {
+    return [...reports]
+      .map((report) => {
+        const { date } = this.coerceReportDate(report);
+        return { ...report, _sortDate: date };
+      })
+      .sort((a, b) => {
+        const aDate = a._sortDate ? new Date(a._sortDate).getTime() : 0;
+        const bDate = b._sortDate ? new Date(b._sortDate).getTime() : 0;
+        return bDate - aDate;
+      })
+      .slice(0, 6);
+  }
+
+  getReportDateLabel(report: ReportRecord): string {
+    const { date } = this.coerceReportDate(report);
+    if (!date) return 'Unknown date';
+    return date.toLocaleString();
+  }
+
+  getStatusClass(report: ReportRecord): string {
+    const status = (report['status'] ?? '').toString().trim().toLowerCase();
+    if (status === 'pending') return 'status pending';
+    if (status === 'responding') return 'status responding';
+    if (status === 'on scene' || status === 'on_scene' || status === 'onscene') return 'status on-scene';
+    if (status === 'resolved' || status === 'approved') return 'status resolved';
+    if (status === 'flagged') return 'status flagged';
+    return 'status';
+  }
+
+  getStatusLabel(report: ReportRecord): string {
+    const raw = (report['status'] ?? '').toString().trim();
+    if (!raw) return 'UNKNOWN';
+    return raw.toUpperCase();
+  }
+
+  getReportTitle(report: ReportRecord): string {
+    return (
+      (report['incidentType'] ??
+        report['incident_type'] ??
+        report['type'] ??
+        'Incident')
+    ).toString();
+  }
+
+  getReportBarangay(report: ReportRecord): string {
+    return (report['barangay'] ?? 'Angeles City').toString();
+  }
+
+  getReportReporter(report: ReportRecord): string {
+    return (report['name'] ?? report['fullName'] ?? 'Reporter').toString();
+  }
+
+  getStatusColor(report: ReportRecord): string {
+    const status = (report['status'] ?? '').toString().trim().toLowerCase();
+    if (status === 'pending') return '#2563eb';
+    if (status === 'responding') return '#ffc806';
+    if (status === 'on scene' || status === 'on_scene' || status === 'onscene') return '#ac1b22';
+    if (status === 'resolved' || status === 'approved') return '#00a458';
+    if (status === 'flagged') return '#ac1b22';
+    return '#6b7280';
+  }
+
+  getStatusTextColor(report: ReportRecord): string {
+    const status = (report['status'] ?? '').toString().trim().toLowerCase();
+    if (status === 'responding') return '#1f2937';
+    return '#ffffff';
   }
 
   async printToPDF() {

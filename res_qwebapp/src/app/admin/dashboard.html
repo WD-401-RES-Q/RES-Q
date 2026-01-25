@@ -81,6 +81,42 @@
   </section>
   </section>
 
+  <!-- LATEST REPORTS -->
+  <section class="latest-section">
+    <div class="latest-header">
+      <div>
+        <h2>Latest Reports</h2>
+        <p>Newest reports appear first.</p>
+      </div>
+    </div>
+    <div class="latest-list">
+      <div class="latest-card" *ngFor="let report of latestReports">
+        <div class="latest-top">
+          <div class="latest-title">
+            {{ getReportTitle(report) }}
+          </div>
+          <span
+            class="status-pill"
+            [ngClass]="getStatusClass(report)"
+            [style.background]="getStatusColor(report)"
+            [style.color]="getStatusTextColor(report)"
+          >
+            {{ getStatusLabel(report) }}
+          </span>
+        </div>
+        <div class="latest-meta">
+          <span>{{ getReportBarangay(report) }}</span>
+          <span>•</span>
+          <span>{{ getReportReporter(report) }}</span>
+        </div>
+        <div class="latest-date">{{ getReportDateLabel(report) }}</div>
+      </div>
+      <div *ngIf="latestReports.length === 0" class="latest-empty">
+        No reports yet.
+      </div>
+    </div>
+  </section>
+
   <!-- PAGE 2: ANALYTICS SECTION -->
   <section id="pdf-analytics" class="pdf-page">
     <div class="pdf-header">
@@ -266,6 +302,122 @@
   /* TOTAL REPORTS AREA */
   .reports-section {
     margin-top: 4px;
+  }
+
+  /* LATEST REPORTS */
+  .latest-section {
+    margin: 24px 0 10px;
+  }
+
+  .latest-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .latest-header h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+    color: #212121;
+    font-family: 'Roboto', sans-serif;
+  }
+
+  .latest-header p {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: #6b7280;
+    font-family: 'Roboto Condensed', sans-serif;
+  }
+
+  .latest-list {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .latest-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .latest-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .latest-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #111827;
+    font-family: 'Roboto', sans-serif;
+  }
+
+  .latest-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #6b7280;
+    font-family: 'Roboto Condensed', sans-serif;
+  }
+
+  .latest-date {
+    font-size: 12px;
+    color: #374151;
+    font-family: 'Roboto Condensed', sans-serif;
+  }
+
+  .latest-empty {
+    grid-column: 1 / -1;
+    padding: 12px;
+    background: #f8fafc;
+    border-radius: 10px;
+    color: #6b7280;
+    font-size: 12px;
+    font-family: 'Roboto Condensed', sans-serif;
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #ffffff;
+    font-family: 'Roboto', sans-serif;
+    white-space: nowrap;
+  }
+
+  .status.pending {
+    background: #ffc806;
+    color: #1f2937;
+  }
+
+  .status.responding {
+    background: #2563eb;
+  }
+
+  .status.on-scene {
+    background: #00a458;
+  }
+
+  .status.resolved {
+    background: #00a458;
+  }
+
+  .status.flagged {
+    background: #ac1b22;
   }
 
   .reports-header {
@@ -461,11 +613,19 @@
     .category-row {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+
+    .latest-list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 
   @media (max-width: 768px) {
     .summary-row,
     .category-row {
+      grid-template-columns: 1fr;
+    }
+
+    .latest-list {
       grid-template-columns: 1fr;
     }
   }
