@@ -101,10 +101,12 @@ export class UnverifiedAccountsComponent implements OnInit, OnDestroy {
   async confirmApprove() {
     if (!this.selectedAccount) return;
 
+    const accountName = this.selectedAccount.fullName;
+    
     try {
       await this.firestoreService.approvePendingUser(this.selectedAccount, this.adminUsername);
       this.closeConfirmModal();
-      this.showModalMessage('Success', `${this.selectedAccount.fullName} has been approved successfully!`, 'success');
+      this.showModalMessage('Success', `${accountName} has been approved successfully!`, 'success');
     } catch (error: any) {
       this.closeConfirmModal();
       this.showModalMessage('Approval Failed', `Error: ${error.message || 'Unknown error occurred'}`, 'error');
@@ -116,10 +118,12 @@ export class UnverifiedAccountsComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const accountName = this.selectedAccount.fullName;
+    
     try {
       await this.firestoreService.rejectPendingUser(this.selectedAccount, this.adminUsername, this.rejectionReason);
       this.closeConfirmModal();
-      this.showModalMessage('Rejected', `${this.selectedAccount.fullName} has been rejected.`, 'success');
+      this.showModalMessage('Rejected', `${accountName} has been rejected.`, 'success');
     } catch (error: any) {
       this.closeConfirmModal();
       this.showModalMessage('Rejection Failed', `Error: ${error.message || 'Unknown error occurred'}`, 'error');

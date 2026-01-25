@@ -10,6 +10,8 @@ import 'pages/auth/login_page.dart';
 import 'pages/auth/registration_page.dart';
 import 'pages/auth/forgot_password_page.dart';
 import 'pages/auth/otp_page.dart';
+import 'pages/auth/pin_creation_page.dart';
+import 'pages/auth/approved_pin_creation_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -70,6 +72,8 @@ class MyApp extends StatelessWidget {
         '/register': (context) => const RegistrationPage(),
         '/forgot': (context) => const ForgotPasswordPage(),
         '/otp': (context) => const OTPPage(),
+        '/pin-creation': (context) => const PINCreationPage(),
+        '/approved-pin-creation': (context) => const ApprovedPinCreationPage(),
         '/main': (context) => const MainPage(),
       },
     );

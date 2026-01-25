@@ -90,18 +90,26 @@ class _OTPPageState extends State<OTPPage> {
       // Sign in with credential
       await _auth.signInWithCredential(credential);
 
-      // Save user data to Firestore with pending status
-      await _saveUserData();
+      final user = _auth.currentUser;
+      if (user == null) {
+        throw Exception('User not authenticated');
+      }
 
       if (!mounted) return;
       setState(() => _loading = false);
 
-      // Show success dialog with approval info
-      await _showApprovalPendingDialog();
-
-      if (!mounted) return;
-      // Navigate to login page
-      Navigator.pushReplacementNamed(context, '/login');
+      // Navigate to PIN creation page instead of saving directly
+      if (mounted) {
+        Navigator.pushReplacementNamed(
+          context,
+          '/pin-creation',
+          arguments: {
+            'phoneNumber': _phoneNumber,
+            'userData': _userData,
+            'uid': user.uid,
+          },
+        );
+      }
     } on FirebaseAuthException catch (e) {
       setState(() => _loading = false);
 

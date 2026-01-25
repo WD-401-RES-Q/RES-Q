@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import '../home_page.dart';
 import '../semi-admin/semi_admin_main_page.dart';
 import '../../services/user_session.dart';
@@ -26,6 +28,10 @@ class _LoginPageState extends State<LoginPage> {
   bool _loading = false;
   bool _obscure = true;
   bool _initializing = true;
+  bool _isPinLogin = true; // Use PIN login by default
+  final TextEditingController _pinCtl = TextEditingController();
+  final TextEditingController _phoneCtl = TextEditingController();
+  bool _showPinSuccess = false;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
@@ -33,6 +39,21 @@ class _LoginPageState extends State<LoginPage> {
   void initState() {
     super.initState();
     _initialize();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final args = ModalRoute.of(context)?.settings.arguments as Map?;
+    if (args != null && args['showPinSuccess'] == true) {
+      setState(() => _showPinSuccess = true);
+      // Auto-hide after 5 seconds
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted) {
+          setState(() => _showPinSuccess = false);
+        }
+      });
+    }
   }
 
   Future<void> _initialize() async {
@@ -46,6 +67,8 @@ class _LoginPageState extends State<LoginPage> {
   void dispose() {
     _usernameCtl.dispose();
     _passCtl.dispose();
+    _pinCtl.dispose();
+    _phoneCtl.dispose();
     super.dispose();
   }
 
@@ -67,7 +90,13 @@ class _LoginPageState extends State<LoginPage> {
       final username = _usernameCtl.text.trim();
       final password = _passCtl.text;
 
-      // Check semi-admins first
+      // If using PIN login mode - directly verify PIN (no phone needed)
+      if (_isPinLogin) {
+        await _verifyPinOnly();
+        return;
+      }
+
+      // Check semi-admins first (username/password login)
       debugPrint('🔍 Checking semi_admins for username: $username');
       final semiAdminQuery = await _firestore
           .collection('semi_admins')
@@ -186,6 +215,179 @@ class _LoginPageState extends State<LoginPage> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Login error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  // PIN login - look up PIN in Firestore to find associated phone number
+  Future<void> _verifyPinOnly() async {
+    final pin = _pinCtl.text.trim();
+
+    if (pin.length != 4) {
+      setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('PIN must be exactly 4 digits'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      // Find user by PIN only - this will find the phone number associated with this PIN
+      final userQuery = await _firestore
+          .collection('approved_users')
+          .where('pin', isEqualTo: pin)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) {
+        setState(() => _loading = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Invalid phone number or PIN. Please try again.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        _pinCtl.clear();
+        return;
+      }
+
+      final userData = userQuery.docs.first.data();
+      final accountStatus = userData['accountStatus'] as String?;
+
+      // Check if account is approved
+      if (accountStatus != 'approved') {
+        setState(() => _loading = false);
+        if (mounted) {
+          _showPendingApprovalDialog();
+        }
+        return;
+      }
+
+      // Sign in to Firebase Auth anonymously
+      try {
+        final userCredential = await FirebaseAuth.instance.signInAnonymously();
+        debugPrint(
+          '✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}',
+        );
+      } catch (authError) {
+        debugPrint('⚠️ Firebase Anonymous Sign-In failed: $authError');
+        // Continue anyway - user data is verified in Firestore
+      }
+
+      // Login successful
+      UserSession.setUserData(userData);
+      setState(() => _loading = false);
+      if (mounted) {
+        Navigator.of(
+          context,
+        ).pushReplacement(MaterialPageRoute(builder: (_) => const MainPage()));
+      }
+    } catch (e) {
+      setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _verifyPhoneForPin() async {
+    final phoneInput = _usernameCtl.text.trim();
+
+    // Format phone number
+    String phone = phoneInput.replaceAll('-', '').trim();
+    if (phone.isNotEmpty && !phone.startsWith('+')) {
+      phone = phone.startsWith('0') ? '+63${phone.substring(1)}' : '+63$phone';
+    }
+
+    try {
+      // Check if phone exists in approved_users
+      final userQuery = await _firestore
+          .collection('approved_users')
+          .where('contactNumber', isEqualTo: phone)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) {
+        // Check if pending
+        final pendingQuery = await _firestore
+            .collection('pending_users')
+            .where('contactNumber', isEqualTo: phone)
+            .limit(1)
+            .get();
+
+        setState(() => _loading = false);
+        if (mounted) {
+          if (pendingQuery.docs.isNotEmpty) {
+            _showPendingApprovalDialog();
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Phone number not found. Please register first.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
+        return;
+      }
+
+      // Phone found and approved - show PIN field
+      setState(() {
+        _loading = false;
+        _pinCtl.clear();
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✓ Phone verified. Please enter your PIN.'),
+            backgroundColor: Color(0xFF00A458),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _verifyPin() async {
+    final pin = _pinCtl.text.trim();
+
+    if (pin.length < 4) {
+      setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('PIN must be at least 4 digits'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() => _loading = false);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Use PIN login mode'),
+          backgroundColor: Colors.orange,
+        ),
       );
     }
   }
@@ -332,13 +534,71 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-Widget _logo() {
-  return SvgPicture.asset(
-    'assets/icons/RESQ-LOGO.svg',
-    height: 80,
-    width: 120,
-  );
-}
+  Widget _logo() {
+    return SvgPicture.asset(
+      'assets/icons/RESQ-LOGO.svg',
+      height: 80,
+      width: 120,
+    );
+  }
+
+  Widget _numpadButton(String value, {bool isAction = false}) {
+    return SizedBox(
+      width: 70,
+      height: 70,
+      child: ElevatedButton(
+        onPressed: _loading
+            ? null
+            : () {
+                setState(() {
+                  if (value == 'C') {
+                    // Clear all
+                    _pinCtl.clear();
+                  } else if (value == '⌫') {
+                    // Delete last digit
+                    if (_pinCtl.text.isNotEmpty) {
+                      _pinCtl.text = _pinCtl.text.substring(
+                        0,
+                        _pinCtl.text.length - 1,
+                      );
+                    }
+                  } else {
+                    // Add digit (max 4)
+                    if (_pinCtl.text.length < 4) {
+                      _pinCtl.text += value;
+
+                      // Auto-submit when 4 digits are entered
+                      if (_pinCtl.text.length == 4) {
+                        Future.delayed(const Duration(milliseconds: 200), () {
+                          _submit();
+                        });
+                      }
+                    }
+                  }
+                });
+              },
+        style: ElevatedButton.styleFrom(
+          backgroundColor: isAction ? appOffWhite : Colors.white,
+          foregroundColor: appBlack,
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: appBlack.withOpacity(0.3), width: 1),
+          ),
+          padding: EdgeInsets.zero,
+        ),
+        child: Text(
+          value,
+          style: TextStyle(
+            fontSize: isAction ? 24 : 28,
+            fontWeight: FontWeight.w600,
+            color: appBlack,
+            fontFamily: 'Roboto',
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -375,114 +635,360 @@ Widget _logo() {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // Username
-                          Text(
-                            'USERNAME',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                              color: appBlack,
-                              fontFamily: 'Roboto',
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          TextFormField(
-                            controller: _usernameCtl,
-                            style: const TextStyle(  // Add this line
-                              fontFamily: 'RobotoCondensed',
-                              fontWeight: FontWeight.w400,
-                              fontSize: 14,
-                              color: appBlack,
-                            ),
-                            decoration: InputDecoration(
-                              hintText: 'Enter Username',
-                              hintStyle: TextStyle(
-                                fontFamily: 'RobotoCondensed',
-                                fontWeight: FontWeight.w400,
-                                fontSize: 14,
-                                color: appBlack.withOpacity(0.5),
-                              ),
-                              prefixIcon: const Icon(Icons.person_outline, color: Colors.black),
-                              filled: true,
-                              fillColor: const Color(0xFFF7F8F3), // background color
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12), // rounded corners
-                                borderSide: const BorderSide(color: Colors.black, width: 2),
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-                            ),
-                            validator: (v) => (v == null || v.isEmpty) ? 'Enter username' : null,
-                          ),
-                          const SizedBox(height: 15),
-
-                          // Password
-                          Text(
-                            'PASSWORD',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                              color: appBlack,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          TextFormField(
-                            controller: _passCtl,
-                            obscureText: _obscure,
-                            decoration: InputDecoration(
-                              hintText: 'Enter Password',
-                              hintStyle: TextStyle(
-                                fontFamily: 'RobotoCondensed',
-                                fontWeight: FontWeight.w400,
-                                fontSize: 14,
-                                color: appBlack.withOpacity(0.5),
-                              ),
-                              prefixIcon: const Icon(Icons.lock_outline, color: Colors.black),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscure ? Icons.visibility : Icons.visibility_off,
-                                  size: 18,
-                                  color: Colors.grey,
+                          // Login Mode Toggle
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              TextButton(
+                                onPressed: _loading
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          _isPinLogin = true;
+                                          _usernameCtl.clear();
+                                          _passCtl.clear();
+                                          _pinCtl.clear();
+                                          _phoneCtl.clear();
+                                        });
+                                      },
+                                child: Text(
+                                  'PIN',
+                                  style: TextStyle(
+                                    color: _isPinLogin ? appBlue : Colors.grey,
+                                    fontWeight: _isPinLogin
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
                                 ),
-                                onPressed: () => setState(() => _obscure = !_obscure),
                               ),
-                              filled: true,
-                              fillColor: const Color(0xFFF7F8F3), // background color
-                              contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12), // rounded corners
-                                borderSide: const BorderSide(color: Colors.black, width: 1),
+                              const Text(' | '),
+                              TextButton(
+                                onPressed: _loading
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          _isPinLogin = false;
+                                          _usernameCtl.clear();
+                                          _passCtl.clear();
+                                          _pinCtl.clear();
+                                          _phoneCtl.clear();
+                                        });
+                                      },
+                                child: Text(
+                                  'Semi-Admin',
+                                  style: TextStyle(
+                                    color: !_isPinLogin ? appBlue : Colors.grey,
+                                    fontWeight: !_isPinLogin
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                ),
                               ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Colors.black, width: 1),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Colors.black, width: 2),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+
+                          // Show Username input for Semi-Admin login
+                          if (!_isPinLogin) ...[
+                            Text(
+                              'USERNAME',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                color: appBlack,
+                                fontFamily: 'Roboto',
                               ),
                             ),
-                            validator: (v) => (v == null || v.length < 6) ? 'Password too short' : null,
-                          ),
+                            const SizedBox(height: 4),
+                            TextFormField(
+                              controller: _usernameCtl,
+                              keyboardType: TextInputType.text,
+                              style: const TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontWeight: FontWeight.w400,
+                                fontSize: 14,
+                                color: appBlack,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: 'Enter Username',
+                                hintStyle: TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontWeight: FontWeight.w400,
+                                  fontSize: 14,
+                                  color: appBlack.withOpacity(0.5),
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.person_outline,
+                                  color: Colors.black,
+                                ),
+                                filled: true,
+                                fillColor: const Color(0xFFF7F8F3),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: const BorderSide(
+                                    color: Colors.black,
+                                    width: 2,
+                                  ),
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                  horizontal: 12,
+                                ),
+                              ),
+                              validator: (v) => (v == null || v.isEmpty)
+                                  ? 'Enter username'
+                                  : null,
+                            ),
+                            const SizedBox(height: 15),
+                          ],
+
+                          // PIN Field (only show if PIN login - simple and direct)
+                          if (_isPinLogin) ...[
+                            Text(
+                              'ENTER YOUR PIN',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                color: appBlack,
+                                fontFamily: 'Roboto',
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 16),
+
+                            // PIN Display (dots)
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: List.generate(4, (index) {
+                                final hasValue = _pinCtl.text.length > index;
+                                return Container(
+                                  margin: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                  ),
+                                  width: 16,
+                                  height: 16,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: hasValue
+                                        ? appBlue
+                                        : Colors.transparent,
+                                    border: Border.all(
+                                      color: appBlack,
+                                      width: 2,
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ),
+                            const SizedBox(height: 24),
+
+                            // Numpad
+                            Column(
+                              children: [
+                                // Row 1: 1, 2, 3
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    _numpadButton('1'),
+                                    const SizedBox(width: 12),
+                                    _numpadButton('2'),
+                                    const SizedBox(width: 12),
+                                    _numpadButton('3'),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+
+                                // Row 2: 4, 5, 6
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    _numpadButton('4'),
+                                    const SizedBox(width: 12),
+                                    _numpadButton('5'),
+                                    const SizedBox(width: 12),
+                                    _numpadButton('6'),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+
+                                // Row 3: 7, 8, 9
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    _numpadButton('7'),
+                                    const SizedBox(width: 12),
+                                    _numpadButton('8'),
+                                    const SizedBox(width: 12),
+                                    _numpadButton('9'),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+
+                                // Row 4: Clear, 0, Delete
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    _numpadButton('C', isAction: true),
+                                    const SizedBox(width: 12),
+                                    _numpadButton('0'),
+                                    const SizedBox(width: 12),
+                                    _numpadButton('⌫', isAction: true),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 15),
+                          ],
+
+                          // Password (only for semi-admin)
+                          if (!_isPinLogin) ...[
+                            Text(
+                              'PASSWORD',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w900,
+                                color: appBlack,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            TextFormField(
+                              controller: _passCtl,
+                              obscureText: _obscure,
+                              decoration: InputDecoration(
+                                hintText: 'Enter Password',
+                                hintStyle: TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontWeight: FontWeight.w400,
+                                  fontSize: 14,
+                                  color: appBlack.withOpacity(0.5),
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.lock_outline,
+                                  color: Colors.black,
+                                ),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscure
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                    size: 18,
+                                    color: Colors.grey,
+                                  ),
+                                  onPressed: () =>
+                                      setState(() => _obscure = !_obscure),
+                                ),
+                                filled: true,
+                                fillColor: const Color(0xFFF7F8F3),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                  horizontal: 12,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: const BorderSide(
+                                    color: Colors.black,
+                                    width: 1,
+                                  ),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: const BorderSide(
+                                    color: Colors.black,
+                                    width: 1,
+                                  ),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: const BorderSide(
+                                    color: Colors.black,
+                                    width: 2,
+                                  ),
+                                ),
+                              ),
+                              validator: (v) => (v == null || v.length < 6)
+                                  ? 'Password too short'
+                                  : null,
+                            ),
+                            const SizedBox(height: 20),
+                          ],
 
                           const SizedBox(height: 20),
 
+                          // Success message for PIN creation
+                          if (_showPinSuccess) ...[
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00A458),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(
+                                    Icons.check_circle,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Pin is good to go! Enter the pin in the pin section.',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 13,
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                          ],
+
                           Align(
-                            alignment: Alignment.center, // change from centerRight to center
-                            child: TextButton(
-                              onPressed: () => Navigator.pushNamed(context, '/forgot'),
-                              style: TextButton.styleFrom(
-                                padding: EdgeInsets.zero,
-                                minimumSize: const Size(0, 0),
-                              ),
-                              child: Text(
-                                'FORGOT PASSWORD?',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w400,
-                                  color: appBlack,
-                                  fontFamily: 'RobotoCondensed',
+                            alignment: Alignment.center,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.pushNamed(context, '/forgot'),
+                                  style: TextButton.styleFrom(
+                                    padding: EdgeInsets.zero,
+                                    minimumSize: const Size(0, 0),
+                                  ),
+                                  child: Text(
+                                    'FORGOT PASSWORD?',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w400,
+                                      color: appBlack,
+                                      fontFamily: 'RobotoCondensed',
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                const SizedBox(height: 8),
+                                TextButton(
+                                  onPressed: () => Navigator.pushNamed(
+                                    context,
+                                    '/approved-pin-creation',
+                                  ),
+                                  style: TextButton.styleFrom(
+                                    padding: EdgeInsets.zero,
+                                    minimumSize: const Size(0, 0),
+                                  ),
+                                  child: Text(
+                                    'Account Approved? Create PIN here',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w400,
+                                      color: appBlue,
+                                      fontFamily: 'RobotoCondensed',
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
 
@@ -499,7 +1005,9 @@ Widget _logo() {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: appBlue,
                                   elevation: 3, // 👈 shadow depth
-                                  shadowColor: Colors.black.withOpacity(1), // 👈 shadow color
+                                  shadowColor: Colors.black.withOpacity(
+                                    1,
+                                  ), // 👈 shadow color
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(50),
                                   ),
@@ -513,7 +1021,7 @@ Widget _logo() {
                                           color: Colors.white,
                                         ),
                                       )
-                                    : const Text(
+                                    : Text(
                                         'LOGIN',
                                         style: TextStyle(
                                           fontWeight: FontWeight.w400,
@@ -540,7 +1048,9 @@ Widget _logo() {
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: appRed,
                                   elevation: 3, // 👈 shadow depth
-                                  shadowColor: Colors.black.withOpacity(1), // 👈 shadow color
+                                  shadowColor: Colors.black.withOpacity(
+                                    1,
+                                  ), // 👈 shadow color
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(50),
                                   ),

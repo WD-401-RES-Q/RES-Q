@@ -29,6 +29,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
   final _dobDayCtl = TextEditingController();
   final _dobMonthCtl = TextEditingController();
   final _dobYearCtl = TextEditingController();
+  final _pinCtl = TextEditingController();
 
   bool _loading = false;
   bool _agree = false;
@@ -54,6 +55,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
     _dobDayCtl.dispose();
     _dobMonthCtl.dispose();
     _dobYearCtl.dispose();
+    _pinCtl.dispose();
     super.dispose();
   }
 
@@ -140,11 +142,42 @@ class _RegistrationPageState extends State<RegistrationPage> {
     }
   }
 
+  Future<bool> _checkPhoneNumberExists(String phone) async {
+    try {
+      // Check in pending_users
+      final pendingQuery = await FirebaseFirestore.instance
+          .collection('pending_users')
+          .where('contactNumber', isEqualTo: phone)
+          .limit(1)
+          .get();
+
+      if (pendingQuery.docs.isNotEmpty) {
+        return true;
+      }
+
+      // Check in approved_users
+      final approvedQuery = await FirebaseFirestore.instance
+          .collection('approved_users')
+          .where('contactNumber', isEqualTo: phone)
+          .limit(1)
+          .get();
+
+      return approvedQuery.docs.isNotEmpty;
+    } catch (e) {
+      debugPrint('Error checking phone number: $e');
+      return false;
+    }
+  }
+
   Future<void> _submit() async {
-    final normalizedFirstName =
-        _firstNameCtl.text.trim().replaceAll(RegExp(r'\s+'), ' ');
-    final normalizedLastName =
-        _lastNameCtl.text.trim().replaceAll(RegExp(r'\s+'), ' ');
+    final normalizedFirstName = _firstNameCtl.text.trim().replaceAll(
+      RegExp(r'\s+'),
+      ' ',
+    );
+    final normalizedLastName = _lastNameCtl.text.trim().replaceAll(
+      RegExp(r'\s+'),
+      ' ',
+    );
     final normalizedFullName = '$normalizedFirstName $normalizedLastName';
     final normalizedUsername = _usernameCtl.text.trim();
     final normalizedEmail = _emailCtl.text.trim();
@@ -159,8 +192,9 @@ class _RegistrationPageState extends State<RegistrationPage> {
     final idValid = _idPhotoPath != null && _idPhotoPath!.isNotEmpty;
     setState(() {
       _termsError = termsValid ? null : 'Please agree to terms and conditions';
-      _idPhotoError =
-          idValid ? null : 'Please upload a government ID photo to continue';
+      _idPhotoError = idValid
+          ? null
+          : 'Please upload a government ID photo to continue';
     });
     if (!formValid || !termsValid || !idValid) {
       return;
@@ -177,11 +211,30 @@ class _RegistrationPageState extends State<RegistrationPage> {
       phone = phone.startsWith('0') ? '+63${phone.substring(1)}' : '+63$phone';
     }
 
+    // Check if phone number already exists
+    final phoneExists = await _checkPhoneNumberExists(phone);
+    if (phoneExists) {
+      setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'This phone number is already registered. Please use a different number.',
+            ),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+      return;
+    }
+
     final Map<String, dynamic> userData = {
       'fullName': normalizedFullName,
       'username': normalizedUsername,
       'email': normalizedEmail.isEmpty ? null : normalizedEmail,
       'password': _passwordCtl.text.trim(),
+      'pin': _pinCtl.text.trim(), // Store PIN for PIN-based login
       'contactNumber': phone,
       'address': normalizedAddress,
       'dateOfBirth': '$dobMonth/$dobDay/$dobYear',
@@ -195,9 +248,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
       // Skip app verification only in debug to make emulator/dev testing reliable.
       if (!kIsWeb) {
-        await _auth.setSettings(
-          appVerificationDisabledForTesting: kDebugMode,
-        );
+        await _auth.setSettings(appVerificationDisabledForTesting: kDebugMode);
       }
 
       // Send OTP to phone number via Firebase Auth
@@ -317,16 +368,14 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }
 
   String? _validateFirstName(String? value) {
-    final normalized =
-        (value ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+    final normalized = (value ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
     if (normalized.isEmpty) return 'First name is required';
     if (!_isValidNamePart(normalized)) return 'Enter a valid first name';
     return null;
   }
 
   String? _validateLastName(String? value) {
-    final normalized =
-        (value ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+    final normalized = (value ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
     if (normalized.isEmpty) return 'Last name is required';
     if (!_isValidNamePart(normalized)) return 'Enter a valid last name';
     return null;
