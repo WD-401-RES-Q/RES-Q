@@ -1335,9 +1335,7 @@ class _CommunityPageState extends State<CommunityPage> {
                                   borderRadius: BorderRadius.circular(8),
                                   child: Container(
                                     decoration: BoxDecoration(
-                                      color: greenSelected
-                                          ? appGreen.withOpacity(1)
-                                          : Colors.transparent,
+                                      color: Colors.transparent,
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     padding: const EdgeInsets.symmetric(
@@ -1354,11 +1352,11 @@ class _CommunityPageState extends State<CommunityPage> {
                                         const SizedBox(width: 6),
                                         Text(
                                           '${report['greenFlags']}',
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                             fontFamily: 'RobotoCondensed',
                                             fontSize: 13,
                                             fontWeight: FontWeight.w400,
-                                            color: appBlack,
+                                            color: greenIconColor,
                                           ),
                                         ),
                                       ],
@@ -1374,9 +1372,7 @@ class _CommunityPageState extends State<CommunityPage> {
                                   borderRadius: BorderRadius.circular(8),
                                   child: Container(
                                     decoration: BoxDecoration(
-                                      color: redSelected
-                                          ? appRed.withOpacity(1)
-                                          : Colors.transparent,
+                                      color: Colors.transparent,
                                       borderRadius: BorderRadius.circular(8),
                                     ),
                                     padding: const EdgeInsets.symmetric(
@@ -1393,11 +1389,11 @@ class _CommunityPageState extends State<CommunityPage> {
                                         const SizedBox(width: 6),
                                         Text(
                                           '${report['redFlags']}',
-                                          style: const TextStyle(
+                                          style: TextStyle(
                                             fontFamily: 'RobotoCondensed',
                                             fontSize: 13,
                                             fontWeight: FontWeight.w400,
-                                            color: appBlack,
+                                            color: redIconColor,
                                           ),
                                         ),
                                       ],

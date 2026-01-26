@@ -7,6 +7,7 @@ import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import '../ui/app_theme.dart';
 import '../services/user_session.dart';
+import 'auth/login_page.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -144,6 +145,126 @@ class _ProfilePageState extends State<ProfilePage>
               ),
             );
           },
+        );
+      },
+    );
+  }
+
+  void _showLogoutConfirm() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          backgroundColor: const Color(0xFFF7F8F3),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: const Color(0xFFAC1B22),
+                      width: 3,
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.logout,
+                    size: 34,
+                    color: Color(0xFFAC1B22),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'LOG OUT?',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFFAC1B22),
+                    letterSpacing: 0.6,
+                    fontFamily: 'RobotoCondensed',
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Are you sure you want to log out of your account?',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.grey[700],
+                    fontFamily: 'RobotoCondensed',
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Color(0xFFAC1B22)),
+                          foregroundColor: const Color(0xFFAC1B22),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: const Text(
+                          'CANCEL',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.6,
+                            fontFamily: 'RobotoCondensed',
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          UserSession.clear();
+                          Navigator.of(context).pushAndRemoveUntil(
+                            MaterialPageRoute(
+                              builder: (_) => const LoginPage(),
+                            ),
+                            (_) => false,
+                          );
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFAC1B22),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          elevation: 0,
+                        ),
+                        child: const Text(
+                          'LOG OUT',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.6,
+                            fontFamily: 'RobotoCondensed',
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         );
       },
     );
@@ -1179,6 +1300,24 @@ class _ProfilePageState extends State<ProfilePage>
                             Icons.article_outlined,
                             'Source Licenses',
                           ),
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // Logout
+                        Text(
+                          'Account',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            fontFamily: 'Roboto',
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        _ProfileItem(
+                          icon: Icons.logout,
+                          label: 'Log out',
+                          onTap: _showLogoutConfirm,
                         ),
                       ],
                     ),

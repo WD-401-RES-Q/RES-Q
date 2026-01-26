@@ -106,6 +106,7 @@ class NotificationsPage extends StatelessWidget {
       builder: (context) {
         return Dialog(
           insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+          backgroundColor: appWhite,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
@@ -306,11 +307,10 @@ class NotificationsPage extends StatelessWidget {
                       } else if (ts is DateTime) {
                         date = ts;
                       }
-                      final dateText = DateFormat('MMM d yyyy').format(date);
-                      final contentPadding = EdgeInsets.symmetric(
-                        horizontal: 14.0,
-                        vertical: 12.0,
-                      );
+                      final dateText =
+                          DateFormat('MMM d, yyyy — h:mm a').format(date);
+                      final displayTitle =
+                          title.isNotEmpty ? title : 'Announcement';
 
                       return Center(
                         child: GestureDetector(
@@ -319,16 +319,16 @@ class NotificationsPage extends StatelessWidget {
                             width: 343,
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius: BorderRadius.circular(10),
+                              borderRadius: BorderRadius.circular(16),
                               border: Border.all(
-                                color: appBlack.withOpacity(0.2),
+                                color: appBlack.withOpacity(0.12),
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(0.12),
-                                  blurRadius: 12,
-                                  spreadRadius: 1,
-                                  offset: const Offset(0, 6),
+                                  color: Colors.black.withOpacity(0.08),
+                                  blurRadius: 18,
+                                  spreadRadius: 0,
+                                  offset: const Offset(0, 8),
                                 ),
                               ],
                             ),
@@ -336,55 +336,97 @@ class NotificationsPage extends StatelessWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                if (imageUrl.isNotEmpty)
-                                  SizedBox(
-                                    width: double.infinity,
-                                    height: 160,
-                                    child: Image.network(
-                                      imageUrl,
-                                      fit: BoxFit.cover,
-                                    ),
-                                  ),
-                                Padding(
-                                  padding: contentPadding,
-                                  child: Text(
-                                    title.isNotEmpty ? title : content,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 14,
-                                      color: appBlack,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 150,
+                                  child: imageUrl.isNotEmpty
+                                      ? Image.network(
+                                          imageUrl,
+                                          fit: BoxFit.cover,
+                                        )
+                                      : Container(
+                                          color: Colors.white,
+                                          alignment: Alignment.center,
+                                          child: Icon(
+                                            Icons.image_outlined,
+                                            size: 40,
+                                            color: appBlack.withOpacity(0.25),
+                                          ),
+                                        ),
                                 ),
-                                const SizedBox(height: 4),
                                 Padding(
-                                  padding: contentPadding.copyWith(top: 0),
-                                  child: Text(
-                                    dateText.toUpperCase(),
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 12,
-                                      color: appBlack.withOpacity(0.7),
-                                      fontWeight: FontWeight.w400,
-                                    ),
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    14,
+                                    16,
+                                    16,
                                   ),
-                                ),
-                                if (title.isNotEmpty && content.isNotEmpty)
-                                  Padding(
-                                    padding: contentPadding.copyWith(top: 0),
-                                    child: Text(
-                                      content,
-                                      maxLines: 3,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 12,
-                                        color: appBlack.withOpacity(0.75),
-                                        fontWeight: FontWeight.w400,
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 6,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: appRed,
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                            child: const Text(
+                                              'Important',
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w700,
+                                                color: appBlack,
+                                                fontFamily: 'RobotoCondensed',
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Text(
+                                              displayTitle,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: GoogleFonts.poppins(
+                                                fontSize: 14,
+                                                color: appBlack,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ),
-                                    ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        dateText,
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 12,
+                                          color: appBlack.withOpacity(0.7),
+                                          fontWeight: FontWeight.w400,
+                                        ),
+                                      ),
+                                      if (content.isNotEmpty) ...[
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          content,
+                                          maxLines: 3,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: GoogleFonts.poppins(
+                                            fontSize: 12,
+                                            color: appBlack.withOpacity(0.75),
+                                            fontWeight: FontWeight.w400,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
-                                const SizedBox(height: 12),
+                                ),
                               ],
                             ),
                           ),
