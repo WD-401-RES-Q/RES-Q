@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
+import '../../../common/widgets/pin_numpad.dart';
 import '../../home/pages/home_page.dart';
 import '../../semi_admin/pages/semi_admin_main_page.dart';
 import '../../../common/services/user_session.dart';
@@ -23,12 +23,8 @@ class _LoginPageState extends State<LoginPage> {
   static const appOffWhite = Color(0xFFF7F8F3);
 
   final _formKey = GlobalKey<FormState>();
-  final TextEditingController _usernameCtl = TextEditingController();
-  final TextEditingController _passCtl = TextEditingController();
   bool _loading = false;
-  bool _obscure = true;
   bool _initializing = true;
-  bool _isPinLogin = true; // Use PIN login by default
   final TextEditingController _pinCtl = TextEditingController();
   final TextEditingController _phoneCtl = TextEditingController();
   bool _showPinSuccess = false;
@@ -65,8 +61,6 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   void dispose() {
-    _usernameCtl.dispose();
-    _passCtl.dispose();
     _pinCtl.dispose();
     _phoneCtl.dispose();
     super.dispose();
@@ -85,143 +79,27 @@ class _LoginPageState extends State<LoginPage> {
     }
 
     setState(() => _loading = true);
-
-    try {
-      final username = _usernameCtl.text.trim();
-      final password = _passCtl.text;
-
-      // If using PIN login mode - directly verify PIN (no phone needed)
-      if (_isPinLogin) {
-        await _verifyPinOnly();
-        return;
-      }
-
-      // Check semi-admins first (username/password login)
-      debugPrint('🔍 Checking semi_admins for username: $username');
-      final semiAdminQuery = await _firestore
-          .collection('semi_admins')
-          .where('username', isEqualTo: username)
-          .limit(1)
-          .get();
-
-      debugPrint(
-        '📊 Semi-admin query returned ${semiAdminQuery.docs.length} documents',
-      );
-
-      if (semiAdminQuery.docs.isNotEmpty) {
-        final semiAdminData = semiAdminQuery.docs.first.data();
-        final storedPassword = semiAdminData['password'] as String?;
-        debugPrint('✓ Semi-admin found. Validating password...');
-
-        if (storedPassword != null && storedPassword == password) {
-          debugPrint('✅ Semi-admin login successful!');
-          setState(() => _loading = false);
-          if (!mounted) return;
-
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const SemiAdminMainPage()),
-          );
-          return;
-        } else {
-          debugPrint('❌ Semi-admin password mismatch');
-          setState(() => _loading = false);
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Invalid password'),
-              backgroundColor: const Color(0xFFAC1B22),
-            ),
-          );
-          return;
-        }
-      }
-      debugPrint(
-        'ℹ️ Username not found in semi_admins, checking other collections...',
-      );
-
-      // Check pending first (block login if still pending)
-      final pendingQuery = await _firestore
-          .collection('pending_users')
-          .where('username', isEqualTo: username)
-          .limit(1)
-          .get();
-
-      if (pendingQuery.docs.isNotEmpty) {
-        setState(() => _loading = false);
-        if (!mounted) return;
-
-        _showPendingApprovalDialog();
-        return;
-      }
-
-      // Check approved users collection (only approved can log in)
-      final approvedQuery = await _firestore
-          .collection('approved_users')
-          .where('username', isEqualTo: username)
-          .limit(1)
-          .get();
-
-      if (approvedQuery.docs.isNotEmpty) {
-        final userData = approvedQuery.docs.first.data();
-        final accountStatus = userData['accountStatus'] as String?;
-        final storedPassword = userData['password'] as String?;
-
-        // Must be explicitly approved
-        if (accountStatus != null && accountStatus != 'approved') {
-          setState(() => _loading = false);
-          if (!mounted) return;
-          _showPendingApprovalDialog();
-          return;
-        }
-
-        if (storedPassword != null && storedPassword == password) {
-          UserSession.setUserData(userData);
-          setState(() => _loading = false);
-          if (!mounted) return;
-
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const MainPage()),
-          );
-          return;
-        } else {
-          setState(() => _loading = false);
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Invalid password'),
-              backgroundColor: const Color(0xFFAC1B22),
-            ),
-          );
-          return;
-        }
-      }
-
-      // User not found in any collection
-      setState(() => _loading = false);
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'User "$username" not found. For semi-admin: semiadmin1-5 / semi1234',
-          ),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
-        ),
-      );
-    } catch (e) {
-      setState(() => _loading = false);
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Login error: $e'), backgroundColor: Colors.red),
-      );
-    }
+    await _verifyPinOnly();
   }
 
-  // PIN login - look up PIN in Firestore to find associated phone number
+  // PIN login - verify both phone number and PIN together
   Future<void> _verifyPinOnly() async {
     final pin = _pinCtl.text.trim();
+    final phoneInput = _phoneCtl.text.trim();
+
+    // Validate phone number
+    if (phoneInput.isEmpty) {
+      setState(() => _loading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please enter your phone number'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
 
     if (pin.length != 4) {
       setState(() => _loading = false);
@@ -236,10 +114,37 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
+    // Format phone number to match Firebase format
+    String phone = phoneInput.replaceAll('-', '').trim();
+    if (phone.isNotEmpty && !phone.startsWith('+')) {
+      phone = phone.startsWith('0') ? '+63${phone.substring(1)}' : '+63$phone';
+    }
+
     try {
-      // Find user by PIN only - this will find the phone number associated with this PIN
+      // First check semi_admins collection
+      final semiAdminQuery = await _firestore
+          .collection('semi_admins')
+          .where('contactNumber', isEqualTo: phone)
+          .where('pin', isEqualTo: pin)
+          .limit(1)
+          .get();
+
+      if (semiAdminQuery.docs.isNotEmpty) {
+        // Semi-admin found - route to SemiAdminMainPage
+        debugPrint('✅ Semi-admin login successful via PIN!');
+        setState(() => _loading = false);
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const SemiAdminMainPage()),
+          );
+        }
+        return;
+      }
+
+      // Find user by both phone number AND PIN in approved_users
       final userQuery = await _firestore
           .collection('approved_users')
+          .where('contactNumber', isEqualTo: phone)
           .where('pin', isEqualTo: pin)
           .limit(1)
           .get();
@@ -299,99 +204,6 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  Future<void> _verifyPhoneForPin() async {
-    final phoneInput = _usernameCtl.text.trim();
-
-    // Format phone number
-    String phone = phoneInput.replaceAll('-', '').trim();
-    if (phone.isNotEmpty && !phone.startsWith('+')) {
-      phone = phone.startsWith('0') ? '+63${phone.substring(1)}' : '+63$phone';
-    }
-
-    try {
-      // Check if phone exists in approved_users
-      final userQuery = await _firestore
-          .collection('approved_users')
-          .where('contactNumber', isEqualTo: phone)
-          .limit(1)
-          .get();
-
-      if (userQuery.docs.isEmpty) {
-        // Check if pending
-        final pendingQuery = await _firestore
-            .collection('pending_users')
-            .where('contactNumber', isEqualTo: phone)
-            .limit(1)
-            .get();
-
-        setState(() => _loading = false);
-        if (mounted) {
-          if (pendingQuery.docs.isNotEmpty) {
-            _showPendingApprovalDialog();
-          } else {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Phone number not found. Please register first.'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        }
-        return;
-      }
-
-      // Phone found and approved - show PIN field
-      setState(() {
-        _loading = false;
-        _pinCtl.clear();
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✓ Phone verified. Please enter your PIN.'),
-            backgroundColor: Color(0xFF00A458),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      setState(() => _loading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
-  Future<void> _verifyPin() async {
-    final pin = _pinCtl.text.trim();
-
-    if (pin.length < 4) {
-      setState(() => _loading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('PIN must be at least 4 digits'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return;
-    }
-
-    setState(() => _loading = false);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Use PIN login mode'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-    }
-  }
-
   /// Seed 5 semi-admin users if collection is empty. Runs on init.
   Future<void> _seedSemiAdminsIfEmpty() async {
     debugPrint('🔍 Checking if semi_admins collection exists...');
@@ -414,30 +226,40 @@ class _LoginPageState extends State<LoginPage> {
           'fullName': 'Semi Admin One',
           'password': 'semi1234',
           'role': 'semi-admin',
+          'contactNumber': '+639111111111',
+          'pin': '1111',
         },
         {
           'username': 'semiadmin2',
           'fullName': 'Semi Admin Two',
           'password': 'semi1234',
           'role': 'semi-admin',
+          'contactNumber': '+639222222222',
+          'pin': '2222',
         },
         {
           'username': 'semiadmin3',
           'fullName': 'Semi Admin Three',
           'password': 'semi1234',
           'role': 'semi-admin',
+          'contactNumber': '+639333333333',
+          'pin': '3333',
         },
         {
           'username': 'semiadmin4',
           'fullName': 'Semi Admin Four',
           'password': 'semi1234',
           'role': 'semi-admin',
+          'contactNumber': '+639444444444',
+          'pin': '4444',
         },
         {
           'username': 'semiadmin5',
           'fullName': 'Semi Admin Five',
           'password': 'semi1234',
           'role': 'semi-admin',
+          'contactNumber': '+639555555555',
+          'pin': '5555',
         },
       ];
 
@@ -542,62 +364,28 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  Widget _numpadButton(String value, {bool isAction = false}) {
-    return SizedBox(
-      width: 70,
-      height: 70,
-      child: ElevatedButton(
-        onPressed: _loading
-            ? null
-            : () {
-                setState(() {
-                  if (value == 'C') {
-                    // Clear all
-                    _pinCtl.clear();
-                  } else if (value == '⌫') {
-                    // Delete last digit
-                    if (_pinCtl.text.isNotEmpty) {
-                      _pinCtl.text = _pinCtl.text.substring(
-                        0,
-                        _pinCtl.text.length - 1,
-                      );
-                    }
-                  } else {
-                    // Add digit (max 4)
-                    if (_pinCtl.text.length < 4) {
-                      _pinCtl.text += value;
-
-                      // Auto-submit when 4 digits are entered
-                      if (_pinCtl.text.length == 4) {
-                        Future.delayed(const Duration(milliseconds: 200), () {
-                          _submit();
-                        });
-                      }
-                    }
-                  }
-                });
-              },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isAction ? appOffWhite : Colors.white,
-          foregroundColor: appBlack,
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: appBlack.withOpacity(0.3), width: 1),
-          ),
-          padding: EdgeInsets.zero,
-        ),
-        child: Text(
-          value,
-          style: TextStyle(
-            fontSize: isAction ? 24 : 28,
-            fontWeight: FontWeight.w600,
-            color: appBlack,
-            fontFamily: 'Roboto',
-          ),
-        ),
-      ),
-    );
+  void _handlePinKey(String value) {
+    if (_loading) return;
+    setState(() {
+      if (value == 'C') {
+        _pinCtl.clear();
+        return;
+      }
+      if (value == '⌫') {
+        if (_pinCtl.text.isNotEmpty) {
+          _pinCtl.text = _pinCtl.text.substring(0, _pinCtl.text.length - 1);
+        }
+        return;
+      }
+      if (_pinCtl.text.length < 4) {
+        _pinCtl.text += value;
+        if (_pinCtl.text.length == 4) {
+          Future.delayed(const Duration(milliseconds: 200), () {
+            _submit();
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -618,82 +406,18 @@ class _LoginPageState extends State<LoginPage> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     _logo(),
-                    const SizedBox(height: 32),
-                    Text(
-                      'LOGIN',
-                      style: TextStyle(
-                        fontSize: 50,
-                        fontWeight: FontWeight.w900,
-                        color: appBlack,
-                        fontFamily: 'Roboto',
-                      ),
-                    ),
-                    const SizedBox(height: 28),
 
                     Form(
                       key: _formKey,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // Login Mode Toggle
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              TextButton(
-                                onPressed: _loading
-                                    ? null
-                                    : () {
-                                        setState(() {
-                                          _isPinLogin = true;
-                                          _usernameCtl.clear();
-                                          _passCtl.clear();
-                                          _pinCtl.clear();
-                                          _phoneCtl.clear();
-                                        });
-                                      },
-                                child: Text(
-                                  'PIN',
-                                  style: TextStyle(
-                                    color: _isPinLogin ? appBlue : Colors.grey,
-                                    fontWeight: _isPinLogin
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
-                                  ),
-                                ),
-                              ),
-                              const Text(' | '),
-                              TextButton(
-                                onPressed: _loading
-                                    ? null
-                                    : () {
-                                        setState(() {
-                                          _isPinLogin = false;
-                                          _usernameCtl.clear();
-                                          _passCtl.clear();
-                                          _pinCtl.clear();
-                                          _phoneCtl.clear();
-                                        });
-                                      },
-                                child: Text(
-                                  'Semi-Admin',
-                                  style: TextStyle(
-                                    color: !_isPinLogin ? appBlue : Colors.grey,
-                                    fontWeight: !_isPinLogin
-                                        ? FontWeight.bold
-                                        : FontWeight.normal,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-
-                          // Show Username input for Semi-Admin login
-                          if (!_isPinLogin) ...[
+                          // PIN Login (for both regular users and semi-admins)
+                            // Phone Number Field
                             Text(
-                              'USERNAME',
+                              'PHONE NUMBER',
                               style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 10,
                                 fontWeight: FontWeight.w900,
                                 color: appBlack,
                                 fontFamily: 'Roboto',
@@ -701,8 +425,8 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                             const SizedBox(height: 4),
                             TextFormField(
-                              controller: _usernameCtl,
-                              keyboardType: TextInputType.text,
+                              controller: _phoneCtl,
+                              keyboardType: TextInputType.phone,
                               style: const TextStyle(
                                 fontFamily: 'RobotoCondensed',
                                 fontWeight: FontWeight.w400,
@@ -710,7 +434,7 @@ class _LoginPageState extends State<LoginPage> {
                                 color: appBlack,
                               ),
                               decoration: InputDecoration(
-                                hintText: 'Enter Username',
+                                hintText: 'Enter Phone Number',
                                 hintStyle: TextStyle(
                                   fontFamily: 'RobotoCondensed',
                                   fontWeight: FontWeight.w400,
@@ -718,7 +442,7 @@ class _LoginPageState extends State<LoginPage> {
                                   color: appBlack.withOpacity(0.5),
                                 ),
                                 prefixIcon: const Icon(
-                                  Icons.person_outline,
+                                  Icons.phone_outlined,
                                   color: Colors.black,
                                 ),
                                 filled: true,
@@ -736,14 +460,11 @@ class _LoginPageState extends State<LoginPage> {
                                 ),
                               ),
                               validator: (v) => (v == null || v.isEmpty)
-                                  ? 'Enter username'
+                                  ? 'Enter phone number'
                                   : null,
                             ),
-                            const SizedBox(height: 15),
-                          ],
+                            const SizedBox(height: 20),
 
-                          // PIN Field (only show if PIN login - simple and direct)
-                          if (_isPinLogin) ...[
                             Text(
                               'ENTER YOUR PIN',
                               style: TextStyle(
@@ -783,134 +504,12 @@ class _LoginPageState extends State<LoginPage> {
                             const SizedBox(height: 24),
 
                             // Numpad
-                            Column(
-                              children: [
-                                // Row 1: 1, 2, 3
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    _numpadButton('1'),
-                                    const SizedBox(width: 12),
-                                    _numpadButton('2'),
-                                    const SizedBox(width: 12),
-                                    _numpadButton('3'),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-
-                                // Row 2: 4, 5, 6
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    _numpadButton('4'),
-                                    const SizedBox(width: 12),
-                                    _numpadButton('5'),
-                                    const SizedBox(width: 12),
-                                    _numpadButton('6'),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-
-                                // Row 3: 7, 8, 9
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    _numpadButton('7'),
-                                    const SizedBox(width: 12),
-                                    _numpadButton('8'),
-                                    const SizedBox(width: 12),
-                                    _numpadButton('9'),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-
-                                // Row 4: Clear, 0, Delete
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    _numpadButton('C', isAction: true),
-                                    const SizedBox(width: 12),
-                                    _numpadButton('0'),
-                                    const SizedBox(width: 12),
-                                    _numpadButton('⌫', isAction: true),
-                                  ],
-                                ),
-                              ],
+                            PinNumpad(
+                              enabled: !_loading,
+                              onKeyTap: _handlePinKey,
+                              actionBackgroundColor: appOffWhite,
+                              textColor: appBlack,
                             ),
-                            const SizedBox(height: 15),
-                          ],
-
-                          // Password (only for semi-admin)
-                          if (!_isPinLogin) ...[
-                            Text(
-                              'PASSWORD',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w900,
-                                color: appBlack,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            TextFormField(
-                              controller: _passCtl,
-                              obscureText: _obscure,
-                              decoration: InputDecoration(
-                                hintText: 'Enter Password',
-                                hintStyle: TextStyle(
-                                  fontFamily: 'RobotoCondensed',
-                                  fontWeight: FontWeight.w400,
-                                  fontSize: 14,
-                                  color: appBlack.withOpacity(0.5),
-                                ),
-                                prefixIcon: const Icon(
-                                  Icons.lock_outline,
-                                  color: Colors.black,
-                                ),
-                                suffixIcon: IconButton(
-                                  icon: Icon(
-                                    _obscure
-                                        ? Icons.visibility
-                                        : Icons.visibility_off,
-                                    size: 18,
-                                    color: Colors.grey,
-                                  ),
-                                  onPressed: () =>
-                                      setState(() => _obscure = !_obscure),
-                                ),
-                                filled: true,
-                                fillColor: const Color(0xFFF7F8F3),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  vertical: 16,
-                                  horizontal: 12,
-                                ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(
-                                    color: Colors.black,
-                                    width: 1,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(
-                                    color: Colors.black,
-                                    width: 1,
-                                  ),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(
-                                    color: Colors.black,
-                                    width: 2,
-                                  ),
-                                ),
-                              ),
-                              validator: (v) => (v == null || v.length < 6)
-                                  ? 'Password too short'
-                                  : null,
-                            ),
-                            const SizedBox(height: 20),
-                          ],
 
                           const SizedBox(height: 20),
 
@@ -952,24 +551,6 @@ class _LoginPageState extends State<LoginPage> {
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 TextButton(
-                                  onPressed: () =>
-                                      Navigator.pushNamed(context, '/forgot'),
-                                  style: TextButton.styleFrom(
-                                    padding: EdgeInsets.zero,
-                                    minimumSize: const Size(0, 0),
-                                  ),
-                                  child: Text(
-                                    'FORGOT PASSWORD?',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w400,
-                                      color: appBlack,
-                                      fontFamily: 'RobotoCondensed',
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                TextButton(
                                   onPressed: () => Navigator.pushNamed(
                                     context,
                                     '/approved-pin-creation',
@@ -978,13 +559,30 @@ class _LoginPageState extends State<LoginPage> {
                                     padding: EdgeInsets.zero,
                                     minimumSize: const Size(0, 0),
                                   ),
-                                  child: Text(
-                                    'Account Approved? Create PIN here',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w400,
-                                      color: appBlue,
-                                      fontFamily: 'RobotoCondensed',
+                                  child: RichText(
+                                    text: TextSpan(
+                                      children: [
+                                        TextSpan(
+                                          text: 'Approved Account? ',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w400,
+                                            color: appBlack,
+                                            fontFamily: 'RobotoCondensed',
+                                          ),
+                                        ),
+                                        TextSpan(
+                                          text: 'Create PIN Here!',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w700,
+                                            color: appBlue,
+                                            fontFamily: 'RobotoCondensed',
+                                            decoration:
+                                                TextDecoration.underline,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
                                 ),
@@ -992,77 +590,41 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           ),
 
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 10),
 
-                          // LOGIN button
+                          // Register link
                           Align(
                             alignment: Alignment.center,
-                            child: SizedBox(
-                              height: 50,
-                              width: 210, // 👈 control button width here
-                              child: ElevatedButton(
-                                onPressed: _loading ? null : _submit,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: appBlue,
-                                  elevation: 3, // 👈 shadow depth
-                                  shadowColor: Colors.black.withOpacity(
-                                    1,
-                                  ), // 👈 shadow color
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(50),
-                                  ),
-                                ),
-                                child: _loading
-                                    ? const SizedBox(
-                                        height: 20,
-                                        width: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : Text(
-                                        'LOGIN',
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w400,
-                                          color: Colors.white,
-                                          fontFamily: 'RobotoCondensed',
-                                          fontSize: 18,
-                                        ),
-                                      ),
+                            child: TextButton(
+                              onPressed: () =>
+                                  Navigator.pushNamed(context, '/register'),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: const Size(0, 0),
                               ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 20),
-
-                          // REGISTER button (yellow)
-                          Align(
-                            alignment: Alignment.center,
-                            child: SizedBox(
-                              height: 50,
-                              width: 210, // 👈 same width as LOGIN
-                              child: ElevatedButton(
-                                onPressed: () =>
-                                    Navigator.pushNamed(context, '/register'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: appRed,
-                                  elevation: 3, // 👈 shadow depth
-                                  shadowColor: Colors.black.withOpacity(
-                                    1,
-                                  ), // 👈 shadow color
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(50),
-                                  ),
-                                ),
-                                child: Text(
-                                  'REGISTER',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w400,
-                                    color: Colors.white,
-                                    fontFamily: 'RobotoCondensed',
-                                    fontSize: 18,
-                                  ),
+                              child: RichText(
+                                text: TextSpan(
+                                  children: [
+                                    TextSpan(
+                                      text: 'No Account yet? ',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w400,
+                                        color: appBlack,
+                                        fontFamily: 'RobotoCondensed',
+                                      ),
+                                    ),
+                                    TextSpan(
+                                      text: 'Register Now!',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                        color: appBlue,
+                                        fontFamily: 'RobotoCondensed',
+                                        decoration: TextDecoration.underline,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),

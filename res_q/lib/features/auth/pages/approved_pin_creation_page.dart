@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../../common/widgets/pin_numpad.dart';
 
 class ApprovedPinCreationPage extends StatefulWidget {
   const ApprovedPinCreationPage({super.key});
@@ -157,59 +158,28 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
     }
   }
 
-  Widget _numpadButton(String value, {bool isAction = false}) {
-    return SizedBox(
-      width: 70,
-      height: 70,
-      child: ElevatedButton(
-        onPressed: _loading
-            ? null
-            : () {
-                setState(() {
-                  if (value == 'C') {
-                    _pinCtl.clear();
-                  } else if (value == '⌫') {
-                    if (_pinCtl.text.isNotEmpty) {
-                      _pinCtl.text = _pinCtl.text.substring(
-                        0,
-                        _pinCtl.text.length - 1,
-                      );
-                    }
-                  } else {
-                    if (_pinCtl.text.length < 4) {
-                      _pinCtl.text += value;
-
-                      // Auto-submit when 4 digits are entered
-                      if (_pinCtl.text.length == 4) {
-                        Future.delayed(const Duration(milliseconds: 300), () {
-                          _createPin();
-                        });
-                      }
-                    }
-                  }
-                });
-              },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isAction ? appOffWhite : Colors.white,
-          foregroundColor: appBlack,
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: BorderSide(color: appBlack.withOpacity(0.3), width: 1),
-          ),
-          padding: EdgeInsets.zero,
-        ),
-        child: Text(
-          value,
-          style: TextStyle(
-            fontSize: isAction ? 24 : 28,
-            fontWeight: FontWeight.w600,
-            color: appBlack,
-            fontFamily: 'Roboto',
-          ),
-        ),
-      ),
-    );
+  void _handlePinKey(String value) {
+    if (_loading) return;
+    setState(() {
+      if (value == 'C') {
+        _pinCtl.clear();
+        return;
+      }
+      if (value == '⌫') {
+        if (_pinCtl.text.isNotEmpty) {
+          _pinCtl.text = _pinCtl.text.substring(0, _pinCtl.text.length - 1);
+        }
+        return;
+      }
+      if (_pinCtl.text.length < 4) {
+        _pinCtl.text += value;
+        if (_pinCtl.text.length == 4) {
+          Future.delayed(const Duration(milliseconds: 300), () {
+            _createPin();
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -345,52 +315,11 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
                         const SizedBox(height: 32),
 
                         // Numpad
-                        Column(
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                _numpadButton('1'),
-                                const SizedBox(width: 12),
-                                _numpadButton('2'),
-                                const SizedBox(width: 12),
-                                _numpadButton('3'),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                _numpadButton('4'),
-                                const SizedBox(width: 12),
-                                _numpadButton('5'),
-                                const SizedBox(width: 12),
-                                _numpadButton('6'),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                _numpadButton('7'),
-                                const SizedBox(width: 12),
-                                _numpadButton('8'),
-                                const SizedBox(width: 12),
-                                _numpadButton('9'),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                _numpadButton('C', isAction: true),
-                                const SizedBox(width: 12),
-                                _numpadButton('0'),
-                                const SizedBox(width: 12),
-                                _numpadButton('⌫', isAction: true),
-                              ],
-                            ),
-                          ],
+                        PinNumpad(
+                          enabled: !_loading,
+                          onKeyTap: _handlePinKey,
+                          actionBackgroundColor: appOffWhite,
+                          textColor: appBlack,
                         ),
                       ],
                     ],
