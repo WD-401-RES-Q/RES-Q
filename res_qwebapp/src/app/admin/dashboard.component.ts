@@ -16,6 +16,8 @@ import {
   faFire,
   faCloudBolt,
   faPrint,
+  faHouseFloodWater,
+  faHouseChimneyCrack,
 } from '@fortawesome/free-solid-svg-icons';
 
 type ReportRecord = {
@@ -43,13 +45,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
   otherEmergencies = 0;
   vehicularEmergencies = 0;
   fireEmergencies = 0;
-  naturalHazards = 0;
+  earthquakeEmergencies = 0;
+  floodEmergencies = 0;
 
   // FontAwesome icons
   faOther = faKitMedical;
   faVehicular = faCarBurst;
   faFire = faFire;
-  faHazard = faCloudBolt;
+  faEarthquake = faHouseChimneyCrack;
+  faFlood = faHouseFloodWater;
   faPrint = faPrint;
 
   // TIME RANGE DROPDOWN
@@ -63,7 +67,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     'Other Emergencies',
     'Vehicular Emergencies',
     'Fire Emergencies',
-    'Natural Hazards'
+    'Earthquake',
+    'Flood'
   ];
 
   // Current date for PDF
@@ -76,7 +81,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       {
         data: [],
         label: 'Total Reports',
-        backgroundColor: '#AC1B22',
+        backgroundColor: '#8b5cf6',
         borderRadius: 6,
       },
     ],
@@ -171,7 +176,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.otherEmergencies = 0;
     this.vehicularEmergencies = 0;
     this.fireEmergencies = 0;
-    this.naturalHazards = 0;
+    this.earthquakeEmergencies = 0;
+    this.floodEmergencies = 0;
   }
 
   private computeStatusCounts(reports: ReportRecord[]) {
@@ -208,21 +214,18 @@ export class DashboardComponent implements OnInit, OnDestroy {
         return;
       }
 
-      if (type.includes('other')) {
-        this.otherEmergencies += 1;
+      if (type.includes('earthquake') || type.includes('quake')) {
+        this.earthquakeEmergencies += 1;
         return;
       }
 
-      if (
-        type.includes('flood') ||
-        type.includes('earthquake') ||
-        type.includes('quake') ||
-        type.includes('storm') ||
-        type.includes('typhoon') ||
-        type.includes('hazard') ||
-        type.includes('landslide')
-      ) {
-        this.naturalHazards += 1;
+      if (type.includes('flood')) {
+        this.floodEmergencies += 1;
+        return;
+      }
+
+      if (type.includes('other')) {
+        this.otherEmergencies += 1;
         return;
       }
     });
@@ -263,11 +266,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   private getCategoryColor(category: string): string {
     switch (category) {
+      case 'Total Reports': return '#8b5cf6';
       case 'Other Emergencies': return '#00a458';
       case 'Vehicular Emergencies': return '#f09002';
       case 'Fire Emergencies': return '#ac1b22';
-      case 'Natural Hazards': return 'rgb(60, 131, 237)';
-      default: return '#AC1B22';
+      case 'Earthquake': return 'rgb(139, 69, 19)';
+      case 'Flood': return 'rgb(60, 131, 237)';
+      default: return '#8b5cf6';
     }
   }
 
@@ -364,14 +369,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
           return type.includes('vehic') || type.includes('car') || type.includes('traffic');
         case 'Other Emergencies':
           return type.includes('other');
-        case 'Natural Hazards':
-          return type.includes('flood') ||
-                 type.includes('earthquake') ||
-                 type.includes('quake') ||
-                 type.includes('storm') ||
-                 type.includes('typhoon') ||
-                 type.includes('hazard') ||
-                 type.includes('landslide');
+        case 'Earthquake':
+          return type.includes('earthquake') || type.includes('quake');
+        case 'Flood':
+          return type.includes('flood');
         default:
           return false;
       }
@@ -591,7 +592,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
       { label: 'Other Emergencies', value: this.otherEmergencies, color: [0, 164, 88] },
       { label: 'Vehicular Emergencies', value: this.vehicularEmergencies, color: [240, 144, 2] },
       { label: 'Fire Emergencies', value: this.fireEmergencies, color: [172, 27, 34] },
-      { label: 'Natural Hazards', value: this.naturalHazards, color: [60, 131, 237] },
+      { label: 'Earthquake', value: this.earthquakeEmergencies, color: [139, 69, 19] },
+      { label: 'Flood', value: this.floodEmergencies, color: [60, 131, 237] },
     ];
 
     const boxWidth = (contentWidth - 2) / 2;

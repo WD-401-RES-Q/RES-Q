@@ -1,6 +1,13 @@
 <section class="admin-page accounts-page">
   <header class="page-header">
-    <h1>Verified Accounts ({{ accounts.length }})</h1>
+    <h1>Verified Accounts ({{ filteredAccounts.length }})</h1>
+    <input 
+      type="text" 
+      class="search-bar" 
+      placeholder="Search..."
+      [(ngModel)]="searchQuery"
+      (input)="onSearchChange()"
+    />
   </header>
 
   <div *ngIf="isLoading$ | async" class="empty-state">
@@ -28,7 +35,7 @@
 
         <tbody>
           <tr
-            *ngFor="let acc of accounts; trackBy: trackById"
+            *ngFor="let acc of filteredAccounts; trackBy: trackById"
             (click)="select(acc)"
             [class.selected-row]="selected?.id === acc.id"
           >
@@ -78,14 +85,50 @@
     </div>
   </div>
 
-  <!-- BAN CONFIRMATION MODAL -->
-  <div class="modal-overlay" *ngIf="showBanModal" (click)="cancelBan()">
-    <div class="modal-content" (click)="$event.stopPropagation()">
-      <h3 class="modal-title">BAN THIS ACCOUNT?</h3>
-      <p class="modal-subtitle">ARE YOU SURE?</p>
+  <!-- BAN REASONS MODAL -->
+  <div class="modal-overlay" *ngIf="showBanReasonsModal" (click)="cancelBan()">
+    <div class="modal-content ban-reasons-modal" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">BAN ACCOUNT</h3>
+      <p class="modal-subtitle">Select reason(s) for banning {{ accountToBan?.fullName }}</p>
+      
+      <div class="ban-reasons-list">
+        <label class="reason-checkbox" *ngFor="let reason of banReasons">
+          <input type="checkbox" [(ngModel)]="reason.checked" />
+          <span class="reason-label">{{ reason.label }}</span>
+        </label>
+      </div>
+
       <div class="modal-actions">
-        <button type="button" class="btn-modal btn-yes" (click)="confirmBan()">YES</button>
-        <button type="button" class="btn-modal btn-no" (click)="cancelBan()">NO</button>
+        <button type="button" class="btn-modal btn-permanent" (click)="confirmBan('permanent')">PERMANENT</button>
+        <button type="button" class="btn-modal btn-yes" (click)="confirmBan('7days')">7 DAYS</button>
+        <button type="button" class="btn-modal btn-no" (click)="cancelBan()">CANCEL</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BAN CONFIRMATION MODAL -->
+  <div class="modal-overlay" *ngIf="showBanConfirmationModal" (click)="cancelBanConfirmation()">
+    <div class="modal-content ban-confirmation-modal" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">CONFIRM BAN</h3>
+      <p class="modal-subtitle">{{ accountToBan?.fullName }}</p>
+      
+      <div class="ban-summary">
+        <div class="ban-info-item">
+          <strong>Duration:</strong> 
+          <span class="ban-duration">{{ banDurationText }}</span>
+        </div>
+        
+        <div class="ban-info-item">
+          <strong>Reason(s):</strong>
+          <ul class="ban-reasons-summary">
+            <li *ngFor="let reason of selectedBanReasons">{{ reason }}</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-yes" (click)="finalConfirmBan(); $event.stopPropagation()">CONFIRM BAN</button>
+        <button type="button" class="btn-modal btn-no" (click)="cancelBanConfirmation()">GO BACK</button>
       </div>
     </div>
   </div>
@@ -417,6 +460,17 @@
     cursor: pointer;
     min-width: 100px;
     transition: all 0.2s ease;
+  }
+
+  .btn-permanent {
+    background-color: #ac1b22;
+    color: white;
+  }
+
+  .btn-permanent:hover {
+    background-color: #8f161c;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(172, 27, 34, 0.4);
   }
 
   .btn-yes {

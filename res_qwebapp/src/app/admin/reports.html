@@ -59,11 +59,6 @@
         </div>
 
         <div class="meta-group">
-          <span class="meta-label">Location:</span>
-          <span class="meta-value">{{ report.location }}</span>
-        </div>
-
-        <div class="meta-group">
           <span class="meta-label">Date:</span>
           <span class="meta-value">{{ report.date }}</span>
         </div>
@@ -130,28 +125,28 @@
 
       </div>
 
-      <!-- APPROVAL TIMELINE -->
-      <div class="approval-timeline" *ngIf="report.status !== 'Pending'">
-        <h3 class="timeline-title">Timeline</h3>
+      <!-- ACTIVITY CARD -->
+      <div class="activity-card">
+        <h3 class="activity-title">Activity</h3>
         
-        <div class="timeline-item" *ngIf="report.approvedBy">
-          <span class="timeline-label">Approved by:</span>
-          <span class="timeline-value">{{ report.approvedBy }}</span>
+        <div class="activity-item">
+          <span class="activity-label">Approved by:</span>
+          <span class="activity-value">{{ report.approvedBy || '—' }}</span>
         </div>
 
-        <div class="timeline-item" *ngIf="report.approvedAt">
-          <span class="timeline-label">Time approved:</span>
-          <span class="timeline-value">{{ report.approvedAt }}</span>
+        <div class="activity-item">
+          <span class="activity-label">Time responding:</span>
+          <span class="activity-value">{{ report.respondingAt || '—' }}</span>
         </div>
 
-        <div class="timeline-item" *ngIf="report.arrivedAt">
-          <span class="timeline-label">Arrived on scene:</span>
-          <span class="timeline-value">{{ report.arrivedAt }}</span>
+        <div class="activity-item">
+          <span class="activity-label">Time on scene:</span>
+          <span class="activity-value">{{ report.arrivedAt || '—' }}</span>
         </div>
 
-        <div class="timeline-item" *ngIf="report.resolvedAt">
-          <span class="timeline-label">Time resolved:</span>
-          <span class="timeline-value">{{ report.resolvedAt }}</span>
+        <div class="activity-item">
+          <span class="activity-label">Time resolved:</span>
+          <span class="activity-value">{{ report.resolvedAt || report.flaggedAt || '—' }}</span>
         </div>
       </div>
 

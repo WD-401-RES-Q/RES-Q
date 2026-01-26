@@ -68,14 +68,26 @@
         <div class="cat-value">{{ fireEmergencies }}</div>
       </div>
     </div>
+  </section>
 
-    <div class="category-card cat-hazard">
+  <section class="category-row">
+    <div class="category-card cat-earthquake">
       <div class="cat-icon-wrap">
-        <fa-icon [icon]="faHazard" class="cat-icon"></fa-icon>
+        <fa-icon [icon]="faEarthquake" class="cat-icon"></fa-icon>
       </div>
       <div class="cat-text">
-        <div class="cat-title">NATURAL HAZARDS</div>
-        <div class="cat-value">{{ naturalHazards }}</div>
+        <div class="cat-title">EARTHQUAKE</div>
+        <div class="cat-value">{{ earthquakeEmergencies }}</div>
+      </div>
+    </div>
+
+    <div class="category-card cat-flood">
+      <div class="cat-icon-wrap">
+        <fa-icon [icon]="faFlood" class="cat-icon"></fa-icon>
+      </div>
+      <div class="cat-text">
+        <div class="cat-title">FLOOD</div>
+        <div class="cat-value">{{ floodEmergencies }}</div>
       </div>
     </div>
   </section>
@@ -295,7 +307,11 @@
     background: #ac1b22;
   }
 
-  .cat-hazard {
+  .cat-earthquake {
+    background: rgb(139, 69, 19);
+  }
+
+  .cat-flood {
     background: rgb(60, 131, 237);
   }
 

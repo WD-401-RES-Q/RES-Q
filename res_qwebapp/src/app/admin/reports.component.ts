@@ -23,8 +23,10 @@ interface Report {
   status: 'Pending' | 'Approved' | 'Flagged';
   approvedBy?: string;
   approvedAt?: string;
+  respondingAt?: string;
   arrivedAt?: string;
   resolvedAt?: string;
+  flaggedAt?: string;
 }
 
 interface Comment {
@@ -96,6 +98,23 @@ export class ReportsComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.loadReports();
+  }
+
+  private formatTimestamp(timestamp: any): string {
+    if (!timestamp) return '';
+    try {
+      const date = typeof timestamp.toDate === 'function' ? timestamp.toDate() : new Date(timestamp);
+      if (isNaN(date.getTime())) return '';
+      return date.toLocaleString('en-US', { 
+        month: 'short', 
+        day: 'numeric', 
+        hour: 'numeric', 
+        minute: '2-digit',
+        hour12: true 
+      });
+    } catch {
+      return '';
+    }
   }
 
   ngOnDestroy() {
@@ -184,8 +203,10 @@ export class ReportsComponent implements OnInit, OnDestroy {
       status: status,
       approvedBy: doc.approvedBy ?? undefined,
       approvedAt: doc.approvedAt ? this.formatTimestamp(doc.approvedAt) : undefined,
+      respondingAt: doc.respondingAt ? this.formatTimestamp(doc.respondingAt) : undefined,
       arrivedAt: doc.arrivedAt ? this.formatTimestamp(doc.arrivedAt) : undefined,
       resolvedAt: doc.resolvedAt ? this.formatTimestamp(doc.resolvedAt) : undefined,
+      flaggedAt: doc.flaggedAt ? this.formatTimestamp(doc.flaggedAt) : undefined,
     };
   }
 
@@ -201,13 +222,6 @@ export class ReportsComponent implements OnInit, OnDestroy {
     const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
     const timeOptions: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit', hour12: true };
     return [date.toLocaleDateString(undefined, options), date.toLocaleTimeString(undefined, timeOptions)];
-  }
-
-  private formatTimestamp(value: any): string {
-    const dateObj = this.coerceDate(value);
-    if (!dateObj) return '–';
-    const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true };
-    return dateObj.toLocaleDateString(undefined, options);
   }
 
   // Filter switching
@@ -235,8 +249,14 @@ export class ReportsComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const adminName = localStorage.getItem('adminName') || 'Admin';
+
     this.firestoreService
-      .updateDocument('reports', this.reportToApprove.id, { status: 'Approved' })
+      .updateDocument('reports', this.reportToApprove.id, { 
+        status: 'Approved',
+        approvedBy: adminName,
+        approvedAt: new Date()
+      })
       .catch((err) => {
         console.error('Failed to approve report:', err);
       });

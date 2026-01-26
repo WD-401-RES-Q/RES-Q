@@ -900,13 +900,19 @@ class _AdminMapPageState extends State<AdminMapPage>
     String status,
   ) async {
     try {
+      print('🔵 _updateIncidentStatus called');
+      print('  reportId: $reportId');
+      print('  status param: $status');
+      
       if (status.toLowerCase() == 'resolved' ||
           status.toLowerCase() == 'incident resolved') {
+        print('  → Handling RESOLVED');
         await _markIncidentResolved(reportId);
         return;
       }
       if (status.toLowerCase() == 'flagged' ||
           status.toLowerCase() == 'unverified') {
+        print('  → Handling FLAGGED');
         await FirebaseFirestore.instance
             .collection('reports')
             .doc(reportId)
@@ -916,10 +922,43 @@ class _AdminMapPageState extends State<AdminMapPage>
           'flaggedAt': Timestamp.now(),
           'resolvedAt': FieldValue.delete(),
         });
+        print('  ✓ FLAGGED written to Firestore');
         _cancelResolvedRemoval(reportId);
         _scheduleResolvedRemoval(reportId, DateTime.now(), Duration.zero);
         return;
       }
+      
+      // Handle responding and on scene - only update timestamps, keep status as Pending
+      if (status.toLowerCase() == 'responding') {
+        print('  → Handling RESPONDING');
+        print('  Writing: respondingAt + responderStatus only, NOT changing status field');
+        await FirebaseFirestore.instance
+            .collection('reports')
+            .doc(reportId)
+            .update({
+          'respondingAt': Timestamp.now(),
+          'responderStatus': 'RESPONDING',
+        });
+        print('  ✓ RESPONDING written to Firestore (status field NOT changed)');
+        return;
+      }
+      
+      if (status.toLowerCase() == 'on scene') {
+        print('  → Handling ON SCENE');
+        print('  Writing: arrivedAt + responderStatus only, NOT changing status field');
+        await FirebaseFirestore.instance
+            .collection('reports')
+            .doc(reportId)
+            .update({
+          'arrivedAt': Timestamp.now(),
+          'responderStatus': 'ON SCENE',
+        });
+        print('  ✓ ON SCENE written to Firestore (status field NOT changed)');
+        return;
+      }
+      
+      // For any other status, update normally
+      print('  → Handling other status: $status');
       await FirebaseFirestore.instance
           .collection('reports')
           .doc(reportId)

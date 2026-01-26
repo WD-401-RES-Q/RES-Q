@@ -29,10 +29,15 @@ export class AdminLayoutComponent implements OnInit {
       map(users => users.length)
     );
 
-    // TODO: Add pending and flagged reports observables when available
-    // For now, use placeholder values
-    this.pendingReportsCount$ = new Observable(observer => observer.next(0));
-    this.flaggedReportsCount$ = new Observable(observer => observer.next(0));
+    // Pending reports count
+    this.pendingReportsCount$ = this.firestoreService.pendingReports$.pipe(
+      map(reports => reports.length)
+    );
+
+    // Flagged reports count
+    this.flaggedReportsCount$ = this.firestoreService.flaggedReports$.pipe(
+      map(reports => reports.length)
+    );
   }
 
   logout() {

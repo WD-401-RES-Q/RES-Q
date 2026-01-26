@@ -109,7 +109,10 @@ export class FirestoreService {
       this.ngZone.run(() => {
         this.reportsSubject.next(reports);
         // Seed filtered subjects too for immediate UI without waiting on snapshots
-        const pendingSeed = reports.filter((r: any) => (r.status ?? '').toString().toLowerCase() === 'pending');
+        const pendingSeed = reports.filter((r: any) => {
+          const s = (r.status ?? '').toString().toLowerCase();
+          return s === 'pending' || s === 'responding' || s === 'on scene';
+        });
         const approvedSeed = reports.filter((r: any) => {
           const s = (r.status ?? '').toString().toLowerCase();
           return s === 'approved' || s === 'resolved';
@@ -215,8 +218,11 @@ export class FirestoreService {
         }
       );
 
-      // Pending reports listener (status == Pending)
-      const pendingReportsQuery = query(collection(db, 'reports'), where('status', '==', 'Pending'));
+      // Pending reports listener (Pending, RESPONDING, ON SCENE)
+      const pendingReportsQuery = query(
+        collection(db, 'reports'), 
+        where('status', 'in', ['Pending', 'PENDING', 'RESPONDING', 'ON SCENE'])
+      );
       this.pendingReportsUnsubscribe = onSnapshot(
         pendingReportsQuery,
         (snapshot) => {
