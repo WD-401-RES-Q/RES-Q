@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
-import 'pages/home_page.dart';
-import 'pages/loading_screen.dart';
-import 'pages/semi-admin/semi_admin_main_page.dart';
+import 'features/home/pages/home_page.dart';
+import 'features/loading/pages/loading_screen.dart';
+import 'features/semi_admin/pages/semi_admin_main_page.dart';
 // auth pages
-import 'pages/auth/login_page.dart';
-import 'pages/auth/registration_page.dart';
-import 'pages/auth/forgot_password_page.dart';
-import 'pages/auth/otp_page.dart';
-import 'pages/auth/pin_creation_page.dart';
-import 'pages/auth/approved_pin_creation_page.dart';
+import 'features/auth/pages/login_page.dart';
+import 'features/auth/pages/registration_page.dart';
+import 'features/auth/pages/forgot_password_page.dart';
+import 'features/auth/pages/otp_page.dart';
+import 'features/auth/pages/pin_creation_page.dart';
+import 'features/auth/pages/approved_pin_creation_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

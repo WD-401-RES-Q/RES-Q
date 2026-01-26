@@ -1,0 +1,120 @@
+<section class="admin-page unverified-page">
+  <header class="page-header">
+    <h1>Unverified Accounts ({{ accounts.length }})</h1>
+  </header>
+
+  <div *ngIf="isLoading$ | async" class="empty-state">
+    <p>Loading pending accounts...</p>
+  </div>
+
+  <div *ngIf="(!(isLoading$ | async)) && accounts.length === 0" class="empty-state">
+    <p>No pending accounts waiting for approval.</p>
+  </div>
+
+  <div *ngIf="accounts.length > 0" class="accounts-table-wrapper">
+    <table class="accounts-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Username</th>
+          <th>Email</th>
+          <th>Address</th>
+          <th>Birthdate</th>
+          <th>Phone</th>
+          <th>Valid ID</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        <tr *ngFor="let acc of accounts">
+          <td>{{ acc.fullName }}</td>
+          <td>@{{ acc.username }}</td>
+          <td>{{ acc.email }}</td>
+          <td>{{ acc.address }}</td>
+          <td>{{ acc.dateOfBirth }}</td>
+          <td>{{ acc.contactNumber }}</td>
+
+          <td>
+            <span *ngIf="acc.idPhotoPath" class="id-badge">✓ Uploaded</span>
+            <span *ngIf="!acc.idPhotoPath" class="id-badge missing">✗ Missing</span>
+          </td>
+
+          <td>
+            <div class="action-buttons">
+              <button class="btn btn-approve" (click)="openApproveConfirm(acc)">
+                Approve
+              </button>
+
+              <button class="btn btn-reject" (click)="openRejectConfirm(acc)">
+                Reject
+              </button>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Confirmation Modal -->
+  <div *ngIf="showConfirmModal" class="modal-overlay" (click)="closeConfirmModal()">
+    <div class="modal-content confirm-modal" (click)="$event.stopPropagation()">
+      <div class="modal-header" [class.reject-header]="confirmAction === 'reject'">
+        <h3>{{ confirmAction === 'approve' ? 'Approve Account' : 'Reject Account' }}</h3>
+        <button class="modal-close" (click)="closeConfirmModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p *ngIf="confirmAction === 'approve'">
+          Are you sure you want to approve <strong>{{ selectedAccount?.fullName }}</strong>?
+        </p>
+        <div *ngIf="confirmAction === 'reject'">
+          <p>Are you sure you want to reject <strong>{{ selectedAccount?.fullName }}</strong>?</p>
+          <div class="form-group">
+            <label for="rejectionReason">Reason for rejection:</label>
+            <textarea
+              id="rejectionReason"
+              [(ngModel)]="rejectionReason"
+              rows="4"
+              placeholder="Enter reason for rejection..."
+              class="reason-textarea"
+            ></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" (click)="closeConfirmModal()">Cancel</button>
+        <button
+          *ngIf="confirmAction === 'approve'"
+          class="btn btn-confirm-approve"
+          (click)="confirmApprove()"
+        >
+          Yes, Approve
+        </button>
+        <button
+          *ngIf="confirmAction === 'reject'"
+          class="btn btn-confirm-reject"
+          (click)="confirmReject()"
+          [disabled]="!rejectionReason.trim()"
+        >
+          Yes, Reject
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Result Modal -->
+  <div *ngIf="showModal" class="modal-overlay" (click)="closeModal()">
+    <div class="modal-content" (click)="$event.stopPropagation()" [class.error]="modalType === 'error'">
+      <div class="modal-header">
+        <h3>{{ modalTitle }}</h3>
+        <button class="modal-close" (click)="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>{{ modalMessage }}</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" (click)="closeModal()">OK</button>
+      </div>
+    </div>
+  </div>
+</section>

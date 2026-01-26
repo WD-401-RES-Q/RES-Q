@@ -1,0 +1,179 @@
+<section class="admin-page accounts-page">
+  <header class="page-header">
+    <h1>Verified Accounts ({{ filteredAccounts.length }})</h1>
+    <input 
+      type="text" 
+      class="search-bar" 
+      placeholder="Search..."
+      [(ngModel)]="searchQuery"
+      (input)="onSearchChange()"
+    />
+  </header>
+
+  <div *ngIf="isLoading$ | async" class="empty-state">
+    <p>Loading verified accounts...</p>
+  </div>
+
+  <div *ngIf="(!(isLoading$ | async)) && accounts.length === 0" class="empty-state">
+    <p>No approved accounts yet.</p>
+  </div>
+
+  <div *ngIf="accounts.length > 0" class="accounts-layout">
+    <!-- TABLE SECTION -->
+    <div class="accounts-table-wrapper">
+      <table class="accounts-table">
+        <thead>
+          <tr>
+            <th class="col-name">Name</th>
+            <th class="col-user">Username</th>
+            <th class="col-email">Email</th>
+            <th class="col-phone">Phone</th>
+            <th class="col-date">Approved Date</th>
+            <th class="col-actions">Actions</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          <tr
+            *ngFor="let acc of filteredAccounts; trackBy: trackById"
+            (click)="select(acc)"
+            [class.selected-row]="selected?.id === acc.id"
+          >
+            <td class="col-name">{{ acc.fullName }}</td>
+            <td class="col-user">@{{ acc.username }}</td>
+            <td class="col-email">{{ acc.email }}</td>
+            <td class="col-phone">{{ acc.contactNumber }}</td>
+            <td class="col-date">
+              {{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'mediumDate') : 'N/A' }}
+            </td>
+
+            <!-- prevent row-click from double firing when pressing buttons -->
+            <td class="col-actions" (click)="$event.stopPropagation()">
+              <div class="action-buttons">
+                <button type="button" class="btn btn-view" (click)="select(acc)">View</button>
+                <button *ngIf="acc.accountStatus === 'BANNED'; else banAction" type="button" class="btn btn-ban" (click)="openUnbanConfirmation(acc)">Unban</button>
+                <ng-template #banAction>
+                  <button type="button" class="btn btn-ban" (click)="ban(acc)">Ban</button>
+                </ng-template>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="hint">Click a row to view details.</p>
+    </div>
+
+    <!-- DETAILS PANEL -->
+    <div class="account-details" *ngIf="selected as acc">
+      <h2>Account Details</h2>
+
+      <div class="detail-grid">
+        <p><strong>Full Name:</strong> {{ acc.fullName }}</p>
+        <p><strong>Username:</strong> @{{ acc.username }}</p>
+        <p><strong>Email:</strong> {{ acc.email }}</p>
+        <p><strong>Address:</strong> {{ acc.address }}</p>
+        <p><strong>Birthdate:</strong> {{ acc.dateOfBirth }}</p>
+        <p><strong>Phone:</strong> {{ acc.contactNumber }}</p>
+        <p><strong>Status:</strong> {{ acc.accountStatus || 'N/A' }}</p>
+        <p><strong>Approved By:</strong> {{ acc.approvedBy || 'N/A' }}</p>
+        <p><strong>Approved On:</strong> {{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'medium') : 'N/A' }}</p>
+      </div>
+
+      <div class="id-preview" *ngIf="getIdPhotoUrl(acc)">
+        <p><strong>Valid ID Status:</strong></p>
+        <button type="button" class="id-badge id-link" (click)="openIdModal(acc)">Uploaded (View)</button>
+      </div>
+
+      <button *ngIf="acc.accountStatus === 'BANNED'; else banBtn" type="button" class="btn btn-ban big" (click)="openUnbanConfirmation(acc)">Revert Ban</button>
+      <ng-template #banBtn>
+        <button type="button" class="btn btn-ban big" (click)="ban(acc)">Ban Account</button>
+      </ng-template>
+    </div>
+  </div>
+
+  <!-- BAN REASONS MODAL -->
+  <div class="modal-overlay" *ngIf="showBanReasonsModal" (click)="cancelBan()">
+    <div class="modal-content ban-reasons-modal" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">BAN ACCOUNT</h3>
+      <p class="modal-subtitle">Select reason(s) for banning {{ accountToBan?.fullName }}</p>
+      
+      <div class="ban-reasons-list">
+        <label class="reason-checkbox" *ngFor="let reason of banReasons">
+          <input type="checkbox" [(ngModel)]="reason.checked" />
+          <span class="reason-label">{{ reason.label }}</span>
+        </label>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-permanent" (click)="confirmBan('permanent')">PERMANENT</button>
+        <button type="button" class="btn-modal btn-yes" (click)="confirmBan('7days')">7 DAYS</button>
+        <button type="button" class="btn-modal btn-no" (click)="cancelBan()">CANCEL</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BAN CONFIRMATION MODAL -->
+  <div class="modal-overlay" *ngIf="showBanConfirmationModal" (click)="cancelBanConfirmation()">
+    <div class="modal-content ban-confirmation-modal" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">CONFIRM BAN</h3>
+      <p class="modal-subtitle">{{ accountToBan?.fullName }}</p>
+      
+      <div class="ban-summary">
+        <div class="ban-info-item">
+          <strong>Duration:</strong> 
+          <span class="ban-duration">{{ banDurationText }}</span>
+        </div>
+        
+        <div class="ban-info-item">
+          <strong>Reason(s):</strong>
+          <ul class="ban-reasons-summary">
+            <li *ngFor="let reason of selectedBanReasons">{{ reason }}</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-yes" (click)="finalConfirmBan(); $event.stopPropagation()">CONFIRM BAN</button>
+        <button type="button" class="btn-modal btn-no" (click)="cancelBanConfirmation()">GO BACK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- UNBAN CONFIRMATION MODAL -->
+  <div class="modal-overlay" *ngIf="showUnbanConfirmationModal" (click)="cancelUnban()">
+    <div class="modal-content ban-confirmation-modal" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">REVERT BAN</h3>
+      <p class="modal-subtitle">{{ accountToUnban?.fullName }}</p>
+
+      <div class="ban-summary">
+        <div class="ban-info-item">
+          <strong>Status will be set to:</strong>
+          <span class="ban-duration">Approved</span>
+        </div>
+        <div class="ban-info-item">
+          <strong>Note:</strong>
+          <span class="ban-duration">ID status and details remain unchanged.</span>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-yes" (click)="confirmUnban(); $event.stopPropagation()" [disabled]="isProcessingUnban">CONFIRM</button>
+        <button type="button" class="btn-modal btn-no" (click)="cancelUnban()">CANCEL</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ID PREVIEW MODAL -->
+  <div class="modal-overlay" *ngIf="showIdModal" (click)="closeIdModal()">
+    <div class="modal-content id-modal" (click)="$event.stopPropagation()">
+      <div class="id-modal-header">
+        <h3 class="modal-title">VALID ID</h3>
+        <button type="button" class="id-modal-close" (click)="closeIdModal()">×</button>
+      </div>
+      <div class="id-modal-body">
+        <img *ngIf="idModalUrl" [src]="idModalUrl" alt="Valid ID" />
+      </div>
+    </div>
+  </div>
+</section>
