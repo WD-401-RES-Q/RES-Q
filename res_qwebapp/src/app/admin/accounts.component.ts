@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, OnInit, OnDestroy, NgZone, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FirestoreService } from '../firestore.service';
@@ -42,13 +42,16 @@ export class AccountsComponent implements OnInit, OnDestroy {
   showBanModal = false;
   showBanReasonsModal = false;
   showBanConfirmationModal = false;
+  showUnbanConfirmationModal = false;
   accountToBan: Account | null = null;
+  accountToUnban: Account | null = null;
   showIdModal = false;
   idModalUrl: string | null = null;
   banDuration: 'permanent' | '7days' | null = null;
   banDurationText: string = '';
   selectedBanReasons: string[] = [];
   isProcessingBan: boolean = false;
+  isProcessingUnban: boolean = false;
   banReasons: BanReason[] = [
     { id: 'false-report', label: 'False Report', checked: false },
     { id: 'vulgar-comments', label: 'Vulgar Comments', checked: false },
@@ -58,7 +61,9 @@ export class AccountsComponent implements OnInit, OnDestroy {
 
   constructor(
     private firestoreService: FirestoreService,
-    private firebaseStorageService: FirebaseStorageService
+    private firebaseStorageService: FirebaseStorageService,
+    private ngZone: NgZone,
+    private cdr: ChangeDetectorRef
   ) {
     console.log('AccountsComponent constructor called');
     // Expose the observables directly
@@ -152,6 +157,51 @@ export class AccountsComponent implements OnInit, OnDestroy {
     this.showBanReasonsModal = true;
   }
 
+  openUnbanConfirmation(account: Account) {
+    console.log('=== OPEN UNBAN CONFIRMATION ===', account.fullName);
+    this.accountToUnban = account;
+    this.showUnbanConfirmationModal = true;
+    console.log('showUnbanConfirmationModal set to true');
+  }
+
+  cancelUnban() {
+    this.showUnbanConfirmationModal = false;
+    this.accountToUnban = null;
+  }
+
+  async confirmUnban() {
+    console.log('=== CONFIRM UNBAN CALLED ===');
+    if (!this.accountToUnban || this.isProcessingUnban) {
+      console.log('Early return: accountToUnban=', this.accountToUnban, 'isProcessingUnban=', this.isProcessingUnban);
+      return;
+    }
+    
+    const accountId = this.accountToUnban.id;
+    this.isProcessingUnban = true;
+    console.log('Starting unban for:', this.accountToUnban.fullName);
+    
+    try {
+      await this.firestoreService.updateDocument('approved_users', accountId, {
+        accountStatus: 'approved',
+        bannedUntil: null,
+        banReasons: [],
+        bannedAt: null,
+      });
+      console.log('Unban successful, closing modal now');
+      
+      this.ngZone.run(() => {
+        this.showUnbanConfirmationModal = false;
+        this.accountToUnban = null;
+        this.isProcessingUnban = false;
+        this.cdr.markForCheck();
+        console.log('Modal state updated and marked for check');
+      });
+    } catch (error) {
+      console.error('Error unbanning account:', error);
+      this.isProcessingUnban = false;
+    }
+  }
+
   resetBanReasons() {
     this.banReasons.forEach(reason => reason.checked = false);
   }
@@ -233,14 +283,18 @@ export class AccountsComponent implements OnInit, OnDestroy {
       
       console.log('Updating Firestore with data:', updateData);
       await this.firestoreService.updateDocument('approved_users', this.accountToBan.id, updateData);
-      console.log('Ban successful!');
+      console.log('Ban successful, closing modal now');
       
-      this.showBanConfirmationModal = false;
-      this.accountToBan = null;
-      this.banDuration = null;
-      this.selectedBanReasons = [];
-      this.resetBanReasons();
-      this.isProcessingBan = false;
+      this.ngZone.run(() => {
+        this.showBanConfirmationModal = false;
+        this.accountToBan = null;
+        this.banDuration = null;
+        this.selectedBanReasons = [];
+        this.resetBanReasons();
+        this.isProcessingBan = false;
+        this.cdr.markForCheck();
+        console.log('Modal state updated and marked for check');
+      });
     } catch (error) {
       console.error('Error banning account:', error);
       this.isProcessingBan = false;

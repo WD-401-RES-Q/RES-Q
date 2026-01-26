@@ -145,8 +145,8 @@
         </div>
 
         <div class="activity-item">
-          <span class="activity-label">Time resolved:</span>
-          <span class="activity-value">{{ report.resolvedAt || report.flaggedAt || '—' }}</span>
+          <span class="activity-label">{{ (report.status || '').toUpperCase() === 'FLAGGED' ? 'Time flagged:' : 'Time approved:' }}</span>
+          <span class="activity-value">{{ (report.status || '').toUpperCase() === 'FLAGGED' ? (report.flaggedAt || '—') : (report.resolvedAt || report.approvedAt || '—') }}</span>
         </div>
       </div>
 
@@ -513,6 +513,7 @@
     padding-top: 12px;
     border-top: 1px solid #d0d0d0;
   }
+  .loading-comments, .no-comments {
     text-align: center;
     padding: 20px;
     color: #6b7280;

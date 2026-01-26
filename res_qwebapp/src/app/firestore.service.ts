@@ -269,32 +269,17 @@ export class FirestoreService {
         }
       );
 
-      // Approved reports listener (Approved status or Resolved within last 30 days)
+      // Approved reports listener (Approved status only)
       const approvedReportsQuery = query(
         collection(db, 'reports'), 
-        where('status', 'in', ['Approved', 'RESOLVED'])
+        where('status', '==', 'Approved')
       );
       this.approvedReportsUnsubscribe = onSnapshot(
         approvedReportsQuery,
         (snapshot) => {
           this.ngZone.run(() => {
             const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
-            // Filter: always show Approved; show RESOLVED if within last 30 days
-            const filtered = reports.filter(r => {
-              const status = (r.status || '').toUpperCase();
-              if (status === 'APPROVED') return true;
-              if (status === 'RESOLVED') {
-                if (r.resolvedAt) {
-                  const resolvedTime = typeof r.resolvedAt.toDate === 'function' 
-                    ? r.resolvedAt.toDate().getTime() 
-                    : new Date(r.resolvedAt).getTime();
-                  return resolvedTime >= thirtyDaysAgoTime;
-                }
-                return false;
-              }
-              return false;
-            });
-            this.approvedReportsSubject.next(filtered);
+            this.approvedReportsSubject.next(reports);
           });
         },
         (error) => {
