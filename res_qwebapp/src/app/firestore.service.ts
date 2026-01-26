@@ -218,17 +218,47 @@ export class FirestoreService {
         }
       );
 
-      // Pending reports listener (Pending, RESPONDING, ON SCENE)
+      // Pending reports listener (Pending, RESPONDING, ON SCENE, and recent RESOLVED/FLAGGED from last 30 days)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const thirtyDaysAgoTime = thirtyDaysAgo.getTime();
+      
       const pendingReportsQuery = query(
         collection(db, 'reports'), 
-        where('status', 'in', ['Pending', 'PENDING', 'RESPONDING', 'ON SCENE'])
+        where('status', 'in', ['Pending', 'PENDING', 'RESPONDING', 'ON SCENE', 'RESOLVED', 'FLAGGED'])
       );
       this.pendingReportsUnsubscribe = onSnapshot(
         pendingReportsQuery,
         (snapshot) => {
           this.ngZone.run(() => {
-            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            this.pendingReportsSubject.next(reports);
+            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+            // Filter: always show Pending/RESPONDING/ON SCENE; show RESOLVED/FLAGGED if within last 30 days
+            const filtered = reports.filter(r => {
+              const status = (r.status || '').toUpperCase();
+              if (['PENDING', 'RESPONDING', 'ON SCENE'].includes(status)) return true;
+              // For RESOLVED: check if resolvedAt is within last 30 days
+              if (status === 'RESOLVED') {
+                if (r.resolvedAt) {
+                  const resolvedTime = typeof r.resolvedAt.toDate === 'function' 
+                    ? r.resolvedAt.toDate().getTime() 
+                    : new Date(r.resolvedAt).getTime();
+                  return resolvedTime >= thirtyDaysAgoTime;
+                }
+                return false;
+              }
+              // For FLAGGED: check if flaggedAt is within last 30 days
+              if (status === 'FLAGGED') {
+                if (r.flaggedAt) {
+                  const flaggedTime = typeof r.flaggedAt.toDate === 'function' 
+                    ? r.flaggedAt.toDate().getTime() 
+                    : new Date(r.flaggedAt).getTime();
+                  return flaggedTime >= thirtyDaysAgoTime;
+                }
+                return false;
+              }
+              return false;
+            });
+            this.pendingReportsSubject.next(filtered);
           });
         },
         (error) => {
@@ -239,14 +269,32 @@ export class FirestoreService {
         }
       );
 
-      // Approved reports listener (status == Approved)
-      const approvedReportsQuery = query(collection(db, 'reports'), where('status', '==', 'Approved'));
+      // Approved reports listener (Approved status or Resolved within last 30 days)
+      const approvedReportsQuery = query(
+        collection(db, 'reports'), 
+        where('status', 'in', ['Approved', 'RESOLVED'])
+      );
       this.approvedReportsUnsubscribe = onSnapshot(
         approvedReportsQuery,
         (snapshot) => {
           this.ngZone.run(() => {
-            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            this.approvedReportsSubject.next(reports);
+            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+            // Filter: always show Approved; show RESOLVED if within last 30 days
+            const filtered = reports.filter(r => {
+              const status = (r.status || '').toUpperCase();
+              if (status === 'APPROVED') return true;
+              if (status === 'RESOLVED') {
+                if (r.resolvedAt) {
+                  const resolvedTime = typeof r.resolvedAt.toDate === 'function' 
+                    ? r.resolvedAt.toDate().getTime() 
+                    : new Date(r.resolvedAt).getTime();
+                  return resolvedTime >= thirtyDaysAgoTime;
+                }
+                return false;
+              }
+              return false;
+            });
+            this.approvedReportsSubject.next(filtered);
           });
         },
         (error) => {
@@ -275,14 +323,27 @@ export class FirestoreService {
         }
       );
 
-      // Flagged reports listener (status == Flagged)
-      const flaggedReportsQuery = query(collection(db, 'reports'), where('status', '==', 'Flagged'));
+      // Flagged reports listener (FLAGGED status within last 30 days)
+      const flaggedReportsQuery = query(
+        collection(db, 'reports'), 
+        where('status', '==', 'FLAGGED')
+      );
       this.flaggedReportsUnsubscribe = onSnapshot(
         flaggedReportsQuery,
         (snapshot) => {
           this.ngZone.run(() => {
-            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            this.flaggedReportsSubject.next(reports);
+            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+            // Filter: only show FLAGGED if within last 30 days
+            const filtered = reports.filter(r => {
+              if (r.flaggedAt) {
+                const flaggedTime = typeof r.flaggedAt.toDate === 'function' 
+                  ? r.flaggedAt.toDate().getTime() 
+                  : new Date(r.flaggedAt).getTime();
+                return flaggedTime >= thirtyDaysAgoTime;
+              }
+              return false;
+            });
+            this.flaggedReportsSubject.next(filtered);
           });
         },
         (error) => {

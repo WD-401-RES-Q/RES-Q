@@ -24,9 +24,13 @@ interface Report {
   approvedBy?: string;
   approvedAt?: string;
   respondingAt?: string;
+  respondingBy?: string;
   arrivedAt?: string;
+  arrivedBy?: string;
   resolvedAt?: string;
+  resolvedBy?: string;
   flaggedAt?: string;
+  flaggedBy?: string;
 }
 
 interface Comment {
@@ -204,9 +208,13 @@ export class ReportsComponent implements OnInit, OnDestroy {
       approvedBy: doc.approvedBy ?? undefined,
       approvedAt: doc.approvedAt ? this.formatTimestamp(doc.approvedAt) : undefined,
       respondingAt: doc.respondingAt ? this.formatTimestamp(doc.respondingAt) : undefined,
+      respondingBy: doc.respondingBy ?? undefined,
       arrivedAt: doc.arrivedAt ? this.formatTimestamp(doc.arrivedAt) : undefined,
+      arrivedBy: doc.arrivedBy ?? undefined,
       resolvedAt: doc.resolvedAt ? this.formatTimestamp(doc.resolvedAt) : undefined,
+      resolvedBy: doc.resolvedBy ?? undefined,
       flaggedAt: doc.flaggedAt ? this.formatTimestamp(doc.flaggedAt) : undefined,
+      flaggedBy: doc.flaggedBy ?? undefined,
     };
   }
 

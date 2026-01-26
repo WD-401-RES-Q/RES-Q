@@ -131,7 +131,7 @@
         
         <div class="activity-item">
           <span class="activity-label">Approved by:</span>
-          <span class="activity-value">{{ report.approvedBy || '—' }}</span>
+          <span class="activity-value">{{ report.approvedBy || report.respondingBy || report.arrivedBy || report.resolvedBy || report.flaggedBy || '—' }}</span>
         </div>
 
         <div class="activity-item">
