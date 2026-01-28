@@ -6,8 +6,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
-import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'dart:ui' as ui;
 import '../theme/app_theme.dart';
 
@@ -633,53 +631,6 @@ String? validatePhilippinePhone(String? value) {
   return null;
 }
 
-/// ID keywords to check for validation
-const List<String> _idKeywords = [
-  'NAME',
-  'BIRTHDATE',
-  'DATE OF BIRTH',
-  'DOB',
-  'ADDRESS',
-  'ID NO',
-  'VALID',
-  'EXPIRY',
-  'SEX',
-  'NATIONALITY',
-  'BIRTHDAY',
-  'SURNAME',
-  'GIVEN NAME',
-  'MIDDLE NAME',
-  'SIGNATURE',
-  'PLACE OF BIRTH',
-  'CIVIL STATUS',
-];
-
-const List<String> _idFrontKeywords = [
-  'NAME',
-  'SURNAME',
-  'GIVEN NAME',
-  'MIDDLE NAME',
-  'BIRTHDATE',
-  'DATE OF BIRTH',
-  'DOB',
-  'SEX',
-  'NATIONALITY',
-  'PLACE OF BIRTH',
-  'ID NO',
-];
-
-const List<String> _idBackKeywords = [
-  'ADDRESS',
-  'VALID',
-  'EXPIRY',
-  'EXPIRATION',
-  'DATE ISSUED',
-  'ISSUED',
-  'RESTRICTIONS',
-  'CONDITIONS',
-  'SIGNATURE',
-];
-
 /// List of accepted valid ID types for the info dialog
 const List<Map<String, String>> _acceptedIdTypes = [
   {'name': 'Philippine National ID (PhilSys)', 'icon': 'credit_card'},
@@ -1007,16 +958,6 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     );
   }
 
-  int _countKeywordMatches(String text, List<String> keywords) {
-    int count = 0;
-    for (final keyword in keywords) {
-      if (text.contains(keyword)) {
-        count++;
-      }
-    }
-    return count;
-  }
-
   /// Check if image has ID-like aspect ratio
   Future<bool> _checkAspectRatio(String imagePath) async {
     try {
@@ -1039,38 +980,9 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     }
   }
 
-  /// Check if image contains a face (most IDs have photos)
-  Future<bool> _checkForFace(String imagePath) async {
-    try {
-      final inputImage = InputImage.fromFilePath(imagePath);
-      final faceDetector = FaceDetector(
-        options: FaceDetectorOptions(
-          enableContours: false,
-          enableClassification: false,
-          enableLandmarks: false,
-          enableTracking: false,
-          minFaceSize: 0.1,
-          performanceMode: FaceDetectorMode.fast,
-        ),
-      );
-
-      final faces = await faceDetector.processImage(inputImage);
-      await faceDetector.close();
-
-      // Valid ID should have exactly one face (the ID holder's photo)
-      return faces.isNotEmpty && faces.length <= 2;
-    } catch (e) {
-      debugPrint('Face detection error: $e');
-      return true; // On error, skip this check
-    }
-  }
-
-  /// Validate ID image using ML Kit text recognition, face detection, and aspect ratio
-  Future<_IdValidationResult> _validateIdImage(
-    String imagePath, {
-    required bool isFront,
-  }) async {
-    // Skip ML Kit validation on web (not supported)
+  /// Validate ID image using aspect ratio only (ML Kit removed)
+  Future<_IdValidationResult> _validateIdImage(String imagePath) async {
+    // Skip extra validation on web
     if (kIsWeb) return const _IdValidationResult(isValid: true);
 
     try {
@@ -1084,81 +996,9 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         );
       }
 
-      // Step 2: Check for face (front of ID should have a photo)
-      if (isFront) {
-        final hasFace = await _checkForFace(imagePath);
-        if (!hasFace) {
-          return const _IdValidationResult(
-            isValid: false,
-            message:
-                'No ID photo detected. Valid IDs must have a visible photo of the holder. Please upload a clear photo of your ID.',
-          );
-        }
-      }
-
-      // Step 3: Text recognition and keyword matching
-      final inputImage = InputImage.fromFilePath(imagePath);
-      final textRecognizer = TextRecognizer();
-      final recognizedText = await textRecognizer.processImage(inputImage);
-      await textRecognizer.close();
-
-      final text = recognizedText.text.toUpperCase();
-
-      // Check minimum text content - IDs have substantial text
-      if (text.length < 30 || recognizedText.blocks.length < 3) {
-        return const _IdValidationResult(
-          isValid: false,
-          message:
-              'Not enough text detected. Please take a clear photo of your entire ID with all text visible.',
-        );
-      }
-
-      final frontMatches = _countKeywordMatches(text, _idFrontKeywords);
-      final backMatches = _countKeywordMatches(text, _idBackKeywords);
-      final totalKeywordMatches = _countKeywordMatches(text, _idKeywords);
-
-      // More stringent: require at least 3 keyword matches for front
-      if (isFront) {
-        if (backMatches > frontMatches && backMatches >= 2) {
-          return const _IdValidationResult(
-            isValid: false,
-            wrongSide: true,
-            message:
-                'This looks like the BACK of an ID. Please upload the FRONT.',
-          );
-        }
-
-        // Front must have at least 3 keywords matched
-        if (frontMatches < 3 && totalKeywordMatches < 4) {
-          return const _IdValidationResult(
-            isValid: false,
-            message:
-                'This does not appear to be a valid government ID. Tap the (i) button to see accepted IDs. Please upload a clear photo of the FRONT of your ID.',
-          );
-        }
-      } else {
-        if (frontMatches > backMatches && frontMatches >= 2) {
-          return const _IdValidationResult(
-            isValid: false,
-            wrongSide: true,
-            message:
-                'This looks like the FRONT of an ID. Please upload the BACK.',
-          );
-        }
-
-        // Back must have at least 2 keywords matched
-        if (backMatches < 2 && totalKeywordMatches < 3) {
-          return const _IdValidationResult(
-            isValid: false,
-            message:
-                'This does not appear to be a valid ID back. Please upload a clear photo of the BACK of your ID.',
-          );
-        }
-      }
-
       return const _IdValidationResult(isValid: true);
     } catch (e) {
-      debugPrint('ML Kit validation error: $e');
+      debugPrint('ID validation error: $e');
       // On error, be strict - don't allow upload
       return const _IdValidationResult(
         isValid: false,
@@ -1188,11 +1028,8 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         _frontError = null;
       });
 
-      // Validate image with ML Kit
-      final validation = await _validateIdImage(
-        pickedFile.path,
-        isFront: true,
-      );
+      // Validate image (aspect ratio only)
+      final validation = await _validateIdImage(pickedFile.path);
 
       if (!validation.isValid) {
         final errorMessage = validation.message ??
