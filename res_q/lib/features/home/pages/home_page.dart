@@ -86,16 +86,17 @@ class _HomePageContentState extends State<_HomePageContent>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat();
-    _holdController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..addStatusListener((status) {
-        if (status == AnimationStatus.completed) {
-          if (!mounted) return;
-          _holdController.reset();
-          _openEmergencyCall();
-        }
-      });
+    _holdController =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 900),
+        )..addStatusListener((status) {
+          if (status == AnimationStatus.completed) {
+            if (!mounted) return;
+            _holdController.reset();
+            _openEmergencyCall();
+          }
+        });
   }
 
   @override
@@ -109,9 +110,7 @@ class _HomePageContentState extends State<_HomePageContent>
     print("Emergency call button pressed");
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const EmergencyCallScreen(),
-      ),
+      MaterialPageRoute(builder: (context) => const EmergencyCallScreen()),
     );
   }
 
@@ -153,7 +152,7 @@ class _HomePageContentState extends State<_HomePageContent>
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 Text(
-                  "SELECT THE TYPE OF INCIDENT\nYOU WANT TO REPORT",
+                  "SELECT THE TYPE OF INCIDENT\nYOU WANT TO REPORT.",
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 18,
@@ -319,13 +318,11 @@ class _HomePageContentState extends State<_HomePageContent>
                                 height: emergencyButtonSize * 0.7,
                                 child: CircularProgressIndicator(
                                   value: progress,
-                                  strokeWidth:
-                                      (emergencyButtonSize * 0.06).clamp(
-                                    4.0,
-                                    6.0,
+                                  strokeWidth: (emergencyButtonSize * 0.06)
+                                      .clamp(4.0, 6.0),
+                                  backgroundColor: Colors.white.withOpacity(
+                                    0.15,
                                   ),
-                                  backgroundColor:
-                                      Colors.white.withOpacity(0.15),
                                   valueColor: const AlwaysStoppedAnimation(
                                     Color(0xFFFFC806),
                                   ),
