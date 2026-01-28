@@ -5,9 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/services/user_session.dart';
 import '../../auth/pages/login_page.dart';
+
+// TODO: Replace with your actual email address for feedback/reports
+const String kFeedbackEmail = 'YOUR_EMAIL_HERE@example.com';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -19,8 +24,6 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage>
     with AutomaticKeepAliveClientMixin {
   bool _pushNotifications = true;
-  bool _emailNotifications = true;
-  bool _smsAlerts = false;
   bool _soundEnabled = true;
   bool _vibrationEnabled = true;
   final ImagePicker _imagePicker = ImagePicker();
@@ -277,14 +280,25 @@ class _ProfilePageState extends State<ProfilePage>
         imageQuality: 80,
         maxWidth: 1024,
         maxHeight: 1024,
+        preferredCameraDevice: CameraDevice.front,
       );
       if (!mounted) return;
       if (photo != null) {
-        await Future.delayed(const Duration(milliseconds: 200));
+        // Small delay to ensure camera UI is fully dismissed
+        await Future.delayed(const Duration(milliseconds: 300));
+        if (!mounted) return;
         await _cropProfilePhoto(photo);
       }
     } catch (e) {
-      debugPrint('⚠️ Failed to capture profile photo: $e');
+      debugPrint('Failed to capture profile photo: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to capture photo. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -298,11 +312,21 @@ class _ProfilePageState extends State<ProfilePage>
       );
       if (!mounted) return;
       if (photo != null) {
-        await Future.delayed(const Duration(milliseconds: 200));
+        // Small delay to ensure gallery UI is fully dismissed
+        await Future.delayed(const Duration(milliseconds: 300));
+        if (!mounted) return;
         await _cropProfilePhoto(photo);
       }
     } catch (e) {
-      debugPrint('⚠️ Failed to pick profile photo: $e');
+      debugPrint('Failed to pick profile photo: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to select photo. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -310,15 +334,19 @@ class _ProfilePageState extends State<ProfilePage>
     try {
       final uiSettings = <PlatformUiSettings>[
         AndroidUiSettings(
-          toolbarTitle: 'Crop',
+          toolbarTitle: 'Crop Profile Picture',
           toolbarColor: const Color(0xFFAC1B22),
           toolbarWidgetColor: Colors.white,
           activeControlsWidgetColor: const Color(0xFFAC1B22),
           lockAspectRatio: true,
+          hideBottomControls: false,
+          initAspectRatio: CropAspectRatioPreset.square,
         ),
         IOSUiSettings(
-          title: 'Crop',
+          title: 'Crop Profile Picture',
           aspectRatioLockEnabled: true,
+          resetAspectRatioEnabled: false,
+          aspectRatioPickerButtonHidden: true,
         ),
         if (kIsWeb)
           WebUiSettings(
@@ -346,8 +374,25 @@ class _ProfilePageState extends State<ProfilePage>
       } else {
         setState(() => _profilePhoto = XFile(cropped.path));
       }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profile picture updated!'),
+            backgroundColor: Color(0xFF22C55E),
+          ),
+        );
+      }
     } catch (e) {
-      debugPrint('⚠️ Failed to crop profile photo: $e');
+      debugPrint('Failed to crop profile photo: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to crop photo. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -463,103 +508,673 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Widget _buildPersonalInfoContent() {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildTextField('Full Name', 'John Doe'),
-          const SizedBox(height: 16),
-          _buildTextField('Email Address', 'johndoe@email.com'),
-          const SizedBox(height: 16),
-          _buildTextField('Phone Number', '+63 912 345 6789'),
-          const SizedBox(height: 16),
-          _buildTextField('Address', '123 Main Street, City'),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: () {
-                // TODO: Save personal info
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFAC1B22),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+    final userData = UserSession.currentUserData ?? {};
+    final fullNameCtl = TextEditingController(
+      text: userData['fullName']?.toString() ?? '',
+    );
+    final emailCtl = TextEditingController(
+      text: userData['email']?.toString() ?? '',
+    );
+    final addressCtl = TextEditingController(
+      text: userData['address']?.toString() ?? '',
+    );
+    final phoneNumber = userData['contactNumber']?.toString() ?? '';
+    final username = userData['username']?.toString() ?? '';
+    bool isEditing = false;
+    bool isSaving = false;
+    String? errorMessage;
+
+    return StatefulBuilder(
+      builder: (context, setModalState) {
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Full Name Field
+              _buildEditableField(
+                label: 'Full Name',
+                controller: fullNameCtl,
+                isEditing: isEditing,
+                enabled: isEditing,
+              ),
+              const SizedBox(height: 16),
+
+              // Email Field
+              _buildEditableField(
+                label: 'Email Address',
+                controller: emailCtl,
+                isEditing: isEditing,
+                enabled: isEditing,
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 16),
+
+              // Phone Number (Read-only)
+              _buildReadOnlyField(
+                label: 'Phone Number',
+                value: _formatPhoneNumber(phoneNumber),
+                hint: 'Phone number cannot be changed',
+              ),
+              const SizedBox(height: 16),
+
+              // Address Field
+              _buildEditableField(
+                label: 'Home Address',
+                controller: addressCtl,
+                isEditing: isEditing,
+                enabled: isEditing,
+              ),
+
+              if (errorMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  errorMessage!,
+                  style: const TextStyle(
+                    color: Colors.red,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 24),
+
+              // Edit / Save Button
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          if (!isEditing) {
+                            setModalState(() => isEditing = true);
+                          } else {
+                            // Validate and save
+                            final newFullName = fullNameCtl.text.trim();
+                            final newEmail = emailCtl.text.trim();
+                            final newAddress = addressCtl.text.trim();
+
+                            if (newFullName.isEmpty) {
+                              setModalState(
+                                () => errorMessage = 'Full name is required',
+                              );
+                              return;
+                            }
+
+                            if (newEmail.isNotEmpty &&
+                                !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+                                    .hasMatch(newEmail)) {
+                              setModalState(
+                                () => errorMessage = 'Invalid email address',
+                              );
+                              return;
+                            }
+
+                            setModalState(() {
+                              isSaving = true;
+                              errorMessage = null;
+                            });
+
+                            try {
+                              // Update Firestore
+                              await FirebaseFirestore.instance
+                                  .collection('approved_users')
+                                  .doc(username)
+                                  .update({
+                                'fullName': newFullName,
+                                'email': newEmail.isEmpty ? null : newEmail,
+                                'address': newAddress,
+                              });
+
+                              // Update local session
+                              UserSession.currentUserData?['fullName'] =
+                                  newFullName;
+                              UserSession.currentUserData?['email'] = newEmail;
+                              UserSession.currentUserData?['address'] =
+                                  newAddress;
+
+                              setModalState(() {
+                                isEditing = false;
+                                isSaving = false;
+                              });
+
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content:
+                                        Text('Profile updated successfully!'),
+                                    backgroundColor: Color(0xFF22C55E),
+                                  ),
+                                );
+                                // Refresh the main page
+                                setState(() {});
+                              }
+                            } catch (e) {
+                              debugPrint('Failed to update profile: $e');
+                              setModalState(() {
+                                isSaving = false;
+                                errorMessage =
+                                    'Failed to save changes. Please try again.';
+                              });
+                            }
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        isEditing ? const Color(0xFF22C55E) : const Color(0xFFAC1B22),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: isSaving
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Text(
+                          isEditing ? 'SAVE CHANGES' : 'EDIT INFORMATION',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                 ),
               ),
-              child: const Text(
-                'SAVE CHANGES',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
+
+              if (isEditing) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton(
+                    onPressed: () {
+                      // Reset to original values
+                      fullNameCtl.text = userData['fullName']?.toString() ?? '';
+                      emailCtl.text = userData['email']?.toString() ?? '';
+                      addressCtl.text = userData['address']?.toString() ?? '';
+                      setModalState(() {
+                        isEditing = false;
+                        errorMessage = null;
+                      });
+                    },
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFFAC1B22), width: 2),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'CANCEL',
+                      style: TextStyle(
+                        color: Color(0xFFAC1B22),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
                 ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String _formatPhoneNumber(String phone) {
+    if (phone.isEmpty) return '';
+    // Handle +63XXXXXXXXXX format
+    String digits = phone.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('63')) digits = digits.substring(2);
+    if (digits.length == 10) {
+      return '+63 ${digits.substring(0, 3)} ${digits.substring(3, 6)} ${digits.substring(6)}';
+    }
+    return phone;
+  }
+
+  Widget _buildEditableField({
+    required String label,
+    required TextEditingController controller,
+    required bool isEditing,
+    bool enabled = true,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[700],
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: controller,
+          enabled: enabled,
+          keyboardType: keyboardType,
+          style: TextStyle(
+            fontSize: 14,
+            color: enabled ? Colors.black87 : Colors.grey[600],
+          ),
+          decoration: InputDecoration(
+            filled: !enabled,
+            fillColor: enabled ? null : Colors.grey[100],
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(
+                color: isEditing ? const Color(0xFFAC1B22) : Colors.grey[300]!,
               ),
             ),
+            disabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFAC1B22), width: 2),
+            ),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           ),
-        ],
-      ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildReadOnlyField({
+    required String label,
+    required String value,
+    String? hint,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[700],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          decoration: BoxDecoration(
+            color: Colors.grey[100],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey[300]!),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.lock_outline, size: 16, color: Colors.grey),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      value.isNotEmpty ? value : 'Not provided',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (hint != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  hint,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey[500],
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildAccountSecurityContent() {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildTextField('Current Password', '••••••••', isPassword: true),
-          const SizedBox(height: 16),
-          _buildTextField('New Password', '', isPassword: true),
-          const SizedBox(height: 16),
-          _buildTextField('Confirm New Password', '', isPassword: true),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: () {
-                // TODO: Change password
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFAC1B22),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+    final currentPasswordCtl = TextEditingController();
+    final newPasswordCtl = TextEditingController();
+    final confirmPasswordCtl = TextEditingController();
+    bool isLoading = false;
+    String? errorMessage;
+    String? successMessage;
+    bool obscureCurrent = true;
+    bool obscureNew = true;
+    bool obscureConfirm = true;
+
+    final userData = UserSession.currentUserData ?? {};
+    final storedPassword = userData['password']?.toString() ?? '';
+    final username = userData['username']?.toString() ?? '';
+
+    return StatefulBuilder(
+      builder: (context, setModalState) {
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Current Password
+              _buildPasswordField(
+                label: 'Current Password',
+                controller: currentPasswordCtl,
+                obscureText: obscureCurrent,
+                onToggleVisibility: () {
+                  setModalState(() => obscureCurrent = !obscureCurrent);
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // New Password
+              _buildPasswordField(
+                label: 'New Password',
+                controller: newPasswordCtl,
+                obscureText: obscureNew,
+                onToggleVisibility: () {
+                  setModalState(() => obscureNew = !obscureNew);
+                },
+              ),
+              const SizedBox(height: 8),
+
+              // Password requirements hint
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue[200]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Password Requirements:',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.blue[800],
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '• At least 8 characters\n'
+                      '• At least one uppercase letter (A-Z)\n'
+                      '• At least one number (0-9)\n'
+                      '• At least one special character (!@#\$%^&*)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.blue[700],
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              child: const Text(
-                'UPDATE PASSWORD',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
+              const SizedBox(height: 16),
+
+              // Confirm New Password
+              _buildPasswordField(
+                label: 'Confirm New Password',
+                controller: confirmPasswordCtl,
+                obscureText: obscureConfirm,
+                onToggleVisibility: () {
+                  setModalState(() => obscureConfirm = !obscureConfirm);
+                },
+              ),
+
+              if (errorMessage != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red[50],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red[200]!),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.error_outline, color: Colors.red[700], size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          errorMessage!,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.red[700],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              if (successMessage != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.green[50],
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green[200]!),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.check_circle_outline,
+                          color: Colors.green[700], size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          successMessage!,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.green[700],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 24),
+
+              // Update Password Button
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: isLoading
+                      ? null
+                      : () async {
+                          final currentPassword = currentPasswordCtl.text;
+                          final newPassword = newPasswordCtl.text;
+                          final confirmPassword = confirmPasswordCtl.text;
+
+                          setModalState(() {
+                            errorMessage = null;
+                            successMessage = null;
+                          });
+
+                          // Validate current password
+                          if (currentPassword.isEmpty) {
+                            setModalState(() =>
+                                errorMessage = 'Please enter your current password');
+                            return;
+                          }
+
+                          if (currentPassword != storedPassword) {
+                            setModalState(() =>
+                                errorMessage = 'Current password is incorrect');
+                            return;
+                          }
+
+                          // Validate new password
+                          final passwordValidation =
+                              _validatePassword(newPassword);
+                          if (passwordValidation != null) {
+                            setModalState(() => errorMessage = passwordValidation);
+                            return;
+                          }
+
+                          // Check passwords match
+                          if (newPassword != confirmPassword) {
+                            setModalState(
+                                () => errorMessage = 'New passwords do not match');
+                            return;
+                          }
+
+                          // Check new password is different from current
+                          if (newPassword == currentPassword) {
+                            setModalState(() => errorMessage =
+                                'New password must be different from current password');
+                            return;
+                          }
+
+                          setModalState(() => isLoading = true);
+
+                          try {
+                            // Update password in Firestore
+                            await FirebaseFirestore.instance
+                                .collection('approved_users')
+                                .doc(username)
+                                .update({'password': newPassword});
+
+                            // Update local session
+                            UserSession.currentUserData?['password'] = newPassword;
+
+                            // Clear fields
+                            currentPasswordCtl.clear();
+                            newPasswordCtl.clear();
+                            confirmPasswordCtl.clear();
+
+                            setModalState(() {
+                              isLoading = false;
+                              successMessage = 'Password updated successfully!';
+                            });
+                          } catch (e) {
+                            debugPrint('Failed to update password: $e');
+                            setModalState(() {
+                              isLoading = false;
+                              errorMessage =
+                                  'Failed to update password. Please try again.';
+                            });
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFAC1B22),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: isLoading
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'UPDATE PASSWORD',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                 ),
               ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String? _validatePassword(String password) {
+    if (password.isEmpty) return 'Password is required';
+    if (password.length < 8) return 'Password must be at least 8 characters';
+    if (!RegExp(r'[A-Z]').hasMatch(password)) {
+      return 'Password must contain at least one uppercase letter';
+    }
+    if (!RegExp(r'[0-9]').hasMatch(password)) {
+      return 'Password must contain at least one number';
+    }
+    if (!RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(password)) {
+      return 'Password must contain at least one special character (!@#\$%^&*)';
+    }
+    return null;
+  }
+
+  Widget _buildPasswordField({
+    required String label,
+    required TextEditingController controller,
+    required bool obscureText,
+    required VoidCallback onToggleVisibility,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[700],
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: controller,
+          obscureText: obscureText,
+          decoration: InputDecoration(
+            hintText: '••••••••',
+            hintStyle: const TextStyle(fontSize: 13),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey[300]!),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFAC1B22), width: 2),
+            ),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            suffixIcon: IconButton(
+              icon: Icon(
+                obscureText ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                color: Colors.grey[600],
+                size: 20,
+              ),
+              onPressed: onToggleVisibility,
             ),
           ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: OutlinedButton(
-              onPressed: () {
-                // TODO: Enable 2FA
-              },
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Color(0xFFAC1B22), width: 2),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'ENABLE TWO-FACTOR AUTH',
-                style: TextStyle(
-                  color: Color(0xFFAC1B22),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -574,26 +1189,6 @@ class _ProfilePageState extends State<ProfilePage>
             (value) => _updateNotificationSetting(
               setDialogState,
               () => _pushNotifications = value,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _buildNotificationToggle(
-            'Email Notifications',
-            'Get updates via email',
-            _emailNotifications,
-            (value) => _updateNotificationSetting(
-              setDialogState,
-              () => _emailNotifications = value,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _buildNotificationToggle(
-            'SMS Alerts',
-            'Receive critical alerts via SMS',
-            _smsAlerts,
-            (value) => _updateNotificationSetting(
-              setDialogState,
-              () => _smsAlerts = value,
             ),
           ),
           const SizedBox(height: 12),
@@ -682,21 +1277,61 @@ class _ProfilePageState extends State<ProfilePage>
     return SingleChildScrollView(
       child: Column(
         children: [
-          _buildHelpItem(Icons.question_answer, 'FAQ', 'Frequently asked questions'),
-          _buildHelpItem(Icons.book, 'User Guide', 'Learn how to use RESQ'),
-          _buildHelpItem(Icons.contact_support, 'Contact Support', 'Get in touch with our team'),
-          _buildHelpItem(Icons.video_library, 'Video Tutorials', 'Watch helpful guides'),
-          _buildHelpItem(Icons.forum, 'Community Forum', 'Connect with other users'),
+          _buildHelpItem(
+            Icons.book,
+            'User Guide',
+            'Learn how to use RESQ',
+            onTap: () {
+              // User guide content - can be expanded later
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('User Guide coming soon!'),
+                  backgroundColor: Color(0xFFAC1B22),
+                ),
+              );
+            },
+          ),
+          _buildHelpItem(
+            Icons.contact_support,
+            'Contact Support',
+            'Get in touch with our team',
+            onTap: () async {
+              final Uri emailUri = Uri(
+                scheme: 'mailto',
+                path: kFeedbackEmail,
+                query: 'subject=RESQ Support Request',
+              );
+              try {
+                if (await canLaunchUrl(emailUri)) {
+                  await launchUrl(emailUri);
+                } else {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Could not open email app'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              } catch (e) {
+                debugPrint('Failed to open email: $e');
+              }
+            },
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildHelpItem(IconData icon, String title, String subtitle) {
+  Widget _buildHelpItem(
+    IconData icon,
+    String title,
+    String subtitle, {
+    VoidCallback? onTap,
+  }) {
     return InkWell(
-      onTap: () {
-        // TODO: Navigate to help section
-      },
+      onTap: onTap,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
@@ -709,7 +1344,7 @@ class _ProfilePageState extends State<ProfilePage>
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFAC1B22).withOpacity(0.1),
+                color: const Color(0xFFAC1B22).withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(icon, color: const Color(0xFFAC1B22), size: 24),
@@ -721,7 +1356,7 @@ class _ProfilePageState extends State<ProfilePage>
                 children: [
                   Text(
                     title,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                     ),
@@ -748,98 +1383,171 @@ class _ProfilePageState extends State<ProfilePage>
     String? selectedProblemType,
     ValueChanged<String?> onProblemTypeChanged,
   ) {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Problem Type',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[700],
-            ),
-          ),
-          const SizedBox(height: 8),
-          _buildDropdownField(
-            'Select a problem type',
-            selectedProblemType,
-            onProblemTypeChanged,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Description',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[700],
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            maxLines: 5,
-            decoration: InputDecoration(
-              hintText: 'Describe the problem you\'re experiencing...',
-              hintStyle: TextStyle(fontSize: 13),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Color(0xFFAC1B22), width: 2),
-              ),
-              contentPadding: const EdgeInsets.all(12),
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: OutlinedButton.icon(
-              onPressed: () {
-                // TODO: Attach screenshot
-              },
-              icon: const Icon(Icons.attach_file),
-              label: const Text('ATTACH SCREENSHOT'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFFAC1B22),
-                side: BorderSide(color: Colors.grey[300]!, width: 1.5),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: () {
-                // TODO: Submit problem report
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFAC1B22),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'SUBMIT REPORT',
+    final descriptionCtl = TextEditingController();
+    bool isSubmitting = false;
+    String? errorMessage;
+
+    return StatefulBuilder(
+      builder: (context, setModalState) {
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Problem Type',
                 style: TextStyle(
-                  color: Colors.white,
+                  fontSize: 14,
                   fontWeight: FontWeight.w600,
+                  color: Colors.grey[700],
                 ),
               ),
-            ),
+              const SizedBox(height: 8),
+              _buildDropdownField(
+                'Select a problem type',
+                selectedProblemType,
+                onProblemTypeChanged,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Description',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[700],
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: descriptionCtl,
+                maxLines: 5,
+                decoration: InputDecoration(
+                  hintText: 'Describe the problem you\'re experiencing...',
+                  hintStyle: const TextStyle(fontSize: 13),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFAC1B22), width: 2),
+                  ),
+                  contentPadding: const EdgeInsets.all(12),
+                ),
+              ),
+
+              if (errorMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  errorMessage!,
+                  style: const TextStyle(color: Colors.red, fontSize: 13),
+                ),
+              ],
+
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          final problemType = selectedProblemType;
+                          final description = descriptionCtl.text.trim();
+
+                          if (problemType == null) {
+                            setModalState(() =>
+                                errorMessage = 'Please select a problem type');
+                            return;
+                          }
+
+                          if (description.isEmpty) {
+                            setModalState(() =>
+                                errorMessage = 'Please describe the problem');
+                            return;
+                          }
+
+                          setModalState(() {
+                            isSubmitting = true;
+                            errorMessage = null;
+                          });
+
+                          final userData = UserSession.currentUserData ?? {};
+                          final username =
+                              userData['username']?.toString() ?? 'Unknown';
+                          final email = userData['email']?.toString() ?? '';
+
+                          final Uri emailUri = Uri(
+                            scheme: 'mailto',
+                            path: kFeedbackEmail,
+                            query: Uri.encodeFull(
+                              'subject=RESQ Problem Report: $problemType&'
+                              'body=Problem Type: $problemType\n\n'
+                              'Description:\n$description\n\n'
+                              '---\n'
+                              'Reported by: $username\n'
+                              'User email: $email',
+                            ),
+                          );
+
+                          try {
+                            if (await canLaunchUrl(emailUri)) {
+                              await launchUrl(emailUri);
+                              if (mounted) {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                        'Email app opened. Please send your report.'),
+                                    backgroundColor: Color(0xFF22C55E),
+                                  ),
+                                );
+                              }
+                            } else {
+                              setModalState(() {
+                                isSubmitting = false;
+                                errorMessage = 'Could not open email app';
+                              });
+                            }
+                          } catch (e) {
+                            debugPrint('Failed to open email: $e');
+                            setModalState(() {
+                              isSubmitting = false;
+                              errorMessage = 'Failed to open email app';
+                            });
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFAC1B22),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'SUBMIT REPORT',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -847,124 +1555,175 @@ class _ProfilePageState extends State<ProfilePage>
     int feedbackRating,
     ValueChanged<int> onRatingChanged,
   ) {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Rate Your Experience',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[700],
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(5, (index) {
-              final isSelected = index < feedbackRating;
-              return GestureDetector(
-                onTap: () => onRatingChanged(index + 1),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: _buildRatingIcon(isSelected),
-                ),
-              );
-            }),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'Your Feedback',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[700],
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            maxLines: 4,
-            decoration: InputDecoration(
-              hintText: 'Share your thoughts about RESQ...',
-              hintStyle: TextStyle(fontSize: 13),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey[300]!),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Color(0xFFAC1B22), width: 2),
-              ),
-              contentPadding: const EdgeInsets.all(12),
-            ),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton(
-              onPressed: () {
-                // TODO: Submit feedback
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFAC1B22),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'SUBMIT FEEDBACK',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    final feedbackCtl = TextEditingController();
+    bool isSubmitting = false;
+    String? errorMessage;
 
-  Widget _buildTextField(String label, String hint, {bool isPassword = false}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey[700],
+    return StatefulBuilder(
+      builder: (context, setModalState) {
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Rate Your Experience',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[700],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(5, (index) {
+                  final isSelected = index < feedbackRating;
+                  return GestureDetector(
+                    onTap: () => onRatingChanged(index + 1),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: _buildRatingIcon(isSelected),
+                    ),
+                  );
+                }),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Your Feedback',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[700],
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: feedbackCtl,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  hintText: 'Share your thoughts about RESQ...',
+                  hintStyle: const TextStyle(fontSize: 13),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: Colors.grey[300]!),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: Color(0xFFAC1B22), width: 2),
+                  ),
+                  contentPadding: const EdgeInsets.all(12),
+                ),
+              ),
+
+              if (errorMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  errorMessage!,
+                  style: const TextStyle(color: Colors.red, fontSize: 13),
+                ),
+              ],
+
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          final feedback = feedbackCtl.text.trim();
+
+                          if (feedback.isEmpty) {
+                            setModalState(() =>
+                                errorMessage = 'Please write your feedback');
+                            return;
+                          }
+
+                          setModalState(() {
+                            isSubmitting = true;
+                            errorMessage = null;
+                          });
+
+                          final userData = UserSession.currentUserData ?? {};
+                          final username =
+                              userData['username']?.toString() ?? 'Unknown';
+                          final email = userData['email']?.toString() ?? '';
+
+                          final ratingStars = '★' * feedbackRating +
+                              '☆' * (5 - feedbackRating);
+
+                          final Uri emailUri = Uri(
+                            scheme: 'mailto',
+                            path: kFeedbackEmail,
+                            query: Uri.encodeFull(
+                              'subject=RESQ App Feedback&'
+                              'body=Rating: $ratingStars ($feedbackRating/5)\n\n'
+                              'Feedback:\n$feedback\n\n'
+                              '---\n'
+                              'From: $username\n'
+                              'User email: $email',
+                            ),
+                          );
+
+                          try {
+                            if (await canLaunchUrl(emailUri)) {
+                              await launchUrl(emailUri);
+                              if (mounted) {
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                        'Email app opened. Thank you for your feedback!'),
+                                    backgroundColor: Color(0xFF22C55E),
+                                  ),
+                                );
+                              }
+                            } else {
+                              setModalState(() {
+                                isSubmitting = false;
+                                errorMessage = 'Could not open email app';
+                              });
+                            }
+                          } catch (e) {
+                            debugPrint('Failed to open email: $e');
+                            setModalState(() {
+                              isSubmitting = false;
+                              errorMessage = 'Failed to open email app';
+                            });
+                          }
+                        },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFAC1B22),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text(
+                          'SUBMIT FEEDBACK',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                ),
+              ),
+            ],
           ),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          obscureText: isPassword,
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle: TextStyle(fontSize: 13),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Color(0xFFAC1B22), width: 2),
-            ),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 
