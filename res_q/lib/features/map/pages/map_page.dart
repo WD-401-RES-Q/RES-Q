@@ -1758,62 +1758,179 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   void _showFilterDialog() {
+    bool showEarthquake = true;
+    bool showFlood = true;
+    bool showFire = true;
+    bool showVehicular = true;
+    bool showOthers = true;
+
     showDialog(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Filter Incidents', style: AppText.subheading),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CheckboxListTile(
-                title: Text('Fire', style: AppText.body),
-                value: true,
-                onChanged: (bool? value) {},
-                secondary: const Icon(
-                  Icons.local_fire_department,
-                  color: Colors.red,
+        return StatefulBuilder(
+          builder: (context, setState) {
+            Widget buildFilterRow({
+              required String label,
+              required String assetPath,
+              required bool value,
+              required ValueChanged<bool?> onChanged,
+            }) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppTheme.appBlue.withOpacity(0.15),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.06),
+                      blurRadius: 6,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Image.asset(
+                      assetPath,
+                      width: 34,
+                      height: 34,
+                      fit: BoxFit.contain,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: AppText.body,
+                      ),
+                    ),
+                    Checkbox(
+                      value: value,
+                      onChanged: onChanged,
+                      activeColor: AppTheme.appBlue,
+                      checkColor: Colors.white,
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 18,
+                vertical: 24,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              backgroundColor: AppTheme.appOffWhite,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: AppTheme.appBlue,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.tune,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text('Filter Incidents', style: AppText.subheading),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Choose which incident types to display.',
+                      style: AppText.caption,
+                    ),
+                    const SizedBox(height: 12),
+                    buildFilterRow(
+                      label: 'Earthquake',
+                      assetPath: 'assets/icons/FINAL-EARTHQUAKE-ICON.png',
+                      value: showEarthquake,
+                      onChanged: (value) {
+                        setState(() => showEarthquake = value ?? false);
+                      },
+                    ),
+                    buildFilterRow(
+                      label: 'Flood',
+                      assetPath: 'assets/icons/FINAL-FLOOD-ICON.png',
+                      value: showFlood,
+                      onChanged: (value) {
+                        setState(() => showFlood = value ?? false);
+                      },
+                    ),
+                    buildFilterRow(
+                      label: 'Fire',
+                      assetPath: 'assets/icons/FINAL-FIRE-ICON.png',
+                      value: showFire,
+                      onChanged: (value) {
+                        setState(() => showFire = value ?? false);
+                      },
+                    ),
+                    buildFilterRow(
+                      label: 'Vehicular',
+                      assetPath: 'assets/icons/FINAL-CRASH-ICON.png',
+                      value: showVehicular,
+                      onChanged: (value) {
+                        setState(() => showVehicular = value ?? false);
+                      },
+                    ),
+                    buildFilterRow(
+                      label: 'Others',
+                      assetPath: 'assets/icons/FINAL-OTHERS-ICON.png',
+                      value: showOthers,
+                      onChanged: (value) {
+                        setState(() => showOthers = value ?? false);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppTheme.appBlue,
+                            ),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.appBlue,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text('Apply'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
-              CheckboxListTile(
-                title: Text('Flood', style: AppText.body),
-                value: true,
-                onChanged: (bool? value) {},
-                secondary: const Icon(Icons.water, color: Colors.blue),
-              ),
-              CheckboxListTile(
-                title: Text('Medical', style: AppText.body),
-                value: true,
-                onChanged: (bool? value) {},
-                secondary: const Icon(
-                  Icons.medical_services,
-                  color: Colors.yellow,
-                ),
-              ),
-              CheckboxListTile(
-                title: Text('Vehicular', style: AppText.body),
-                value: true,
-                onChanged: (bool? value) {},
-                secondary: const Icon(Icons.car_crash, color: Colors.purple),
-              ),
-              CheckboxListTile(
-                title: Text('Road Obstruction', style: AppText.body),
-                value: true,
-                onChanged: (bool? value) {},
-                secondary: const Icon(Icons.warning, color: Colors.orange),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Apply'),
-            ),
-          ],
+            );
+          },
         );
       },
     );
