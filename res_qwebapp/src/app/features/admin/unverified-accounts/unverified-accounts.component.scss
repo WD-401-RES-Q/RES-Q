@@ -69,6 +69,16 @@
     background: #dc2626;
   }
 
+  .id-badge.id-link {
+    cursor: pointer;
+    border: none;
+    transition: background-color 0.2s;
+  }
+
+  .id-badge.id-link:hover {
+    background: #008f4a;
+  }
+
   /* ACTION BUTTON WRAPPER */
   .action-buttons {
     display: flex;
@@ -297,4 +307,49 @@
     display: flex;
     gap: 12px;
     justify-content: flex-end;
+  }
+
+  /* ID PREVIEW MODAL */
+  .id-modal {
+    max-width: 600px;
+    width: 90%;
+  }
+
+  .id-modal-header {
+    background: var(--resq-yellow, #FFC806);
+    color: var(--text-dark, #212121);
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .id-modal-header .modal-title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .id-modal-close {
+    background: none;
+    border: none;
+    font-size: 28px;
+    cursor: pointer;
+    color: var(--text-dark, #212121);
+    padding: 0;
+    line-height: 1;
+  }
+
+  .id-modal-body {
+    padding: 20px;
+    text-align: center;
+    background: #f8fafc;
+  }
+
+  .id-modal-body img {
+    max-width: 100%;
+    max-height: 500px;
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   }

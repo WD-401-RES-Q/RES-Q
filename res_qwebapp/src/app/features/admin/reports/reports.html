@@ -4,36 +4,144 @@
     <p class="subtitle">Review and manage all reports.</p>
   </header>
 
-  <!-- FILTER DROPDOWN -->
-  <div class="filter-dropdown-wrapper">
-    <button 
-      class="filter-dropdown-btn"
-      (click)="toggleFilterDropdown()">
-      {{ currentFilter | uppercase }}
-      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <polyline points="6 9 12 15 18 9"></polyline>
-      </svg>
-    </button>
-    
-    <div class="filter-dropdown-menu" *ngIf="showFilterDropdown">
-      <button 
-        class="filter-option" 
-        [class.active]="currentFilter === 'pending'"
-        (click)="selectFilter('pending')">
-        Pending
-      </button>
-      <button 
-        class="filter-option" 
-        [class.active]="currentFilter === 'approved'"
-        (click)="selectFilter('approved')">
-        Approved
-      </button>
-      <button 
-        class="filter-option" 
-        [class.active]="currentFilter === 'flagged'"
-        (click)="selectFilter('flagged')">
-        Flagged
-      </button>
+  <!-- FILTERS ROW -->
+  <div class="filters-row">
+    <!-- STATUS FILTER -->
+    <div class="filter-group">
+      <span class="filter-label">Status:</span>
+      <div class="filter-dropdown-wrapper">
+        <button
+          class="filter-dropdown-btn"
+          (click)="toggleFilterDropdown()">
+          {{ currentFilter | uppercase }}
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+
+        <div class="filter-dropdown-menu" *ngIf="showFilterDropdown">
+          <button
+            class="filter-option"
+            [class.active]="currentFilter === 'pending'"
+            (click)="selectFilter('pending')">
+            Pending
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="currentFilter === 'approved'"
+            (click)="selectFilter('approved')">
+            Approved
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="currentFilter === 'flagged'"
+            (click)="selectFilter('flagged')">
+            Flagged
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- DATE FILTER -->
+    <div class="filter-group">
+      <span class="filter-label">Date:</span>
+      <div class="filter-dropdown-wrapper">
+        <button
+          class="filter-dropdown-btn"
+          (click)="toggleDateDropdown()">
+          {{ getDateFilterLabel() }}
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+
+        <div class="filter-dropdown-menu" *ngIf="showDateDropdown">
+          <button
+            class="filter-option"
+            [class.active]="dateFilter === 'all'"
+            (click)="selectDateFilter('all')">
+            All Time
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="dateFilter === 'today'"
+            (click)="selectDateFilter('today')">
+            Today
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="dateFilter === 'week'"
+            (click)="selectDateFilter('week')">
+            This Week
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="dateFilter === 'month'"
+            (click)="selectDateFilter('month')">
+            This Month
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="dateFilter === 'year'"
+            (click)="selectDateFilter('year')">
+            This Year
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- INCIDENT TYPE FILTER -->
+    <div class="filter-group">
+      <span class="filter-label">Type:</span>
+      <div class="filter-dropdown-wrapper">
+        <button
+          class="filter-dropdown-btn"
+          (click)="toggleIncidentDropdown()">
+          {{ getIncidentFilterLabel() }}
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+
+        <div class="filter-dropdown-menu" *ngIf="showIncidentDropdown">
+          <button
+            class="filter-option"
+            [class.active]="incidentFilter === 'all'"
+            (click)="selectIncidentFilter('all')">
+            All Types
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="incidentFilter === 'fire'"
+            (click)="selectIncidentFilter('fire')">
+            Fire
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="incidentFilter === 'flood'"
+            (click)="selectIncidentFilter('flood')">
+            Flood
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="incidentFilter === 'vehicular'"
+            (click)="selectIncidentFilter('vehicular')">
+            Vehicular
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="incidentFilter === 'earthquake'"
+            (click)="selectIncidentFilter('earthquake')">
+            Earthquake
+          </button>
+          <button
+            class="filter-option"
+            [class.active]="incidentFilter === 'other'"
+            (click)="selectIncidentFilter('other')">
+            Other
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -74,7 +182,7 @@
         <div class="counters">
           <div class="counter counter-green">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z"/>
+              <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
             </svg>
             <span>{{ report.greenFlags || 0 }}</span>
           </div>
@@ -170,7 +278,7 @@
             <div class="comment-flags">
               <span class="flag-green">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z"/>
+                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
                 </svg>
                 {{ comment.greenFlags }}
               </span>

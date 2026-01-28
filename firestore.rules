@@ -44,7 +44,8 @@ service cloud.firestore {
     // Approved users - allow read for mobile login checks
     match /approved_users/{docId} {
       allow read: if true;
-      allow write: if true; // admin app uses Firestore without Auth
+      allow create, update: if true;
+      allow delete: if true; // Allow admin to permanently ban (delete) users
     }
 
     // Announcements - readable by all, writable by all

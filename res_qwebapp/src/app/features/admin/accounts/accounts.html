@@ -51,10 +51,10 @@
             <td class="col-actions" (click)="$event.stopPropagation()">
               <div class="action-buttons">
                 <button type="button" class="btn btn-view" (click)="select(acc)">View</button>
-                <button *ngIf="acc.accountStatus === 'BANNED'; else banAction" type="button" class="btn btn-ban" (click)="openUnbanConfirmation(acc)">Unban</button>
-                <ng-template #banAction>
-                  <button type="button" class="btn btn-ban" (click)="ban(acc)">Ban</button>
-                </ng-template>
+                <!-- Only show Unban for temporary bans (has bannedUntil date) -->
+                <button *ngIf="isTemporaryBan(acc)" type="button" class="btn btn-ban" (click)="openUnbanConfirmation(acc)">Unban</button>
+                <!-- Show Ban button for non-banned accounts -->
+                <button *ngIf="acc.accountStatus !== 'BANNED'" type="button" class="btn btn-ban" (click)="ban(acc)">Ban</button>
               </div>
             </td>
           </tr>
@@ -85,10 +85,10 @@
         <button type="button" class="id-badge id-link" (click)="openIdModal(acc)">Uploaded (View)</button>
       </div>
 
-      <button *ngIf="acc.accountStatus === 'BANNED'; else banBtn" type="button" class="btn btn-ban big" (click)="openUnbanConfirmation(acc)">Revert Ban</button>
-      <ng-template #banBtn>
-        <button type="button" class="btn btn-ban big" (click)="ban(acc)">Ban Account</button>
-      </ng-template>
+      <!-- Only show Revert Ban for temporary bans -->
+      <button *ngIf="isTemporaryBan(acc)" type="button" class="btn btn-ban big" (click)="openUnbanConfirmation(acc)">Revert Ban</button>
+      <!-- Show Ban button for non-banned accounts -->
+      <button *ngIf="acc.accountStatus !== 'BANNED'" type="button" class="btn btn-ban big" (click)="ban(acc)">Ban Account</button>
     </div>
   </div>
 
