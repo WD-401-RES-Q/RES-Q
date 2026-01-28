@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<div class="login-container">
+  <div class="login-body">
+    <div class="login-hero">
+      <img src="assets/images/resq-admin.png" alt="RESQ Admin" class="hero-logo" />
+      <div class="hero-underline"></div>
+    </div>
+
+    <div class="login-card">
+      <form (ngSubmit)="onSubmit()" class="login-form">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input
+            type="text"
+            id="username"
+            [(ngModel)]="username"
+            name="username"
+            placeholder="USERNAME"
+            [disabled]="isLoading()"
+            required
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input
+            type="password"
+            id="password"
+            [(ngModel)]="password"
+            name="password"
+            placeholder="PASSWORD"
+            [disabled]="isLoading()"
+            required
+          />
+        </div>
+
+        @if (errorMessage()) {
+          <div class="error-message">
+            {{ errorMessage() }}
+          </div>
+        }
+
+        <button type="submit" class="login-button" [disabled]="isLoading()">
+          @if (isLoading()) {
+            <span class="loading-spinner"></span>
+            Logging in...
+          } @else {
+            LOGIN
+          }
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div class="login-footer">
+    <div class="footer-line"></div>
+    <div class="footer-grid">
+      <div class="footer-item">
+        ANGELES CITY DISASTER RISK<br />REDUCTION MANAGEMENT OFFICE
+      </div>
+      <div class="footer-item">
+        RES-Q © 2026 ALL RIGHTS RESERVED.
+      </div>
+      <div class="footer-item">
+        INFORMATION & COMMUNICATIONS<br />TECHNOLOGY DEPARTMENT
+      </div>
+    </div>
+  </div>
+</div>

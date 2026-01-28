@@ -1,0 +1,123 @@
+<div class="map-page">
+  <div class="map-header">
+    <div>
+      <h1>Responder Tracker</h1>
+      <p>Track live responder movement inside Angeles City geofence.</p>
+    </div>
+    <div class="live-indicator" [class.offline]="!isListening">
+      <span class="dot"></span>
+      {{ isListening ? 'Live' : 'Offline' }}
+    </div>
+  </div>
+
+  <div class="map-layout">
+    <section class="map-section">
+      <div class="map-shell">
+        <div id="responder-map"></div>
+        <div class="map-legend">
+          <div class="legend-item">
+            <span class="legend-dot responder"></span>
+            Responder location
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot fence"></span>
+            Angeles City geofence
+          </div>
+        </div>
+        <div *ngIf="mapLoadError" class="map-error">{{ mapLoadError }}</div>
+      </div>
+
+      <div class="map-tools">
+        <button
+          class="map-tool-btn refresh"
+          type="button"
+          title="Hard refresh"
+          aria-label="Hard refresh"
+          (click)="hardRefresh()"
+        >
+          <span class="tool-icon">↻</span>
+        </button>
+        <button
+          class="map-tool-btn focus"
+          type="button"
+          title="Fit responders"
+          aria-label="Fit responders"
+          (click)="fitToResponders()"
+        >
+          <span class="tool-icon">⌖</span>
+        </button>
+      </div>
+    </section>
+
+    <aside class="side-panel">
+      <div class="panel-section">
+        <div class="panel-title-row">
+          <div>
+            <h2>Responders</h2>
+            <div class="subtext">Live positions from active reports.</div>
+          </div>
+          <div class="count-pill">{{ tracks.length }}</div>
+        </div>
+
+        <div *ngIf="isLoading" class="empty-state">Loading responder locations…</div>
+        <div *ngIf="!isLoading && tracks.length === 0" class="empty-state">
+          No responder locations available yet.
+        </div>
+
+        <div class="responder-list compact">
+          <button
+            class="responder-card compact"
+            *ngFor="let track of tracks; trackBy: trackById"
+            (click)="focusResponder(track.reportId)"
+            [class.active]="track.reportId === selectedId"
+          >
+            <div class="card-title">
+              {{ track.responderName || 'Responder' }}
+              <span
+                class="status-pill"
+                [style.background]="getStatusColor(track.responderStatus || track.reportStatus)"
+                [style.color]="getStatusTextColor(track.responderStatus || track.reportStatus)"
+              >
+                {{ getStatusLabel(track.responderStatus || track.reportStatus) }}
+              </span>
+            </div>
+            <div class="card-meta">
+              {{ track.incidentType || 'Incident' }} · {{ track.barangay || 'Angeles City' }}
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2>Selected Responder</h2>
+        <div *ngIf="!selectedTrack" class="empty-state">
+          Select a responder to view details.
+        </div>
+        <div *ngIf="selectedTrack as track" class="details compact">
+          <div class="detail-row">
+            <span>Responder</span>
+            <strong>{{ track.responderName || 'Unknown' }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Status</span>
+            <strong>{{ getStatusLabel(track.responderStatus || track.reportStatus) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Incident</span>
+            <strong>{{ track.incidentType || 'Unknown' }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Barangay</span>
+            <strong>{{ track.barangay || 'Angeles City' }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Last update</span>
+            <strong>{{ formatTimestamp(track.responderLocationUpdatedAt) }}</strong>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+
+  </div>
+</div>

@@ -1,0 +1,85 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if user owns the document
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    // Admins collection - open read for admin login (no Firebase Auth)
+    match /admins/{docId} {
+      allow read: if true;
+      allow write: if false; // Only backend admin scripts
+    }
+
+    // Semi-admins collection - allow read for mobile login checks
+    match /semi_admins/{docId} {
+      allow read: if true;
+      allow write: if false; // Only backend scripts
+    }
+
+    // Users collection - authenticated users can only read/write their own
+    match /users/{docId} {
+      allow read: if isAuthenticated() && (isOwner(docId) || request.auth.token.admin == true);
+      allow create: if isAuthenticated() && isOwner(docId);
+      allow update: if isOwner(docId);
+      allow delete: if false; // Prevent user self-deletion
+    }
+
+    // Pending users - allow read/create for mobile registration + login checks
+    match /pending_users/{docId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if false;
+      allow delete: if true;
+    }
+
+    // Approved users - allow read for mobile login checks
+    match /approved_users/{docId} {
+      allow read: if true;
+      allow write: if true; // admin app uses Firestore without Auth
+    }
+
+    // Announcements - readable by all, writable by all
+    match /announcements/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Reports collection
+    match /reports/{docId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if false;
+
+      // Nested comments subcollection
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if true;
+        allow update: if true;
+        allow delete: if false;
+      }
+    }
+
+    // Root-level comments collection
+    match /comments/{commentId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if false;
+    }
+
+    // Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

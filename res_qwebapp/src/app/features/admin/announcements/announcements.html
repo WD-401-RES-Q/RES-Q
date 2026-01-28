@@ -1,0 +1,95 @@
+<section class="admin-page posting-page">
+  <header class="page-header">
+    <h1>Announcements</h1>
+    <p class="subtitle">Create announcements that will appear in the User Notifications section.</p>
+  </header>
+
+  <div class="posting-layout">
+    <!-- Composer -->
+    <div class="composer">
+      <div class="form-group">
+        <label>Title</label>
+        <input type="text" [(ngModel)]="title" placeholder="Enter post title" />
+      </div>
+
+      <div class="form-group">
+        <label>Priority</label>
+        <select [(ngModel)]="priority">
+          <option>Normal</option>
+          <option>Important</option>
+          <option>Critical</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Image (optional)</label>
+        <div class="image-row">
+          <input
+            type="text"
+            [(ngModel)]="imageUrl"
+            placeholder="Paste image URL for notification cover"
+          />
+          <button type="button" class="btn btn-upload" (click)="fileInput.click()">
+            Choose Photo
+          </button>
+          <input
+            #fileInput
+            type="file"
+            accept="image/*"
+            class="file-input"
+            (change)="onSelectImage($event)"
+          />
+        </div>
+        <div class="image-preview" *ngIf="selectedImagePreview">
+          <img [src]="selectedImagePreview" alt="Selected announcement image" />
+          <button type="button" class="btn btn-clear" (click)="clearSelectedImage()">Remove</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label>Message</label>
+        <textarea rows="6" [(ngModel)]="content" placeholder="Write your message..."></textarea>
+      </div>
+
+      <div class="composer-actions">
+        <button class="btn btn-publish" [disabled]="!canPublish || isPublishing" (click)="publish()">
+          {{ isPublishing ? 'Publishing…' : 'Publish' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Preview / Notifications -->
+    <div class="notifications">
+      <h2 class="section-title">Preview: User Notifications</h2>
+      <div class="empty" *ngIf="posts.length === 0">No posts yet.</div>
+      <div class="notif-list" *ngIf="posts.length > 0">
+        <article class="notif-item" *ngFor="let post of posts" [class.no-image]="!post.imageUrl">
+          <div class="notif-image" *ngIf="post.imageUrl">
+            <img [src]="getPreviewImage(post)" alt="Notification image" />
+          </div>
+          <div class="notif-header">
+            <span class="badge" [class.important]="post.priority === 'Important'" [class.critical]="post.priority === 'Critical'">{{ post.priority }}</span>
+            <h3 class="notif-title">{{ post.title }}</h3>
+          </div>
+          <p class="notif-time">{{ post.createdAt | date:'MMM d, y — h:mm a' }}</p>
+          <p class="notif-content">{{ post.content }}</p>
+        </article>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="modal-overlay" *ngIf="showSuccessModal" (click)="closeSuccessModal()">
+  <div class="modal-content" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h3>Announcement posted successfully</h3>
+      <button class="modal-close" (click)="closeSuccessModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p>Your announcement is now visible in the mobile notifications.</p>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-modal btn-yes" (click)="closeSuccessModal()">OK</button>
+    </div>
+  </div>
+</div>

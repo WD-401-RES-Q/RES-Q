@@ -1,0 +1,73 @@
+.settings-page {
+    padding: 20px;
+  }
+
+  .page-header h1 {
+    margin: 0 0 16px;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-dark, #212121);
+    font-family: 'Roboto', sans-serif;
+  }
+
+  .settings-card {
+    background: #ffffff;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    padding: 20px 24px;
+    max-width: 520px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  }
+
+  .settings-card h2 {
+    margin-top: 0;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    font-family: 'Roboto', sans-serif;
+    color: var(--text-dark, #212121);
+  }
+
+  .setting-row {
+    margin-bottom: 12px;
+    font-size: 14px;
+    font-family: 'Roboto Condensed', sans-serif;
+  }
+
+  .setting-row label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+
+  .setting-row input[type="checkbox"] {
+    accent-color: var(--resq-red, var(--resq-red, #AC1B22));
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .btn {
+    margin-top: 16px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #ffffff;
+    font-family: 'Roboto', sans-serif;
+    transition: 0.15s ease;
+  }
+
+  .btn-save {
+    background-color: var(--resq-red, var(--resq-red, #AC1B22));
+  }
+
+  .btn-save:hover {
+    background-color: #8f161c;
+    transform: translateY(-2px);
+    box-shadow: 0 3px 8px rgba(172, 27, 34, 0.35);
+  }

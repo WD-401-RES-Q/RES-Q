@@ -1,0 +1,41 @@
+<div class="admin-root">
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="assets/images/resq-admin-white.png" alt="RES-Q" class="brand-logo" />
+    </div>
+    <nav>
+      <ul>
+        <li><a routerLink="dashboard" routerLinkActive="active">Dashboard</a></li>
+        <li>
+          <a routerLink="reports" routerLinkActive="active">
+            Reports
+            <span class="badge" *ngIf="(pendingReportsCount$ | async) as count">{{ count > 0 ? count : '' }}</span>
+          </a>
+        </li>
+        <li><a routerLink="responder-map" routerLinkActive="active">Responder Map</a></li>
+        <li><a routerLink="announcements" routerLinkActive="active">Announcements</a></li>
+        <li><a routerLink="accounts" routerLinkActive="active">Accounts</a></li>
+        <li>
+          <a routerLink="unverified-accounts" routerLinkActive="active">
+            Unverified Accounts
+            <span class="badge" *ngIf="(unverifiedAccountsCount$ | async) as count">{{ count > 0 ? count : '' }}</span>
+          </a>
+        </li>
+        <li><a routerLink="settings" routerLinkActive="active">Settings</a></li>
+      </ul>
+    </nav>
+    <div class="sidebar-footer">
+      @if (authService.currentAdmin(); as admin) {
+        <div class="admin-info">
+          <p class="admin-username">{{ admin.username }}</p>
+          <p class="admin-role">{{ admin.role }}</p>
+        </div>
+      }
+      <button class="logout-btn" (click)="logout()">Logout</button>
+    </div>
+  </aside>
+
+  <main class="admin-content">
+    <router-outlet></router-outlet>
+  </main>
+</div>
