@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../../common/services/registration_prefs.dart';
 
 class OTPPage extends StatefulWidget {
   const OTPPage({super.key});
@@ -47,7 +48,7 @@ class _OTPPageState extends State<OTPPage> {
   Widget _logo() {
     return RichText(
       text: TextSpan(
-        style: GoogleFonts.poppins(fontSize: 26, fontWeight: FontWeight.w700),
+        style: GoogleFonts.roboto(fontSize: 26, fontWeight: FontWeight.w700),
         children: const [
           TextSpan(
             text: 'RES',
@@ -97,6 +98,9 @@ class _OTPPageState extends State<OTPPage> {
 
       if (!mounted) return;
       setState(() => _loading = false);
+
+      // Clear saved phone number after successful OTP verification
+      await RegistrationPrefs.clearPhoneNumber();
 
       // Navigate to PIN creation page instead of saving directly
       if (mounted) {
@@ -193,7 +197,7 @@ class _OTPPageState extends State<OTPPage> {
               const SizedBox(height: 16),
               Text(
                 'Registration Successful!',
-                style: GoogleFonts.poppins(
+                style: GoogleFonts.roboto(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
                   color: appBlack,
@@ -203,7 +207,7 @@ class _OTPPageState extends State<OTPPage> {
               const SizedBox(height: 12),
               Text(
                 'Your account has been created and is pending admin approval. You will be able to login within 48 hours once an administrator approves your account.',
-                style: GoogleFonts.poppins(fontSize: 14, color: appBlack),
+                style: GoogleFonts.roboto(fontSize: 14, color: appBlack),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
@@ -220,7 +224,7 @@ class _OTPPageState extends State<OTPPage> {
                   ),
                   child: Text(
                     'OK',
-                    style: GoogleFonts.poppins(
+                    style: GoogleFonts.roboto(
                       fontWeight: FontWeight.w600,
                       color: Colors.white,
                     ),
@@ -315,7 +319,7 @@ class _OTPPageState extends State<OTPPage> {
                     Center(
                       child: Text(
                         'VERIFY OTP',
-                        style: GoogleFonts.poppins(
+                        style: GoogleFonts.roboto(
                           fontSize: 18,
                           fontWeight: FontWeight.w700,
                           color: appBlack,
@@ -328,7 +332,7 @@ class _OTPPageState extends State<OTPPage> {
                       child: Text(
                         'Enter the 6 digit code sent to your\nphone number.',
                         textAlign: TextAlign.center,
-                        style: GoogleFonts.quicksand(
+                        style: GoogleFonts.robotoCondensed(
                           fontSize: 14,
                           color: appBlack,
                         ),
@@ -345,7 +349,7 @@ class _OTPPageState extends State<OTPPage> {
                           controller: _otpCtl,
                           keyboardType: TextInputType.number,
                           textAlign: TextAlign.center,
-                          style: GoogleFonts.poppins(
+                          style: GoogleFonts.roboto(
                             fontSize: 22,
                             letterSpacing: 8,
                           ),
@@ -353,7 +357,7 @@ class _OTPPageState extends State<OTPPage> {
                           decoration: InputDecoration(
                             counterText: '',
                             hintText: '• • • •',
-                            hintStyle: GoogleFonts.poppins(
+                            hintStyle: GoogleFonts.roboto(
                               fontSize: 22,
                               color: Colors.grey,
                               letterSpacing: 8,
@@ -415,7 +419,7 @@ class _OTPPageState extends State<OTPPage> {
                               )
                             : Text(
                                 'VERIFY',
-                                style: GoogleFonts.poppins(
+                                style: GoogleFonts.roboto(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
                                   color: Colors.white,
@@ -431,7 +435,7 @@ class _OTPPageState extends State<OTPPage> {
                         onPressed: _resend,
                         child: Text(
                           'Resend code',
-                          style: GoogleFonts.poppins(
+                          style: GoogleFonts.roboto(
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                             color: appBlue,

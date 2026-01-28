@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'admin-map_page.dart';
+import 'semi_admin_map_page.dart';
 import '../../community/pages/community_page.dart';
 import '../../notifications/pages/notifications_page.dart';
 import '../../profile/pages/profile_page.dart';

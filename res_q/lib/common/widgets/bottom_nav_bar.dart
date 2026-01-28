@@ -12,8 +12,8 @@ class BottomNavItemConfig {
     required this.label,
     required this.activeIconPath,
     required this.inactiveIconPath,
-    this.iconWidth = 48,
-    this.iconHeight = 48,
+    this.iconWidth = 40,
+    this.iconHeight = 40,
   });
 }
 
@@ -39,7 +39,7 @@ class _BottomNavBarState extends State<BottomNavBar> {
     final configs = widget.itemConfigs ?? _defaultItems;
 
     return Container(
-      height: 80,
+      height: 68,
       decoration: const BoxDecoration(
         color: AppColors.appBlue,
         borderRadius: BorderRadius.only(
@@ -55,8 +55,8 @@ class _BottomNavBarState extends State<BottomNavBar> {
           type: BottomNavigationBarType.fixed,
           selectedItemColor: AppColors.appYellow,
           unselectedItemColor: Colors.white,
-          selectedFontSize: 10,
-          unselectedFontSize: 10,
+          selectedFontSize: 9,
+          unselectedFontSize: 9,
           selectedLabelStyle: const TextStyle(
             fontFamily: 'Roboto',
             fontWeight: FontWeight.w900,

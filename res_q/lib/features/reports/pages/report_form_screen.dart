@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
 import 'dart:async';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/location_service.dart';
@@ -27,11 +29,14 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   final TextEditingController _informationController = TextEditingController();
   final TextEditingController _plateNumberController = TextEditingController();
   final TextEditingController _barangayController = TextEditingController();
+  final TextEditingController _otherIncidentController = TextEditingController();
   String? _fullName;
   String? _contactNumber;
   late final String _reportDate;
   String? _vehicleBodyType;
   String? _vehicleColor;
+  String? _mediaError;
+  String? _otherIncidentError;
 
   LocationSelectionMode _locationMode = LocationSelectionMode.current;
   LatLng? _selectedLocation;
@@ -53,6 +58,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     _informationController.dispose();
     _plateNumberController.dispose();
     _barangayController.dispose();
+    _otherIncidentController.dispose();
     super.dispose();
   }
 
@@ -78,20 +84,20 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     if (photo != null) {
       setState(() {
         _capturedMedia = photo;
+        _mediaError = null;
       });
     }
   }
 
-  Future<void> _pickFromGallery() async {
-    final XFile? image = await _picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 60,
-      maxWidth: 1024,
-      maxHeight: 1024,
+  Future<void> _captureVideo() async {
+    final XFile? video = await _picker.pickVideo(
+      source: ImageSource.camera,
+      maxDuration: const Duration(seconds: 30),
     );
-    if (image != null) {
+    if (video != null) {
       setState(() {
-        _capturedMedia = image;
+        _capturedMedia = video;
+        _mediaError = null;
       });
     }
   }
@@ -163,7 +169,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                           child: ElevatedButton(
                             onPressed: () {
                               Navigator.pop(context);
-                              _pickFromGallery();
+                              _captureVideo();
                             },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFFAC1B22),
@@ -173,7 +179,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                               elevation: 2,
                             ),
                             child: const Text(
-                              'RECORD A VIDEO',
+                              'CAPTURE A VIDEO',
                               style: TextStyle(
                                 fontFamily: 'RobotoCondensed',
                                 fontSize: 12,
@@ -196,6 +202,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   Future<void> _confirmReport() async {
+    // Clear previous errors
+    setState(() {
+      _mediaError = null;
+      _otherIncidentError = null;
+    });
+
     if (_isVehicularIncident()) {
       final plateNumber = _plateNumberController.text.trim();
       if (plateNumber.isEmpty ||
@@ -221,6 +233,18 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         );
         return;
       }
+    }
+    if (_isOthersIncident()) {
+      final otherIncident = _otherIncidentController.text.trim();
+      if (otherIncident.isEmpty) {
+        setState(() => _otherIncidentError = 'Please specify the incident type');
+        return;
+      }
+    }
+    // Validate required media
+    if (_capturedMedia == null) {
+      setState(() => _mediaError = 'Photo or video is required');
+      return;
     }
 
     final hasReachedLimit = await _hasReachedReportLimit();
@@ -299,6 +323,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             if (_isFireOrFloodIncident()) ...{
               'barangay': _barangayController.text.trim(),
             },
+            if (_isOthersIncident()) ...{
+              'otherIncidentType': _otherIncidentController.text.trim(),
+            },
             'reportedAt': Timestamp.fromDate(now),
             'gpsSharingEnabled': _locationMode == LocationSelectionMode.current,
             'locationSource': _locationMode == LocationSelectionMode.current
@@ -368,6 +395,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   },
                   if (_isFireOrFloodIncident()) ...{
                     'barangay': _barangayController.text.trim(),
+                  },
+                  if (_isOthersIncident()) ...{
+                    'otherIncidentType': _otherIncidentController.text.trim(),
                   },
                   'mediaUrl': mediaUrl,
                   'mediaType': mediaType,
@@ -715,7 +745,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                           child: Align(
                             alignment: Alignment.center,
                             child: SvgPicture.asset(
-                              "assets/icons/RESQ-LOGO.svg",
+                              "assets/icons/RES-Q_LOGO.svg",
                               fit: BoxFit.contain,
                               errorBuilder: (context, error, stackTrace) =>
                                   const Icon(
@@ -785,6 +815,10 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
                 if (_isFireOrFloodIncident()) const SizedBox(height: 16),
 
+                if (_isOthersIncident()) _buildOtherIncidentField(),
+
+                if (_isOthersIncident()) const SizedBox(height: 16),
+
                 // Information TextArea
                 Container(
                   height: 190,
@@ -797,6 +831,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                     controller: _informationController,
                     maxLines: null,
                     expands: true,
+                    maxLength: 256,
+                    maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                    inputFormatters: [
+                      LengthLimitingTextInputFormatter(256),
+                    ],
                     textAlignVertical: TextAlignVertical.top,
                     style: const TextStyle(
                       fontFamily: 'RobotoCondensed',
@@ -815,58 +854,85 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                       ),
                       contentPadding: EdgeInsets.all(16),
                       border: InputBorder.none,
+                      counterStyle: TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontSize: 11,
+                        color: Color(0xFF4B5563),
+                      ),
                     ),
                   ),
                 ),
 
                 const SizedBox(height: 16),
 
-                // Capture Photo/Video Row
-                Row(
+                // Capture Photo/Video Row (Required)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      flex: 3,
-                      child: Container(
-                        height: 64,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.black, width: 2),
-                        ),
-                        child: Center(
-                          child: Text(
-                            _capturedMedia == null
-                                ? "(Optional) CAPTURE PHOTO/VIDEO"
-                                : "✓ Media captured",
-                            style: const TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 14,
-                              fontWeight: FontWeight.w400,
-                              color: Colors.black,
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: Container(
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: _mediaError != null ? Colors.red : Colors.black,
+                                width: 2,
+                              ),
+                            ),
+                            child: Center(
+                              child: Text(
+                                _capturedMedia == null
+                                    ? "CAPTURE PHOTO/VIDEO *"
+                                    : "✓ Media captured",
+                                style: TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w400,
+                                  color: _capturedMedia == null
+                                      ? (_mediaError != null ? Colors.red : Colors.black)
+                                      : const Color(0xFF22C55E),
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 1,
-                      child: GestureDetector(
-                        onTap: _showMediaOptions,
-                        child: Container(
-                          height: 64,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFAC1B22),
-                            borderRadius: BorderRadius.circular(12),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 1,
+                          child: GestureDetector(
+                            onTap: _showMediaOptions,
+                            child: Container(
+                              height: 64,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFAC1B22),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.camera_alt,
+                                color: Colors.white,
+                                size: 32,
+                              ),
+                            ),
                           ),
-                          child: const Icon(
-                            Icons.camera_alt,
-                            color: Colors.white,
-                            size: 32,
+                        ),
+                      ],
+                    ),
+                    if (_mediaError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          _mediaError!,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 12,
+                            color: Colors.red,
                           ),
                         ),
                       ),
-                    ),
                   ],
                 ),
 
@@ -913,24 +979,43 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                     ),
                     const SizedBox(height: 12),
                     if (_locationMode == LocationSelectionMode.pin)
-                      SizedBox(
-                        width: 180,
-                        child: OutlinedButton.icon(
+                      Container(
+                        width: 220,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.4),
+                              blurRadius: 4,
+                              offset: const Offset(0, 7),
+                            ),
+                          ],
+                        ),
+                        child: ElevatedButton.icon(
                           onPressed: _openPinPicker,
-                          icon: const Icon(Icons.location_on_outlined),
+                          icon: const Icon(
+                            Icons.location_on,
+                            color: Colors.white,
+                            size: 20,
+                          ),
                           label: Text(
                             _selectedLocation == null
-                                ? 'Pick on map'
-                                : 'Update pin',
+                                ? 'PIN ON MAP'
+                                : 'UPDATE PIN',
                             style: const TextStyle(
                               fontFamily: 'RobotoCondensed',
-                              fontWeight: FontWeight.w400,
+                              fontWeight: FontWeight.w500,
+                              fontSize: 15,
+                              color: Colors.white,
                             ),
                           ),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFFAC1B22),
-                            side: const BorderSide(
-                              color: Color(0xFFAC1B22),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFAC1B22),
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(30),
                             ),
                           ),
                         ),
@@ -1101,6 +1186,64 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   bool _isFireOrFloodIncident() {
     final incident = widget.incidentType.toUpperCase();
     return incident == 'FIRE' || incident == 'FLOOD';
+  }
+
+  bool _isOthersIncident() {
+    return widget.incidentType.toUpperCase() == 'OTHERS';
+  }
+
+  Widget _buildOtherIncidentField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildLabeledField(
+          label: 'Specific Incident Type *',
+          borderColor: _otherIncidentError != null ? Colors.red : Colors.black,
+          child: TextField(
+            controller: _otherIncidentController,
+            textCapitalization: TextCapitalization.sentences,
+            onChanged: (_) {
+              if (_otherIncidentError != null) {
+                setState(() => _otherIncidentError = null);
+              }
+            },
+            style: const TextStyle(
+              fontFamily: 'RobotoCondensed',
+              fontSize: 12,
+              fontWeight: FontWeight.w400,
+              color: Colors.black,
+            ),
+            decoration: const InputDecoration(
+              hintText: 'e.g., Medical Emergency, Crime, etc.',
+              hintStyle: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+                color: Colors.black54,
+              ),
+              border: InputBorder.none,
+              isCollapsed: true,
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 14,
+              ),
+            ),
+          ),
+        ),
+        if (_otherIncidentError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              _otherIncidentError!,
+              style: const TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontSize: 12,
+                color: Colors.red,
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   Widget _buildVehicleDetailsRow() {
@@ -1432,6 +1575,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   Widget _buildLabeledField({
     required String label,
     required Widget child,
+    Color borderColor = Colors.black,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1451,7 +1595,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.black, width: 1.5),
+            border: Border.all(color: borderColor, width: 1.5),
           ),
           child: child,
         ),
@@ -1473,6 +1617,126 @@ class _PinPickerPageState extends State<_PinPickerPage> {
 
   final MapController _mapController = MapController();
   LatLng? _selected;
+  LatLng? _currentLocation;
+  bool _locationChecked = false;
+  StreamSubscription<Position>? _locationSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _startLocationTracking();
+  }
+
+  @override
+  void dispose() {
+    _locationSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _startLocationTracking() async {
+    try {
+      // Get initial position
+      final position = await LocationService.getCurrentPosition();
+      if (position != null && mounted) {
+        final currentPos = LatLng(position.latitude, position.longitude);
+        setState(() {
+          _currentLocation = currentPos;
+        });
+
+        // Check if user is outside Angeles City (only show once)
+        if (!_locationChecked && !_isWithinAngeles(currentPos)) {
+          _locationChecked = true;
+          _showOutsideAreaError();
+        }
+      }
+
+      // Start listening to location updates
+      _locationSubscription = LocationService.getPositionStream().listen(
+        (position) {
+          if (mounted) {
+            final newPos = LatLng(position.latitude, position.longitude);
+            setState(() {
+              _currentLocation = newPos;
+            });
+
+            // Check if user moved outside Angeles City
+            if (!_locationChecked && !_isWithinAngeles(newPos)) {
+              _locationChecked = true;
+              _showOutsideAreaError();
+            }
+          }
+        },
+        onError: (e) {
+          debugPrint('Location stream error: $e');
+        },
+      );
+    } catch (e) {
+      debugPrint('Error starting location tracking: $e');
+    }
+  }
+
+  void _showOutsideAreaError() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: const Color(0xFFAC1B22),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.warning_amber_rounded, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Outside Coverage Area',
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  color: Color(0xFF111827),
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Your current location is outside the Angeles City area. You can still pin a location within the coverage area to submit your report.',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF4B5563),
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFAC1B22),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'I Understand',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   bool _isWithinAngeles(LatLng point) {
     final distance = const Distance().as(
@@ -1577,6 +1841,32 @@ class _PinPickerPageState extends State<_PinPickerPage> {
                   ),
                 ],
               ),
+              // Current location marker (blue)
+              if (_currentLocation != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _currentLocation!,
+                      width: 24,
+                      height: 24,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 3),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.3),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              // Selected pin marker (red)
               if (_selected != null)
                 MarkerLayer(
                   markers: [

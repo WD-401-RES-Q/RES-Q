@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../../common/widgets/pin_numpad.dart';
+import '../../../common/widgets/app_buttons.dart';
 
 class ApprovedPinCreationPage extends StatefulWidget {
   const ApprovedPinCreationPage({super.key});
@@ -220,7 +220,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
                         _phoneVerified
                             ? 'Enter a 4-digit PIN for quick login'
                             : 'Enter your registered phone number',
-                        style: GoogleFonts.poppins(
+                        style: GoogleFonts.roboto(
                           fontSize: 14,
                           color: appBlack.withOpacity(0.7),
                         ),

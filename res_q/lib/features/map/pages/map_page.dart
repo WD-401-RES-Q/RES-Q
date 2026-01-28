@@ -28,6 +28,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   bool _isWeatherLoading = false;
   String? _weatherError;
   _WeatherData? _weatherData;
+  final bool _allowDestinationSelection = false;
 
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
@@ -1241,13 +1242,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
               initialZoom: _initialZoom,
               minZoom: 5,
               maxZoom: 18,
-              onTap: (position, latlng) {
-                // Allow setting destination by tapping on map
-                if (!_isRouting) {
-                  _destination = latlng;
-                  _calculateRoute();
-                }
-              },
+              onTap: _allowDestinationSelection
+                  ? (position, latlng) {
+                      if (!_isRouting) {
+                        _destination = latlng;
+                        _calculateRoute();
+                      }
+                    }
+                  : null,
             ),
             children: [
               // Map tiles from OpenStreetMap
@@ -1391,21 +1393,22 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                       ),
                       Row(
                         children: [
-                          // Route button
-                          _buildTopBarAction(
-                            icon: _isTracking ? Icons.stop : Icons.route,
-                            isActive: _isTracking,
-                            onTap: () {
-                              if (_isTracking) {
-                                _stopTracking();
-                              } else if (_routePoints.isNotEmpty) {
-                                _startTracking();
-                              } else {
-                                _showRouteDialog();
-                              }
-                            },
-                          ),
-                          const SizedBox(width: 8),
+                          if (_allowDestinationSelection) ...[
+                            _buildTopBarAction(
+                              icon: _isTracking ? Icons.stop : Icons.route,
+                              isActive: _isTracking,
+                              onTap: () {
+                                if (_isTracking) {
+                                  _stopTracking();
+                                } else if (_routePoints.isNotEmpty) {
+                                  _startTracking();
+                                } else {
+                                  _showRouteDialog();
+                                }
+                              },
+                            ),
+                            const SizedBox(width: 8),
+                          ],
                           // Filter button
                           _buildTopBarAction(
                             icon: Icons.filter_list,
@@ -1581,7 +1584,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           // Floating action button for current location
           Positioned(
             bottom: 24,
-            right: 16,
+            left: 16,
             child: Column(
               children: [
                 _buildWeatherButton(),

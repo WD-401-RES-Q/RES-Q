@@ -2389,10 +2389,10 @@ class _AdminMapPageState extends State<AdminMapPage>
               ),
             ),
 
-          // Current location and weather buttons (bottom right)
+          // Current location and weather buttons (bottom left)
           Positioned(
             bottom: 24,
-            right: 16,
+            left: 16,
             child: Column(
               children: [
                 _buildWeatherButton(),

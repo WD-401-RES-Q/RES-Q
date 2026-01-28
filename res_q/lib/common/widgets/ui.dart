@@ -3,4 +3,4 @@ export 'modals.dart';
 export 'cards.dart';
 export 'bottom_nav_bar.dart';
 export 'auth_widgets.dart';
-export 'terms_dialog.dart';
+export 'app_buttons.dart';

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../../../common/widgets/pin_numpad.dart';
+import 'package:local_auth/local_auth.dart';
+import '../../../common/widgets/app_buttons.dart';
 import '../../home/pages/home_page.dart';
 import '../../semi_admin/pages/semi_admin_main_page.dart';
 import '../../../common/services/user_session.dart';
@@ -15,7 +17,7 @@ class LoginPage extends StatefulWidget {
   State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<LoginPage> {
+class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMixin {
   // Brand colors
   static const appBlue = Color(0xFFAC1B22);
   static const appRed = Color(0xFFFFC806);
@@ -28,6 +30,16 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _pinCtl = TextEditingController();
   final TextEditingController _phoneCtl = TextEditingController();
   bool _showPinSuccess = false;
+  bool _showPinError = false;
+  String _pinErrorMessage = '';
+
+  // Shake animation
+  late AnimationController _shakeController;
+  late Animation<double> _shakeAnimation;
+
+  // Biometrics
+  final LocalAuthentication _localAuth = LocalAuthentication();
+  bool _canUseBiometrics = false;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
@@ -35,6 +47,140 @@ class _LoginPageState extends State<LoginPage> {
   void initState() {
     super.initState();
     _initialize();
+    _initShakeAnimation();
+    _checkBiometrics();
+  }
+
+  void _initShakeAnimation() {
+    _shakeController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    _shakeAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _shakeController, curve: Curves.elasticIn),
+    );
+  }
+
+  Future<void> _checkBiometrics() async {
+    try {
+      final canAuthenticateWithBiometrics = await _localAuth.canCheckBiometrics;
+      final canAuthenticate = canAuthenticateWithBiometrics || await _localAuth.isDeviceSupported();
+      final availableBiometrics = await _localAuth.getAvailableBiometrics();
+
+      if (mounted) {
+        setState(() {
+          _canUseBiometrics = canAuthenticate && availableBiometrics.isNotEmpty;
+        });
+      }
+    } catch (e) {
+      debugPrint('Biometrics check error: $e');
+    }
+  }
+
+  Future<void> _authenticateWithBiometrics() async {
+    final phoneInput = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
+    if (phoneInput.isEmpty || phoneInput.length != 10) {
+      _showError('Please enter your phone number first');
+      return;
+    }
+
+    if (!_canUseBiometrics) {
+      _showError('Biometrics not available on this device. Please use PIN.');
+      return;
+    }
+
+    try {
+      final authenticated = await _localAuth.authenticate(
+        localizedReason: 'Authenticate to login to RES-Q',
+        options: const AuthenticationOptions(
+          stickyAuth: true,
+          biometricOnly: true,
+        ),
+      );
+
+      if (authenticated) {
+        setState(() => _loading = true);
+        await _verifyWithBiometrics();
+      }
+    } on PlatformException catch (e) {
+      debugPrint('Biometric auth error: $e');
+      _showError('Biometric authentication failed');
+    }
+  }
+
+  Future<void> _verifyWithBiometrics() async {
+    final phoneInput = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
+    final phone = '+63$phoneInput';
+
+    try {
+      // Check semi_admins collection first
+      final semiAdminQuery = await _firestore
+          .collection('semi_admins')
+          .where('contactNumber', isEqualTo: phone)
+          .limit(1)
+          .get();
+
+      if (semiAdminQuery.docs.isNotEmpty) {
+        debugPrint('✅ Semi-admin biometric login successful!');
+        setState(() => _loading = false);
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const SemiAdminMainPage()),
+          );
+        }
+        return;
+      }
+
+      // Check approved_users collection
+      final userQuery = await _firestore
+          .collection('approved_users')
+          .where('contactNumber', isEqualTo: phone)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) {
+        setState(() => _loading = false);
+        _showError('Phone number not found. Please register first.');
+        return;
+      }
+
+      final userData = userQuery.docs.first.data();
+      final accountStatus = userData['accountStatus'] as String?;
+
+      if (accountStatus != 'approved') {
+        setState(() => _loading = false);
+        _showPendingApprovalDialog();
+        return;
+      }
+
+      // Sign in to Firebase Auth anonymously
+      try {
+        final userCredential = await FirebaseAuth.instance.signInAnonymously();
+        debugPrint('✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}');
+      } catch (authError) {
+        debugPrint('⚠️ Firebase Anonymous Sign-In failed: $authError');
+      }
+
+      // Login successful
+      UserSession.setUserData(userData);
+      setState(() => _loading = false);
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const MainPage()),
+        );
+      }
+    } catch (e) {
+      setState(() => _loading = false);
+      _showError('Error: $e');
+    }
+  }
+
+  void _showError(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.red),
+      );
+    }
   }
 
   @override
@@ -43,7 +189,6 @@ class _LoginPageState extends State<LoginPage> {
     final args = ModalRoute.of(context)?.settings.arguments as Map?;
     if (args != null && args['showPinSuccess'] == true) {
       setState(() => _showPinSuccess = true);
-      // Auto-hide after 5 seconds
       Future.delayed(const Duration(seconds: 5), () {
         if (mounted) {
           setState(() => _showPinSuccess = false);
@@ -63,7 +208,29 @@ class _LoginPageState extends State<LoginPage> {
   void dispose() {
     _pinCtl.dispose();
     _phoneCtl.dispose();
+    _shakeController.dispose();
     super.dispose();
+  }
+
+  void _triggerShake() {
+    _shakeController.reset();
+    _shakeController.forward();
+  }
+
+  void _resetPinWithError(String message) {
+    setState(() {
+      _pinCtl.clear();
+      _showPinError = true;
+      _pinErrorMessage = message;
+    });
+    _triggerShake();
+
+    // Auto-hide error after 3 seconds
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() => _showPinError = false);
+      }
+    });
   }
 
   Future<void> _submit() async {
@@ -82,43 +249,31 @@ class _LoginPageState extends State<LoginPage> {
     await _verifyPinOnly();
   }
 
-  // PIN login - verify both phone number and PIN together
   Future<void> _verifyPinOnly() async {
     final pin = _pinCtl.text.trim();
-    final phoneInput = _phoneCtl.text.trim();
+    final phoneInput = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
 
     // Validate phone number
     if (phoneInput.isEmpty) {
       setState(() => _loading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please enter your phone number'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      _resetPinWithError('Please enter your phone number');
+      return;
+    }
+
+    if (phoneInput.length != 10) {
+      setState(() => _loading = false);
+      _resetPinWithError('Phone number must be 10 digits');
       return;
     }
 
     if (pin.length != 4) {
       setState(() => _loading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('PIN must be exactly 4 digits'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      _resetPinWithError('PIN must be exactly 4 digits');
       return;
     }
 
     // Format phone number to match Firebase format
-    String phone = phoneInput.replaceAll('-', '').trim();
-    if (phone.isNotEmpty && !phone.startsWith('+')) {
-      phone = phone.startsWith('0') ? '+63${phone.substring(1)}' : '+63$phone';
-    }
+    final phone = '+63$phoneInput';
 
     try {
       // First check semi_admins collection
@@ -130,7 +285,6 @@ class _LoginPageState extends State<LoginPage> {
           .get();
 
       if (semiAdminQuery.docs.isNotEmpty) {
-        // Semi-admin found - route to SemiAdminMainPage
         debugPrint('✅ Semi-admin login successful via PIN!');
         setState(() => _loading = false);
         if (mounted) {
@@ -151,51 +305,38 @@ class _LoginPageState extends State<LoginPage> {
 
       if (userQuery.docs.isEmpty) {
         setState(() => _loading = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Invalid phone number or PIN. Please try again.'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        _pinCtl.clear();
+        _resetPinWithError('Wrong PIN');
         return;
       }
 
       final userData = userQuery.docs.first.data();
       final accountStatus = userData['accountStatus'] as String?;
 
-      // Check if account is approved
       if (accountStatus != 'approved') {
         setState(() => _loading = false);
-        if (mounted) {
-          _showPendingApprovalDialog();
-        }
+        _showPendingApprovalDialog();
         return;
       }
 
       // Sign in to Firebase Auth anonymously
       try {
         final userCredential = await FirebaseAuth.instance.signInAnonymously();
-        debugPrint(
-          '✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}',
-        );
+        debugPrint('✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}');
       } catch (authError) {
         debugPrint('⚠️ Firebase Anonymous Sign-In failed: $authError');
-        // Continue anyway - user data is verified in Firestore
       }
 
       // Login successful
       UserSession.setUserData(userData);
       setState(() => _loading = false);
       if (mounted) {
-        Navigator.of(
-          context,
-        ).pushReplacement(MaterialPageRoute(builder: (_) => const MainPage()));
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const MainPage()),
+        );
       }
     } catch (e) {
       setState(() => _loading = false);
+      _resetPinWithError('Error occurred. Please try again.');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
@@ -292,7 +433,7 @@ class _LoginPageState extends State<LoginPage> {
               const SizedBox(height: 16),
               Text(
                 'Account Pending Approval',
-                style: GoogleFonts.poppins(
+                style: GoogleFonts.roboto(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
                   color: appBlack,
@@ -302,7 +443,7 @@ class _LoginPageState extends State<LoginPage> {
               const SizedBox(height: 12),
               Text(
                 'Your account is currently pending admin approval. Please wait up to 48 hours for an administrator to review and approve your account.',
-                style: GoogleFonts.poppins(fontSize: 14, color: appBlack),
+                style: GoogleFonts.roboto(fontSize: 14, color: appBlack),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
@@ -319,7 +460,7 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   child: Text(
                     'OK',
-                    style: GoogleFonts.poppins(
+                    style: GoogleFonts.roboto(
                       fontWeight: FontWeight.w600,
                       color: Colors.white,
                     ),
@@ -333,32 +474,9 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  InputDecoration _inputDecoration(String label, {Widget? prefixIcon}) {
-    return InputDecoration(
-      labelText: label,
-      labelStyle: GoogleFonts.poppins(fontSize: 12, color: appBlack),
-      prefixIcon: prefixIcon,
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: Colors.black87, width: 1),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: Colors.black87, width: 1),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(4),
-        borderSide: const BorderSide(color: appBlue, width: 1.4),
-      ),
-    );
-  }
-
   Widget _logo() {
     return SvgPicture.asset(
-      'assets/icons/RESQ-LOGO.svg',
+      'assets/icons/RES-Q_LOGO.svg',
       height: 80,
       width: 120,
     );
@@ -367,6 +485,7 @@ class _LoginPageState extends State<LoginPage> {
   void _handlePinKey(String value) {
     if (_loading) return;
     setState(() {
+      _showPinError = false; // Clear error when user starts typing
       if (value == 'C') {
         _pinCtl.clear();
         return;
@@ -388,32 +507,63 @@ class _LoginPageState extends State<LoginPage> {
     });
   }
 
+  // Phone number formatter for PH format (9XX-XXX-XXXX)
+  String _formatPhoneNumber(String text) {
+    final digits = text.replaceAll(RegExp(r'\D'), '');
+    final buffer = StringBuffer();
+    for (int i = 0; i < digits.length && i < 10; i++) {
+      if (i == 3 || i == 6) {
+        buffer.write('-');
+      }
+      buffer.write(digits[i]);
+    }
+    return buffer.toString();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: appOffWhite,
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 360),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 16,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    _logo(),
+        child: Column(
+          children: [
+            // Fixed logo at top
+            Padding(
+              padding: const EdgeInsets.only(top: 24),
+              child: Column(
+                children: [
+                  _logo(),
+                  const SizedBox(height: 12),
+                  Text(
+                    'LOGIN',
+                    style: TextStyle(
+                      fontFamily: 'Roboto',
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      color: appBlack,
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
-                    Form(
-                      key: _formKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // PIN Login (for both regular users and semi-admins)
-                            // Phone Number Field
+            // Scrollable content
+            Expanded(
+              child: Center(
+                child: SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 16,
+                      ),
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Phone Number Field with +63 prefix
                             Text(
                               'PHONE NUMBER',
                               style: TextStyle(
@@ -424,44 +574,93 @@ class _LoginPageState extends State<LoginPage> {
                               ),
                             ),
                             const SizedBox(height: 4),
-                            TextFormField(
-                              controller: _phoneCtl,
-                              keyboardType: TextInputType.phone,
-                              style: const TextStyle(
-                                fontFamily: 'RobotoCondensed',
-                                fontWeight: FontWeight.w400,
-                                fontSize: 14,
-                                color: appBlack,
-                              ),
-                              decoration: InputDecoration(
-                                hintText: 'Enter Phone Number',
-                                hintStyle: TextStyle(
-                                  fontFamily: 'RobotoCondensed',
-                                  fontWeight: FontWeight.w400,
-                                  fontSize: 14,
-                                  color: appBlack.withOpacity(0.5),
-                                ),
-                                prefixIcon: const Icon(
-                                  Icons.phone_outlined,
+                            Container(
+                              height: 56,
+                              decoration: BoxDecoration(
+                                color: appOffWhite,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
                                   color: Colors.black,
-                                ),
-                                filled: true,
-                                fillColor: const Color(0xFFF7F8F3),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(
-                                    color: Colors.black,
-                                    width: 2,
-                                  ),
-                                ),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  vertical: 16,
-                                  horizontal: 12,
+                                  width: 2,
                                 ),
                               ),
-                              validator: (v) => (v == null || v.isEmpty)
-                                  ? 'Enter phone number'
-                                  : null,
+                              child: Row(
+                                children: [
+                                  // Phone icon
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 12),
+                                    child: Icon(
+                                      Icons.phone_outlined,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                  // +63 prefix
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                                    child: Text(
+                                      '+63',
+                                      style: TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14,
+                                        color: appBlack,
+                                      ),
+                                    ),
+                                  ),
+                                  // Divider
+                                  Container(
+                                    width: 1.5,
+                                    height: 28,
+                                    color: Colors.black,
+                                  ),
+                                  // Phone input field
+                                  Expanded(
+                                    child: TextFormField(
+                                      controller: _phoneCtl,
+                                      keyboardType: TextInputType.phone,
+                                      inputFormatters: [
+                                        FilteringTextInputFormatter.digitsOnly,
+                                        LengthLimitingTextInputFormatter(10),
+                                        TextInputFormatter.withFunction((oldValue, newValue) {
+                                          return TextEditingValue(
+                                            text: _formatPhoneNumber(newValue.text),
+                                            selection: TextSelection.collapsed(
+                                              offset: _formatPhoneNumber(newValue.text).length,
+                                            ),
+                                          );
+                                        }),
+                                      ],
+                                      style: const TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontWeight: FontWeight.w400,
+                                        fontSize: 14,
+                                        color: appBlack,
+                                      ),
+                                      decoration: InputDecoration(
+                                        hintText: '912-345-6789',
+                                        hintStyle: TextStyle(
+                                          fontFamily: 'RobotoCondensed',
+                                          fontWeight: FontWeight.w400,
+                                          fontSize: 14,
+                                          color: appBlack.withOpacity(0.5),
+                                        ),
+                                        border: InputBorder.none,
+                                        contentPadding: const EdgeInsets.symmetric(
+                                          horizontal: 12,
+                                          vertical: 16,
+                                        ),
+                                      ),
+                                      validator: (v) {
+                                        final digits = (v ?? '').replaceAll(RegExp(r'\D'), '');
+                                        if (digits.isEmpty) return 'Enter phone number';
+                                        if (digits.length != 10) return 'Enter 10 digits';
+                                        if (!digits.startsWith('9')) return 'Must start with 9';
+                                        return null;
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                             const SizedBox(height: 20),
 
@@ -477,166 +676,196 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                             const SizedBox(height: 16),
 
-                            // PIN Display (dots)
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: List.generate(4, (index) {
-                                final hasValue = _pinCtl.text.length > index;
-                                return Container(
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                  ),
-                                  width: 16,
-                                  height: 16,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: hasValue
-                                        ? appBlue
-                                        : Colors.transparent,
-                                    border: Border.all(
-                                      color: appBlack,
-                                      width: 2,
-                                    ),
-                                  ),
+                            // PIN Display (dots) with shake animation
+                            AnimatedBuilder(
+                              animation: _shakeAnimation,
+                              builder: (context, child) {
+                                final offset = _shakeAnimation.value *
+                                    10 *
+                                    (1 - _shakeAnimation.value) *
+                                    ((_shakeController.value * 8).floor() % 2 == 0 ? 1 : -1);
+                                return Transform.translate(
+                                  offset: Offset(offset, 0),
+                                  child: child,
                                 );
-                              }),
+                              },
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: List.generate(4, (index) {
+                                  final hasValue = _pinCtl.text.length > index;
+                                  return Container(
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                    ),
+                                    width: 16,
+                                    height: 16,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: hasValue
+                                          ? (_showPinError ? Colors.red : appBlue)
+                                          : Colors.transparent,
+                                      border: Border.all(
+                                        color: _showPinError ? Colors.red : appBlack,
+                                        width: 2,
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ),
                             ),
+
+                            // Error text below PIN
+                            if (_showPinError) ...[
+                              const SizedBox(height: 12),
+                              Text(
+                                _pinErrorMessage,
+                                style: GoogleFonts.roboto(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.red,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ],
                             const SizedBox(height: 24),
 
-                            // Numpad
+                            // Numpad with biometrics (always show biometrics button)
                             PinNumpad(
                               enabled: !_loading,
                               onKeyTap: _handlePinKey,
                               actionBackgroundColor: appOffWhite,
                               textColor: appBlack,
+                              showBiometrics: true,
+                              onBiometricsTap: _authenticateWithBiometrics,
                             ),
 
-                          const SizedBox(height: 20),
+                            const SizedBox(height: 20),
 
-                          // Success message for PIN creation
-                          if (_showPinSuccess) ...[
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF00A458),
-                                borderRadius: BorderRadius.circular(8),
+                            // Success message for PIN creation
+                            if (_showPinSuccess) ...[
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF00A458),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.check_circle,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        'Pin is good to go! Enter the pin in the pin section.',
+                                        style: GoogleFonts.roboto(
+                                          fontSize: 13,
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
-                              child: Row(
+                              const SizedBox(height: 16),
+                            ],
+
+                            Align(
+                              alignment: Alignment.center,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(
-                                    Icons.check_circle,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Pin is good to go! Enter the pin in the pin section.',
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 13,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w500,
+                                  TextButton(
+                                    onPressed: () => Navigator.pushNamed(
+                                      context,
+                                      '/approved-pin-creation',
+                                    ),
+                                    style: TextButton.styleFrom(
+                                      padding: EdgeInsets.zero,
+                                      minimumSize: const Size(0, 0),
+                                    ),
+                                    child: RichText(
+                                      text: TextSpan(
+                                        children: [
+                                          TextSpan(
+                                            text: 'Approved Account? ',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w400,
+                                              color: appBlack,
+                                              fontFamily: 'RobotoCondensed',
+                                            ),
+                                          ),
+                                          TextSpan(
+                                            text: 'Create PIN Here!',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w700,
+                                              color: appBlue,
+                                              fontFamily: 'RobotoCondensed',
+                                              decoration:
+                                                  TextDecoration.underline,
+                                            ),
+                                          ),
+                                        ],
                                       ),
                                     ),
                                   ),
                                 ],
                               ),
                             ),
-                            const SizedBox(height: 16),
+
+                            const SizedBox(height: 10),
+
+                            // Register link
+                            Align(
+                              alignment: Alignment.center,
+                              child: TextButton(
+                                onPressed: () =>
+                                    Navigator.pushNamed(context, '/register'),
+                                style: TextButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: const Size(0, 0),
+                                ),
+                                child: RichText(
+                                  text: TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: 'No Account yet? ',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w400,
+                                          color: appBlack,
+                                          fontFamily: 'RobotoCondensed',
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text: 'Register Now!',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                          color: appBlue,
+                                          fontFamily: 'RobotoCondensed',
+                                          decoration: TextDecoration.underline,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
                           ],
-
-                          Align(
-                            alignment: Alignment.center,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                TextButton(
-                                  onPressed: () => Navigator.pushNamed(
-                                    context,
-                                    '/approved-pin-creation',
-                                  ),
-                                  style: TextButton.styleFrom(
-                                    padding: EdgeInsets.zero,
-                                    minimumSize: const Size(0, 0),
-                                  ),
-                                  child: RichText(
-                                    text: TextSpan(
-                                      children: [
-                                        TextSpan(
-                                          text: 'Approved Account? ',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w400,
-                                            color: appBlack,
-                                            fontFamily: 'RobotoCondensed',
-                                          ),
-                                        ),
-                                        TextSpan(
-                                          text: 'Create PIN Here!',
-                                          style: TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w700,
-                                            color: appBlue,
-                                            fontFamily: 'RobotoCondensed',
-                                            decoration:
-                                                TextDecoration.underline,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 10),
-
-                          // Register link
-                          Align(
-                            alignment: Alignment.center,
-                            child: TextButton(
-                              onPressed: () =>
-                                  Navigator.pushNamed(context, '/register'),
-                              style: TextButton.styleFrom(
-                                padding: EdgeInsets.zero,
-                                minimumSize: const Size(0, 0),
-                              ),
-                              child: RichText(
-                                text: TextSpan(
-                                  children: [
-                                    TextSpan(
-                                      text: 'No Account yet? ',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w400,
-                                        color: appBlack,
-                                        fontFamily: 'RobotoCondensed',
-                                      ),
-                                    ),
-                                    TextSpan(
-                                      text: 'Register Now!',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w700,
-                                        color: appBlue,
-                                        fontFamily: 'RobotoCondensed',
-                                        decoration: TextDecoration.underline,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );

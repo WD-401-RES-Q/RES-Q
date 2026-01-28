@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PINCreationPage extends StatefulWidget {
   const PINCreationPage({super.key});
@@ -21,12 +23,15 @@ class _PINCreationPageState extends State<PINCreationPage> {
   bool _loading = false;
   bool _obscurePin = true;
   bool _obscureConfirm = true;
+  String? _pinError;
+  String? _pinConfirmError;
 
   String? _phoneNumber;
   Map<String, dynamic>? _userData;
   String? _uid;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final LocalAuthentication _localAuth = LocalAuthentication();
 
   @override
   void didChangeDependencies() {
@@ -46,10 +51,21 @@ class _PINCreationPageState extends State<PINCreationPage> {
     super.dispose();
   }
 
+  String _formatPhoneForDisplay(String? phone) {
+    if (phone == null || phone.isEmpty) return '';
+    // Handle +63XXXXXXXXXX format
+    String digits = phone.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('63')) digits = digits.substring(2);
+    if (digits.length == 10) {
+      return '+63 ${digits.substring(0, 3)}-${digits.substring(3, 6)}-${digits.substring(6)}';
+    }
+    return phone;
+  }
+
   Widget _logo() {
     return RichText(
       text: TextSpan(
-        style: GoogleFonts.poppins(fontSize: 26, fontWeight: FontWeight.w700),
+        style: GoogleFonts.roboto(fontSize: 26, fontWeight: FontWeight.w700),
         children: const [
           TextSpan(
             text: 'RES',
@@ -64,29 +80,178 @@ class _PINCreationPageState extends State<PINCreationPage> {
     );
   }
 
+  Future<bool> _checkBiometricsAvailable() async {
+    try {
+      final canAuthenticateWithBiometrics = await _localAuth.canCheckBiometrics;
+      final canAuthenticate = canAuthenticateWithBiometrics || await _localAuth.isDeviceSupported();
+      final availableBiometrics = await _localAuth.getAvailableBiometrics();
+      return canAuthenticate && availableBiometrics.isNotEmpty;
+    } catch (e) {
+      debugPrint('Biometrics check error: $e');
+      return false;
+    }
+  }
+
+  Future<bool?> _showBiometricsOptInDialog() async {
+    final canUseBiometrics = await _checkBiometricsAvailable();
+
+    if (!canUseBiometrics || !mounted) {
+      return null; // Skip if biometrics not available
+    }
+
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: appBlue.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.fingerprint,
+                  size: 48,
+                  color: appBlue,
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Enable Biometric Login?',
+                style: GoogleFonts.roboto(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: appBlack,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Would you like to use fingerprint or face recognition for faster login?',
+                style: GoogleFonts.roboto(
+                  fontSize: 14,
+                  color: appBlack.withOpacity(0.7),
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'You can change this later in settings.',
+                style: GoogleFonts.roboto(
+                  fontSize: 12,
+                  color: Colors.grey,
+                  fontStyle: FontStyle.italic,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: appBlack,
+                        side: BorderSide(color: appBlack.withOpacity(0.3)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: Text(
+                        'No Thanks',
+                        style: GoogleFonts.roboto(
+                          fontWeight: FontWeight.w500,
+                          color: appBlack,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: appBlue,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.fingerprint,
+                            size: 18,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Enable',
+                            style: GoogleFonts.roboto(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveBiometricsPreference(bool enabled, String? phoneNumber) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('biometrics_enabled', enabled);
+      if (phoneNumber != null) {
+        await prefs.setString('biometrics_phone', phoneNumber);
+      }
+      debugPrint('✅ Biometrics preference saved: $enabled');
+    } catch (e) {
+      debugPrint('Error saving biometrics preference: $e');
+    }
+  }
+
   Future<void> _createPin() async {
     final pin = _pinCtl.text.trim();
     final pinConfirm = _pinConfirmCtl.text.trim();
 
+    // Clear previous errors
+    setState(() {
+      _pinError = null;
+      _pinConfirmError = null;
+    });
+
     // Validation
     if (pin.length != 4) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('PIN must be exactly 4 digits')),
-      );
+      setState(() => _pinError = 'PIN must be exactly 4 digits');
       return;
     }
 
     if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('PIN must contain only numbers')),
-      );
+      setState(() => _pinError = 'PIN must contain only numbers');
       return;
     }
 
     if (pin != pinConfirm) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('PINs do not match')));
+      setState(() => _pinConfirmError = 'PINs do not match');
       _pinCtl.clear();
       _pinConfirmCtl.clear();
       return;
@@ -111,6 +276,16 @@ class _PINCreationPageState extends State<PINCreationPage> {
 
       if (!mounted) return;
 
+      // Show biometrics opt-in dialog first
+      final enableBiometrics = await _showBiometricsOptInDialog();
+
+      if (enableBiometrics != null) {
+        // Save the preference
+        await _saveBiometricsPreference(enableBiometrics, _phoneNumber);
+      }
+
+      if (!mounted) return;
+
       // Show success dialog with approval pending message
       await showDialog(
         context: context,
@@ -128,7 +303,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 const SizedBox(height: 16),
                 Text(
                   'Account Pending Approval',
-                  style: GoogleFonts.poppins(
+                  style: GoogleFonts.roboto(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
                     color: appBlack,
@@ -138,7 +313,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 const SizedBox(height: 12),
                 Text(
                   'Your account is currently pending admin approval. Please wait up to 48 hours for an administrator to review and approve your account.\n\nOnce approved, you will receive a text message and can create your PIN to login.',
-                  style: GoogleFonts.poppins(fontSize: 14, color: appBlack),
+                  style: GoogleFonts.roboto(fontSize: 14, color: appBlack),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 24),
@@ -157,7 +332,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                     ),
                     child: Text(
                       'OK',
-                      style: GoogleFonts.poppins(
+                      style: GoogleFonts.roboto(
                         fontWeight: FontWeight.w600,
                         color: Colors.white,
                       ),
@@ -210,12 +385,42 @@ class _PINCreationPageState extends State<PINCreationPage> {
                     const SizedBox(height: 12),
                     Text(
                       'Set up your 4-digit PIN for fast login',
-                      style: GoogleFonts.poppins(
+                      style: GoogleFonts.roboto(
                         fontSize: 14,
                         color: Colors.grey,
                       ),
                       textAlign: TextAlign.center,
                     ),
+                    const SizedBox(height: 20),
+                    // Phone number display (read-only)
+                    if (_phoneNumber != null && _phoneNumber!.isNotEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 14,
+                        ),
+                        decoration: BoxDecoration(
+                          color: appOffWhite,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: appBlack.withOpacity(0.2),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.phone_android, color: appBlack),
+                            const SizedBox(width: 12),
+                            Text(
+                              _formatPhoneForDisplay(_phoneNumber),
+                              style: GoogleFonts.roboto(
+                                fontSize: 16,
+                                color: appBlack,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     const SizedBox(height: 28),
                     // PIN Input
                     Text(
@@ -271,6 +476,20 @@ class _PINCreationPageState extends State<PINCreationPage> {
                         ),
                       ),
                     ),
+                    if (_pinError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _pinError!,
+                            style: GoogleFonts.roboto(
+                              fontSize: 12,
+                              color: Colors.red,
+                            ),
+                          ),
+                        ),
+                      ),
                     const SizedBox(height: 20),
                     // Confirm PIN Input
                     Text(
@@ -327,6 +546,20 @@ class _PINCreationPageState extends State<PINCreationPage> {
                         ),
                       ),
                     ),
+                    if (_pinConfirmError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _pinConfirmError!,
+                            style: GoogleFonts.roboto(
+                              fontSize: 12,
+                              color: Colors.red,
+                            ),
+                          ),
+                        ),
+                      ),
                     const SizedBox(height: 30),
                     // CREATE PIN Button
                     Align(

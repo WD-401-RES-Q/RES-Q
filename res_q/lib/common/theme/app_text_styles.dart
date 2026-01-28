@@ -44,7 +44,7 @@ class AppTextStyles {
   static const TextStyle filterDropdown = TextStyle(
     fontSize: 13,
     color: AppColors.appBlack,
-    fontFamily: 'Poppins',
+    fontFamily: 'Roboto',
   );
 
   // Report card styles
@@ -201,5 +201,49 @@ class AppTextStyles {
     fontSize: 14,
     fontWeight: FontWeight.w400,
     color: Colors.red,
+  );
+
+  // Auth page styles
+  static const TextStyle authPageTitle = TextStyle(
+    fontFamily: 'Roboto',
+    fontSize: 20,
+    fontWeight: FontWeight.w700,
+    color: AppColors.appBlack,
+  );
+
+  static const TextStyle authLabel = TextStyle(
+    fontFamily: 'Roboto',
+    fontSize: 12,
+    fontWeight: FontWeight.w500,
+    color: AppColors.appBlack,
+  );
+
+  static const TextStyle authButton = TextStyle(
+    fontFamily: 'Roboto',
+    fontSize: 14,
+    fontWeight: FontWeight.w600,
+    color: AppColors.white,
+  );
+
+  static const TextStyle authError = TextStyle(
+    fontFamily: 'Roboto',
+    fontSize: 12,
+    fontWeight: FontWeight.w500,
+    color: Colors.red,
+  );
+
+  static const TextStyle authLink = TextStyle(
+    fontFamily: 'Roboto',
+    fontSize: 11,
+    fontWeight: FontWeight.w600,
+    color: AppColors.appBlue,
+    decoration: TextDecoration.underline,
+  );
+
+  static const TextStyle authHelperText = TextStyle(
+    fontFamily: 'Roboto',
+    fontSize: 10,
+    fontWeight: FontWeight.w400,
+    color: Colors.grey,
   );
 }

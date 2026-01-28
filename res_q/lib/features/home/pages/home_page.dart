@@ -12,6 +12,7 @@ import '../../reports/pages/report_form_screen.dart';
 import '../../map/pages/map_page.dart';
 import '../../reports/pages/report_map_page.dart';
 import '../../../common/services/user_session.dart';
+
 class MainPage extends StatefulWidget {
   final int initialIndex;
 
@@ -74,8 +75,9 @@ class _HomePageContent extends StatefulWidget {
 }
 
 class _HomePageContentState extends State<_HomePageContent>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _borderController;
+  late final AnimationController _holdController;
 
   @override
   void initState() {
@@ -84,138 +86,180 @@ class _HomePageContentState extends State<_HomePageContent>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat();
+    _holdController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed) {
+          if (!mounted) return;
+          _holdController.reset();
+          _openEmergencyCall();
+        }
+      });
   }
 
   @override
   void dispose() {
     _borderController.dispose();
+    _holdController.dispose();
     super.dispose();
+  }
+
+  void _openEmergencyCall() {
+    print("Emergency call button pressed");
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const EmergencyCallScreen(),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
     final screenWidth = MediaQuery.of(context).size.width;
-    final gridWidth = (screenWidth - 32).clamp(300.0, 380.0);
 
-    return Column(
-      children: [
-        // Logo at the very top
-        Padding(
-          padding: const EdgeInsets.only(top: 24, bottom: 0),
-          child: SizedBox(
-            height: 40,
-            child: SvgPicture.asset(
-              "assets/icons/RESQ-LOGO.svg",
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) => const Icon(
-                Icons.image_not_supported,
-                size: 30,
-                color: Colors.blue,
+    final availableHeight = screenHeight - 200;
+    final gridHeight = availableHeight * 0.65;
+    final gridWidth = (screenWidth - 32).clamp(280.0, 380.0);
+    final emergencyButtonSize = (screenHeight * 0.12).clamp(80.0, 120.0);
+    final emergencyIconSize = emergencyButtonSize * 0.5;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        children: [
+          // Logo at the very top - fixed height
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 4),
+            child: SizedBox(
+              height: 36,
+              child: SvgPicture.asset(
+                "assets/icons/RES-Q_LOGO.svg",
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) => const Icon(
+                  Icons.image_not_supported,
+                  size: 30,
+                  color: Colors.blue,
+                ),
               ),
             ),
           ),
-        ),
 
-        // Everything else centered
-        Expanded(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Instruction Text
-                  Text(
-                    "SELECT THE TYPE OF INCIDENT\nYOU WANT TO REPORT",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                      fontFamily: 'RobotoCondensed',
-                    ),
+          // Main content area - takes remaining space
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Text(
+                  "SELECT THE TYPE OF INCIDENT\nYOU WANT TO REPORT",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'RobotoCondensed',
                   ),
+                ),
 
-                  const SizedBox(height: 9),
-
-                  // Incident Cards Grid
-                  Container(
-                    width: gridWidth,
-                    padding: const EdgeInsets.all(12),
+                SizedBox(
+                  width: gridWidth,
+                  height: gridHeight,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
                       color: const Color(0xFFF7F8F3),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: LayoutBuilder(
                       builder: (context, constraints) {
-                        final itemWidth = (constraints.maxWidth - 16) / 2;
-                        final itemHeight = itemWidth / 1.05;
+                        const spacing = 12.0;
+                        final maxCardWidth =
+                            (constraints.maxWidth - spacing) / 2;
+                        final maxCardHeightByWidth = maxCardWidth / 1.05;
+                        final maxCardHeightByHeight =
+                            (constraints.maxHeight - spacing * 2) / 3;
+                        final cardHeight = math.min(
+                          maxCardHeightByWidth,
+                          maxCardHeightByHeight,
+                        );
+                        final cardWidth = cardHeight * 1.05;
+                        final iconSize = (cardHeight * 0.55).clamp(50.0, 90.0);
+                        final labelFont = (cardHeight * 0.16).clamp(11.0, 16.0);
+
                         return Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Row(
-                              children: [
-                                SizedBox(
-                                  width: itemWidth,
-                                  height: itemHeight,
-                                  child: _incidentCard(
-                                    context,
-                                    "EARTHQUAKE",
-                                    "assets/icons/FINAL-EARTHQUAKE-ICON.png",
-                                    fontSize: 19.0,
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                SizedBox(
-                                  width: itemWidth,
-                                  height: itemHeight,
-                                  child: _incidentCard(
-                                    context,
-                                    "FLOOD",
-                                    "assets/icons/FINAL-FLOOD-ICON.png",
-                                    fontSize: 22.0,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
-                            Row(
-                              children: [
-                                SizedBox(
-                                  width: itemWidth,
-                                  height: itemHeight,
-                                  child: _incidentCard(
-                                    context,
-                                    "FIRE",
-                                    "assets/icons/FINAL-FIRE-ICON.png",
-                                    fontSize: 22.0,
-                                  ),
-                                ),
-                                const SizedBox(width: 16),
-                                SizedBox(
-                                  width: itemWidth,
-                                  height: itemHeight,
-                                  child: _incidentCard(
-                                    context,
-                                    "VEHICULAR",
-                                    "assets/icons/FINAL-CRASH-ICON.png",
-                                    fontSize: 20.0,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 16),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 SizedBox(
-                                  width: itemWidth,
-                                  height: itemHeight,
+                                  width: cardWidth,
+                                  height: cardHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "EARTHQUAKE",
+                                    "assets/icons/FINAL-EARTHQUAKE-ICON.png",
+                                    fontSize: labelFont,
+                                    iconSize: iconSize,
+                                  ),
+                                ),
+                                const SizedBox(width: spacing),
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: cardHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "FLOOD",
+                                    "assets/icons/FINAL-FLOOD-ICON.png",
+                                    fontSize: labelFont,
+                                    iconSize: iconSize,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: spacing),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: cardHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "FIRE",
+                                    "assets/icons/FINAL-FIRE-ICON.png",
+                                    fontSize: labelFont,
+                                    iconSize: iconSize,
+                                  ),
+                                ),
+                                const SizedBox(width: spacing),
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: cardHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "VEHICULAR",
+                                    "assets/icons/FINAL-CRASH-ICON.png",
+                                    fontSize: labelFont,
+                                    iconSize: iconSize,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: spacing),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: cardHeight,
                                   child: _incidentCard(
                                     context,
                                     "OTHERS",
                                     "assets/icons/FINAL-OTHERS-ICON.png",
-                                    fontSize: 20.0,
+                                    fontSize: labelFont,
+                                    iconSize: iconSize,
                                   ),
                                 ),
                               ],
@@ -225,43 +269,95 @@ class _HomePageContentState extends State<_HomePageContent>
                       },
                     ),
                   ),
+                ),
 
-                  const SizedBox(height: 0.5),
-
-                  // Circular Emergency Call Button
-                  GestureDetector(
-                    onTap: () {
-                      print("Emergency call button pressed");
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const EmergencyCallScreen(),
-                        ),
-                      );
-                    },
-                    child: _buildAnimatedBorder(
-                      borderRadius: BorderRadius.circular(999),
-                      borderWidth: 9,
-                      isCircle: true,
-                      child: const SizedBox(
-                        width: 130,
-                        height: 130,
-                        child: Center(
-                          child: Icon(
-                            Icons.phone,
-                            size: 70,
-                            color: Colors.white,
-                          ),
-                        ),
+                GestureDetector(
+                  onLongPressStart: (_) {
+                    if (_holdController.isAnimating) return;
+                    _holdController.forward(from: 0);
+                  },
+                  onLongPressEnd: (_) {
+                    if (_holdController.isAnimating ||
+                        _holdController.value > 0) {
+                      _holdController.stop();
+                      _holdController.reset();
+                    }
+                  },
+                  onLongPressCancel: () {
+                    if (_holdController.isAnimating ||
+                        _holdController.value > 0) {
+                      _holdController.stop();
+                      _holdController.reset();
+                    }
+                  },
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Press and hold to place a call'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  child: _buildAnimatedBorder(
+                    borderRadius: BorderRadius.circular(999),
+                    borderWidth: 7,
+                    isCircle: true,
+                    child: SizedBox(
+                      width: emergencyButtonSize,
+                      height: emergencyButtonSize,
+                      child: AnimatedBuilder(
+                        animation: _holdController,
+                        builder: (context, _) {
+                          final progress = _holdController.value == 0
+                              ? 0.18
+                              : _holdController.value;
+                          return Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              SizedBox(
+                                width: emergencyButtonSize * 0.7,
+                                height: emergencyButtonSize * 0.7,
+                                child: CircularProgressIndicator(
+                                  value: progress,
+                                  strokeWidth:
+                                      (emergencyButtonSize * 0.06).clamp(
+                                    4.0,
+                                    6.0,
+                                  ),
+                                  backgroundColor:
+                                      Colors.white.withOpacity(0.15),
+                                  valueColor: const AlwaysStoppedAnimation(
+                                    Color(0xFFFFC806),
+                                  ),
+                                ),
+                              ),
+                              Icon(
+                                Icons.phone,
+                                size: emergencyIconSize,
+                                color: Colors.white,
+                              ),
+                            ],
+                          );
+                        },
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Press and Hold to Call',
+                  style: TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black,
+                  ),
+                ),
+              ],
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -270,6 +366,7 @@ class _HomePageContentState extends State<_HomePageContent>
     String title,
     String imgPath, {
     double fontSize = 13.5,
+    double iconSize = 90,
   }) {
     return Material(
       color: Colors.transparent,
@@ -293,8 +390,8 @@ class _HomePageContentState extends State<_HomePageContent>
               // Icon
               Image.asset(
                 imgPath,
-                width: 110,
-                height: 110,
+                width: iconSize,
+                height: iconSize,
                 fit: BoxFit.contain,
                 errorBuilder: (context, error, stackTrace) {
                   return const Icon(
@@ -372,5 +469,4 @@ class _HomePageContentState extends State<_HomePageContent>
       },
     );
   }
-
 }

@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
-import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import '../../../common/theme/app_theme.dart';
+import '../../../common/theme/app_text_styles.dart';
+import '../../../common/constants/app_dimensions.dart';
 import '../../../common/widgets/auth_widgets.dart';
-import '../../../common/widgets/terms_dialog.dart';
+import '../../../common/widgets/app_buttons.dart';
+import '../../../common/services/registration_prefs.dart';
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({super.key});
@@ -33,15 +33,32 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
   bool _loading = false;
   bool _agree = false;
-  String? _idPhotoPath;
+  bool _dobSubmitAttempted = false;
+  String? _frontIdUrl;
   bool _obscurePassword = true;
-  bool _uploadingPhoto = false;
-  double _loadingProgress = 0.0;
   String? _termsError;
   String? _idPhotoError;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final ImagePicker _imagePicker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedData();
+  }
+
+  Future<void> _loadSavedData() async {
+    final savedPhone = await RegistrationPrefs.getPhoneNumber();
+    if (savedPhone != null && mounted) {
+      // Remove +63 prefix if present for display
+      final displayPhone = savedPhone.startsWith('+63')
+          ? savedPhone.substring(3)
+          : savedPhone;
+      setState(() {
+        _contactCtl.text = displayPhone;
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -59,78 +76,13 @@ class _RegistrationPageState extends State<RegistrationPage> {
     super.dispose();
   }
 
-  Future<void> _uploadPhoto() async {
-    try {
-      final pickedFile = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1920,
-        maxHeight: 1920,
-        imageQuality: 85,
-      );
-
-      if (pickedFile == null) {
-        return; // User cancelled
+  void _onIdUploadComplete(String? frontUrl, String? backUrl) {
+    setState(() {
+      _frontIdUrl = frontUrl;
+      if (frontUrl != null) {
+        _idPhotoError = null;
       }
-
-      setState(() => _uploadingPhoto = true);
-
-      // Upload to Firebase Storage under 'id_photos' folder
-      final fileName = 'id_${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('id_photos')
-          .child(
-            _usernameCtl.text.trim().isEmpty
-                ? 'pending_${DateTime.now().millisecondsSinceEpoch}'
-                : _usernameCtl.text.trim(),
-          )
-          .child(fileName);
-
-      // Upload using bytes (works on both web and mobile) with timeout
-      final bytes = await pickedFile.readAsBytes();
-      final uploadTask = storageRef.putData(
-        bytes,
-        SettableMetadata(contentType: 'image/jpeg'),
-      );
-
-      // Add timeout to prevent indefinite loading
-      final snapshot = await uploadTask.timeout(
-        const Duration(seconds: 30),
-        onTimeout: () {
-          throw Exception(
-            'Upload timed out. Please check your internet connection and try again.',
-          );
-        },
-      );
-
-      final downloadUrl = await snapshot.ref.getDownloadURL();
-
-      setState(() {
-        _idPhotoPath = downloadUrl;
-        _uploadingPhoto = false;
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✓ ID Photo uploaded successfully'),
-            backgroundColor: Color(0xFF00A458),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      setState(() => _uploadingPhoto = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to upload photo: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    }
+    });
   }
 
   Future<void> _showTermsAndConditions() async {
@@ -138,6 +90,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
     if (agreed) {
       setState(() {
         _agree = true;
+        _termsError = null;
       });
     }
   }
@@ -170,6 +123,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }
 
   Future<void> _submit() async {
+    _dobSubmitAttempted = true;
     final normalizedFirstName = _firstNameCtl.text.trim().replaceAll(
       RegExp(r'\s+'),
       ' ',
@@ -182,34 +136,36 @@ class _RegistrationPageState extends State<RegistrationPage> {
     final normalizedUsername = _usernameCtl.text.trim();
     final normalizedEmail = _emailCtl.text.trim();
     final normalizedAddress = _addressCtl.text.trim();
-    final normalizedContact = _contactCtl.text.trim();
     final dobMonth = _dobMonthCtl.text.trim();
     final dobDay = _dobDayCtl.text.trim();
     final dobYear = _dobYearCtl.text.trim();
 
     final formValid = _formKey.currentState?.validate() ?? false;
     final termsValid = _agree;
-    final idValid = _idPhotoPath != null && _idPhotoPath!.isNotEmpty;
+    final idValid = _frontIdUrl != null;
+
     setState(() {
-      _termsError = termsValid ? null : 'Please agree to terms and conditions';
-      _idPhotoError = idValid
+      _termsError = termsValid
           ? null
-          : 'Please upload a government ID photo to continue';
+          : 'Please read and agree to terms and conditions';
+      _idPhotoError =
+          idValid ? null : 'Please upload the front of your government ID';
     });
+
     if (!formValid || !termsValid || !idValid) {
       return;
     }
 
     setState(() {
       _loading = true;
-      _loadingProgress = 0.0;
     });
 
-    // Format phone number for Firebase (must be in E.164 format: +63XXXXXXXXXX)
-    String phone = normalizedContact.replaceAll('-', '').trim();
-    if (phone.isNotEmpty && !phone.startsWith('+')) {
-      phone = phone.startsWith('0') ? '+63${phone.substring(1)}' : '+63$phone';
-    }
+    // Format phone number for Firebase (E.164 format: +63XXXXXXXXXX)
+    final phoneDigits = _contactCtl.text.replaceAll(RegExp(r'\D'), '');
+    final phone = '+63$phoneDigits';
+
+    // Save phone number for convenience
+    await RegistrationPrefs.savePhoneNumber(phoneDigits);
 
     // Check if phone number already exists
     final phoneExists = await _checkPhoneNumberExists(phone);
@@ -234,30 +190,25 @@ class _RegistrationPageState extends State<RegistrationPage> {
       'username': normalizedUsername,
       'email': normalizedEmail.isEmpty ? null : normalizedEmail,
       'password': _passwordCtl.text.trim(),
-      'pin': _pinCtl.text.trim(), // Store PIN for PIN-based login
+      'pin': _pinCtl.text.trim(),
       'contactNumber': phone,
       'address': normalizedAddress,
       'dateOfBirth': '$dobMonth/$dobDay/$dobYear',
-      'idPhotoPath': _idPhotoPath,
+      'idPhotoFront': _frontIdUrl,
+      'idPhotoBack': null,
       'role': 'user',
     };
 
     try {
-      // Update progress
-      _updateProgress(20);
-
-      // Skip app verification only in debug to make emulator/dev testing reliable.
       if (!kIsWeb) {
         await _auth.setSettings(appVerificationDisabledForTesting: kDebugMode);
       }
 
-      // Send OTP to phone number via Firebase Auth
       await _auth.verifyPhoneNumber(
         phoneNumber: phone,
         timeout: const Duration(seconds: 30),
         verificationCompleted: (PhoneAuthCredential credential) async {
           // Auto-verification (rare on most devices)
-          // This happens automatically on some Android devices
         },
         verificationFailed: (FirebaseAuthException e) {
           setState(() => _loading = false);
@@ -284,10 +235,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
           }
         },
         codeSent: (String verificationId, int? resendToken) {
-          _updateProgress(100);
           setState(() => _loading = false);
 
-          // Navigate to OTP verification page
           if (mounted) {
             Navigator.pushNamed(
               context,
@@ -341,11 +290,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
     return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
   }
 
-  bool _isValidPhone(String phone) {
-    final digitsOnly = phone.replaceAll(RegExp(r'\D'), '');
-    return digitsOnly.length >= 10 && digitsOnly.length <= 15;
-  }
-
   bool _isValidAddress(String address) {
     if (address.length < 5 || address.length > 120) return false;
     return RegExp(r'[A-Za-z0-9]').hasMatch(address);
@@ -391,21 +335,21 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }
 
   String? _validatePassword(String? value) {
-    if ((value ?? '').isEmpty) return 'Password is required';
-    if ((value ?? '').length < 6) return 'Min 6 characters';
+    final password = value ?? '';
+    if (password.isEmpty) return 'Password is required';
+    final hasUpper = RegExp(r'[A-Z]').hasMatch(password);
+    final hasNumber = RegExp(r'[0-9]').hasMatch(password);
+    final hasSpecial = RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(password);
+    if (password.length < 8 || !hasUpper || !hasNumber || !hasSpecial) {
+      return '8+ chars, uppercase, number, special char (!@#\$%^&*)';
+    }
     return null;
   }
 
   String? _validateEmail(String? value) {
     final email = (value ?? '').trim();
-    if (email.isEmpty) return null;
+    if (email.isEmpty) return 'Email address is required';
     return _isValidEmail(email) ? null : 'Enter a valid email address';
-  }
-
-  String? _validateContact(String? value) {
-    final contact = (value ?? '').trim();
-    if (contact.isEmpty) return 'Contact number is required';
-    return _isValidPhone(contact) ? null : 'Enter a valid contact number';
   }
 
   String? _validateAddress(String? value) {
@@ -416,93 +360,37 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
   String? _validateDobMonth(String? value) {
     final v = (value ?? '').trim();
-    if (v.isEmpty) return 'MM';
+    if (v.isEmpty) return _dobSubmitAttempted ? 'Month is required' : null;
     final m = int.tryParse(v);
-    if (m == null || m < 1 || m > 12) return 'MM';
+    if (v.length != 2) return 'Use 2 digits (MM)';
+    if (m == null || m < 1 || m > 12) return 'Invalid month';
     return null;
   }
 
   String? _validateDobDay(String? value) {
     final v = (value ?? '').trim();
-    if (v.isEmpty) return 'DD';
+    if (v.isEmpty) return _dobSubmitAttempted ? 'Day is required' : null;
     final d = int.tryParse(v);
-    if (d == null || d < 1 || d > 31) return 'DD';
+    if (v.length != 2) return 'Use 2 digits (DD)';
+    if (d == null || d < 1 || d > 31) return 'Invalid day';
     return null;
   }
 
   String? _validateDobYear(String? value) {
     final v = (value ?? '').trim();
-    if (v.isEmpty) return 'YYYY';
+    if (v.isEmpty) return _dobSubmitAttempted ? 'Year is required' : null;
+    if (v.length != 4) return 'Use 4 digits (YYYY)';
     final y = int.tryParse(v);
     final currentYear = DateTime.now().year;
-    if (y == null || y < 1900 || y > currentYear) return 'YYYY';
+    if (y == null || y < 1900 || y > currentYear) {
+      return 'Invalid year';
+    }
     final month = _dobMonthCtl.text.trim();
     final day = _dobDayCtl.text.trim();
-    if (!_isValidDob(month, day, v)) return 'YYYY';
-    return null;
-  }
-
-  void _updateProgress(double progress) {
-    if (mounted) {
-      setState(() => _loadingProgress = progress);
+    if (month.isNotEmpty && day.isNotEmpty) {
+      if (!_isValidDob(month, day, v)) return 'Invalid date';
     }
-  }
-
-  Widget _buildLoadingDialog() {
-    return Dialog(
-      backgroundColor: Colors.white,
-      elevation: 8,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              height: 80,
-              width: 80,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  CircularProgressIndicator(
-                    value: _loadingProgress / 100,
-                    strokeWidth: 8,
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                      Color(0xFFFFC806),
-                    ),
-                    backgroundColor: Colors.grey[300],
-                  ),
-                  Text(
-                    '${_loadingProgress.toInt()}%',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 24),
-            const Text(
-              'Sending Verification Code',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Please wait while we send an OTP to your phone',
-              style: TextStyle(fontSize: 13, color: Colors.grey),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
+    return null;
   }
 
   @override
@@ -516,8 +404,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
               constraints: const BoxConstraints(maxWidth: 360),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 16,
+                  horizontal: AppDimensions.paddingXLarge,
+                  vertical: AppDimensions.paddingLarge,
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -526,74 +414,78 @@ class _RegistrationPageState extends State<RegistrationPage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(
-                            Icons.arrow_back_ios_new,
-                            color: AppTheme.appBlue,
-                          ),
-                        ),
-                        const ResqLogo(),
-                        const SizedBox(width: 48), // Balance the row
+                        const ResqBackButton(),
+                        const ResqLogo(fontSize: 48),
+                        const SizedBox(width: 44), // Balance the row
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: AppDimensions.paddingSmall),
 
                     Center(
                       child: Text(
                         'REGISTER',
-                        style: GoogleFonts.poppins(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.appBlack,
-                        ),
+                        style: AppTextStyles.authPageTitle,
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: AppDimensions.paddingXLarge),
 
                     Form(
                       key: _formKey,
                       child: Column(
                         children: [
-                          AuthTextField(
-                            controller: _firstNameCtl,
-                            label: 'FIRST NAME',
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                RegExp(r"[a-zA-Z .'-]"),
+                          // FIRST NAME AND LAST NAME INLINE
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: AuthTextField(
+                                  controller: _firstNameCtl,
+                                  label: 'FIRST NAME',
+                                  hintText: 'e.g. Juan',
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.allow(
+                                      RegExp(r"[a-zA-Z .'-]"),
+                                    ),
+                                  ],
+                                  validator: _validateFirstName,
+                                  autovalidateMode:
+                                      AutovalidateMode.onUserInteraction,
+                                ),
+                              ),
+                              const SizedBox(width: AppDimensions.paddingSmall),
+                              Expanded(
+                                child: AuthTextField(
+                                  controller: _lastNameCtl,
+                                  label: 'LAST NAME',
+                                  hintText: 'e.g. Dela Cruz',
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.allow(
+                                      RegExp(r"[a-zA-Z .'-]"),
+                                    ),
+                                  ],
+                                  validator: _validateLastName,
+                                  autovalidateMode:
+                                      AutovalidateMode.onUserInteraction,
+                                ),
                               ),
                             ],
-                            validator: _validateFirstName,
-                            autovalidateMode:
-                                AutovalidateMode.onUserInteraction,
                           ),
-                          const SizedBox(height: 10),
-                          AuthTextField(
-                            controller: _lastNameCtl,
-                            label: 'LAST NAME',
-                            inputFormatters: [
-                              FilteringTextInputFormatter.allow(
-                                RegExp(r"[a-zA-Z .'-]"),
-                              ),
-                            ],
-                            validator: _validateLastName,
-                            autovalidateMode:
-                                AutovalidateMode.onUserInteraction,
-                          ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: AppDimensions.paddingMedium),
 
                           AuthTextField(
                             controller: _usernameCtl,
                             label: 'USERNAME',
+                            hintText: 'e.g. juan_delacruz',
                             validator: _validateUsername,
                             autovalidateMode:
                                 AutovalidateMode.onUserInteraction,
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: AppDimensions.paddingMedium),
 
                           AuthTextField(
                             controller: _passwordCtl,
                             label: 'PASSWORD',
+                            hintText: 'e.g. Resq@123',
                             obscureText: _obscurePassword,
                             validator: _validatePassword,
                             autovalidateMode:
@@ -613,40 +505,37 @@ class _RegistrationPageState extends State<RegistrationPage> {
                               },
                             ),
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: AppDimensions.paddingMedium),
 
                           AuthTextField(
                             controller: _emailCtl,
-                            label: 'EMAIL ADDRESS (OPTIONAL)',
+                            label: 'EMAIL ADDRESS',
+                            hintText: 'e.g. juan@email.com',
                             keyboardType: TextInputType.emailAddress,
                             validator: _validateEmail,
                             autovalidateMode:
                                 AutovalidateMode.onUserInteraction,
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: AppDimensions.paddingMedium),
 
-                          AuthTextField(
+                          // PHONE INPUT WITH +63 PREFIX
+                          PhoneInputField(
                             controller: _contactCtl,
-                            label: 'CONTACT NUMBER',
-                            keyboardType: TextInputType.phone,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              PhoneNumberFormatter(),
-                            ],
-                            validator: _validateContact,
+                            validator: validatePhilippinePhone,
                             autovalidateMode:
                                 AutovalidateMode.onUserInteraction,
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: AppDimensions.paddingMedium),
 
                           AuthTextField(
                             controller: _addressCtl,
                             label: 'HOME ADDRESS',
+                            hintText: 'e.g. Blk 3 Lot 2, Brgy. Mabini, QC',
                             validator: _validateAddress,
                             autovalidateMode:
                                 AutovalidateMode.onUserInteraction,
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: AppDimensions.paddingMedium),
 
                           DateOfBirthInput(
                             monthController: _dobMonthCtl,
@@ -658,77 +547,45 @@ class _RegistrationPageState extends State<RegistrationPage> {
                             autovalidateMode:
                                 AutovalidateMode.onUserInteraction,
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: AppDimensions.paddingLarge),
 
-                          IdPhotoUploadWidget(
-                            idPhotoPath: _idPhotoPath,
-                            uploadingPhoto: _uploadingPhoto,
-                            onUpload: _uploadPhoto,
+                          // ID VERIFICATION WIDGET (FRONT ONLY)
+                          IdVerificationWidget(
+                            onUploadComplete: _onIdUploadComplete,
+                            initialFrontUrl: _frontIdUrl,
+                            usernameForPath: _usernameCtl.text,
                           ),
                           if (_idPhotoError != null) ...[
-                            const SizedBox(height: 6),
+                            const SizedBox(height: AppDimensions.paddingSmall),
                             Text(
                               _idPhotoError!,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.red,
-                                fontWeight: FontWeight.w500,
-                              ),
+                              style: AppTextStyles.authError,
                             ),
                           ],
-                          const SizedBox(height: 14),
+                          const SizedBox(height: AppDimensions.paddingLarge),
 
+                          // TERMS CHECKBOX (DISPLAY-ONLY, CLICK LINK TO AGREE)
                           TermsCheckbox(
                             agreed: _agree,
-                            onChanged: () => setState(() {
-                              _agree = !_agree;
-                              if (_agree) _termsError = null;
-                            }),
                             onTermsTap: _showTermsAndConditions,
                           ),
                           if (_termsError != null) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              _termsError!,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.red,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
+                            const SizedBox(height: AppDimensions.paddingSmall),
+                            Text(_termsError!, style: AppTextStyles.authError),
                           ],
-                          const SizedBox(height: 14),
+                          const SizedBox(height: AppDimensions.paddingLarge),
 
-                          SizedBox(
-                            height: 42,
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed:
-                                  (_loading ||
-                                      _uploadingPhoto ||
-                                      _idPhotoPath == null)
-                                  ? null
-                                  : _submit,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppTheme.appBlue,
-                                disabledBackgroundColor: Colors.grey[400],
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                              ),
-                              child: _loading
-                                  ? const CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    )
-                                  : Text(
-                                      'CREATE ACCOUNT',
-                                      style: GoogleFonts.poppins(
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                            ),
+                          ResqPillButton(
+                            label: 'CREATE ACCOUNT',
+                            loading: _loading,
+                            onPressed:
+                                (_loading || _frontIdUrl == null)
+                                ? null
+                                : _submit,
+                            height: 48,
+                            radius: 30,
+                            backgroundColor: AppTheme.appRed,
+                            textStyle: AppTextStyles.authButton,
                           ),
                         ],
                       ),

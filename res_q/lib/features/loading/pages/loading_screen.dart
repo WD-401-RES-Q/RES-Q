@@ -48,7 +48,7 @@ class _LoadingContent extends StatelessWidget {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        SvgPicture.asset('assets/icons/RESQ-LOGO.svg', height: 100),
+        SvgPicture.asset('assets/icons/RES-Q_LOGO.svg', height: 100),
         const SizedBox(height: 20),
         const Text(
           "EVERY SECOND COUNTS",

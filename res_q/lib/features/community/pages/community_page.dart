@@ -29,22 +29,104 @@ class _CommunityPageState extends State<CommunityPage> {
 
   String _selectedFilter = 'All';
   String _selectedCategory = 'All';
+  String _selectedTimeFilter = 'All Time';
+  bool _showFilterSheet = false;
   List<Map<String, dynamic>> _reports = [];
+  List<Map<String, dynamic>> _announcements = [];
+  Map<String, String> _userVotes = {}; // reportId -> 'green' or 'red'
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
       _reportsSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+      _announcementsSubscription;
 
   @override
   void initState() {
     super.initState();
     _selectedFilter = _normalizeFilter(_selectedFilter);
     _subscribeToReports();
-    _ensureCommentsCollectionExists(); // Initialize comments collection
+    _subscribeToAnnouncements();
+    _loadUserVotes();
+    _ensureCommentsCollectionExists();
   }
 
   @override
   void dispose() {
     _reportsSubscription?.cancel();
+    _announcementsSubscription?.cancel();
     super.dispose();
+  }
+
+  void _subscribeToAnnouncements() {
+    _announcementsSubscription = FirebaseFirestore.instance
+        .collection('announcements')
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+      setState(() {
+        _announcements = snapshot.docs.map((doc) {
+          final data = doc.data();
+          return {
+            'id': doc.id,
+            'title': data['title'] ?? '',
+            'content': data['content'] ?? '',
+            'imageUrl': data['imageUrl'] ?? '',
+            'createdAt': data['createdAt'],
+          };
+        }).toList();
+      });
+    }, onError: (e) {
+      debugPrint('❌ Failed to load announcements: $e');
+    });
+  }
+
+  Future<void> _loadUserVotes() async {
+    final username = UserSession.currentUsername;
+    if (username == null || username.isEmpty) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('userVotes')
+          .doc(username)
+          .get();
+
+      if (doc.exists && mounted) {
+        final data = doc.data() ?? {};
+        setState(() {
+          _userVotes = Map<String, String>.from(data['votes'] ?? {});
+        });
+        // Update reports with user votes
+        _applyUserVotesToReports();
+      }
+    } catch (e) {
+      debugPrint('❌ Failed to load user votes: $e');
+    }
+  }
+
+  void _applyUserVotesToReports() {
+    setState(() {
+      for (int i = 0; i < _reports.length; i++) {
+        final reportId = _reports[i]['id'] as String?;
+        if (reportId != null && _userVotes.containsKey(reportId)) {
+          _reports[i]['userVote'] = _userVotes[reportId];
+        }
+      }
+    });
+  }
+
+  Future<void> _saveUserVote(String reportId, String vote) async {
+    final username = UserSession.currentUsername;
+    if (username == null || username.isEmpty) return;
+
+    try {
+      _userVotes[reportId] = vote;
+      await FirebaseFirestore.instance
+          .collection('userVotes')
+          .doc(username)
+          .set({'votes': _userVotes}, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('❌ Failed to save user vote: $e');
+    }
   }
 
   /// Ensure the comments collection exists by creating a marker document if needed
@@ -131,6 +213,7 @@ class _CommunityPageState extends State<CommunityPage> {
       'image': data['mediaUrl'] ?? '',
       'date': dateFormat.format(reportedAt).toUpperCase(),
       'time': timeFormat.format(reportedAt).toUpperCase(),
+      'reportedAt': reportedAt,
       'location': locationText.isNotEmpty ? locationText : 'Not provided',
       'title': data['incidentType'] ?? 'Unknown',
       'desc': data['details'] ?? 'No description provided.',
@@ -142,24 +225,54 @@ class _CommunityPageState extends State<CommunityPage> {
       'commentsList': <Map<String, dynamic>>[],
       'userVote': 'none',
       'name': data['name'] ?? 'Unknown',
+      'username': data['reporterUsername'] ?? '',
       'mediaType': data['mediaType'] ?? 'photo',
     };
   }
 
   static const List<String> _categories = [
     'All',
-    'Roads',
     'Earthquake',
     'Flood',
     'Fire',
-    'Other',
+    'Vehicular',
+    'Others',
   ];
 
+  static const List<String> _timeFilters = [
+    'All Time',
+    'Today',
+    'This Week',
+    'This Month',
+    'This Year',
+  ];
+
+  bool _matchesTimeFilter(DateTime reportedAt) {
+    final now = DateTime.now();
+    switch (_selectedTimeFilter) {
+      case 'Today':
+        return reportedAt.year == now.year &&
+            reportedAt.month == now.month &&
+            reportedAt.day == now.day;
+      case 'This Week':
+        final weekAgo = now.subtract(const Duration(days: 7));
+        return reportedAt.isAfter(weekAgo);
+      case 'This Month':
+        return reportedAt.year == now.year && reportedAt.month == now.month;
+      case 'This Year':
+        return reportedAt.year == now.year;
+      default:
+        return true;
+    }
+  }
+
   List<Map<String, dynamic>> _getVisibleReports() {
-    return _reports.where((report) {
+    final filtered = _reports.where((report) {
       final status = (report['status'] as String? ?? '').toLowerCase();
       final category = (report['title'] as String? ?? '').toLowerCase();
       final resolvedAt = report['resolvedAt'] as DateTime?;
+      final reportedAt = report['reportedAt'] as DateTime?;
+
       if ((status == 'resolved' || status == 'incident resolved') &&
           resolvedAt != null) {
         final elapsed = DateTime.now().difference(resolvedAt);
@@ -169,12 +282,12 @@ class _CommunityPageState extends State<CommunityPage> {
       }
 
       bool matchesFilter;
-        switch (_selectedFilter) {
-          case 'Approved':
-            matchesFilter = status == 'approved' ||
-                status == 'resolved' ||
-                status == 'incident resolved';
-            break;
+      switch (_selectedFilter) {
+        case 'Approved':
+          matchesFilter = status == 'approved' ||
+              status == 'resolved' ||
+              status == 'incident resolved';
+          break;
         case 'Under Review':
           matchesFilter = status == 'pending' || status == 'under review';
           break;
@@ -189,8 +302,19 @@ class _CommunityPageState extends State<CommunityPage> {
           _selectedCategory == 'All' ||
           category == _selectedCategory.toLowerCase();
 
-      return matchesFilter && matchesCategory;
+      final matchesTime = reportedAt == null || _matchesTimeFilter(reportedAt);
+
+      return matchesFilter && matchesCategory && matchesTime;
     }).toList();
+
+    // Sort by most recent first
+    filtered.sort((a, b) {
+      final aTime = a['reportedAt'] as DateTime? ?? DateTime(1970);
+      final bTime = b['reportedAt'] as DateTime? ?? DateTime(1970);
+      return bTime.compareTo(aTime);
+    });
+
+    return filtered;
   }
 
   String _normalizeFilter(String value) {
@@ -1006,7 +1130,7 @@ class _CommunityPageState extends State<CommunityPage> {
                         child: DropdownButton<String>(
                           value: _selectedFilter,
                           dropdownColor: Colors.white,
-                          style: GoogleFonts.poppins(
+                          style: GoogleFonts.roboto(
                             fontSize: 13,
                             color: appBlack,
                           ),
@@ -1059,7 +1183,7 @@ class _CommunityPageState extends State<CommunityPage> {
                           value: _selectedCategory,
                           dropdownColor: Colors.white,
                           iconEnabledColor: Colors.white,
-                          style: GoogleFonts.poppins(
+                          style: GoogleFonts.roboto(
                             fontSize: 13,
                             color: appBlack,
                           ),
@@ -1080,7 +1204,7 @@ class _CommunityPageState extends State<CommunityPage> {
                                 alignment: Alignment.centerLeft,
                                 child: Text(
                                   value,
-                                  style: GoogleFonts.poppins(
+                                  style: GoogleFonts.roboto(
                                     fontSize: 12,
                                     color: Colors.white,
                                     fontWeight: FontWeight.w600,

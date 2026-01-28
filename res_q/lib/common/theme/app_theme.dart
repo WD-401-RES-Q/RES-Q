@@ -7,6 +7,7 @@ class AppColors {
   static const appYellow = Color(0xFFF5F520);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
+  static const appBrightWhite = Color(0xFFFEFEFD);
 }
 
 class AppText {
@@ -68,6 +69,7 @@ class AppTheme {
   static const appRed = Color(0xFFFFC806);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
+  static const appBrightWhite = Color(0xFFFEFEFD);
 
   static final ButtonStyle pillOutlineButtonStyle = OutlinedButton.styleFrom(
     foregroundColor: AppColors.appBlue,

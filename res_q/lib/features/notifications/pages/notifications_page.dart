@@ -145,7 +145,7 @@ class NotificationsPage extends StatelessWidget {
                   if (imageUrl.isNotEmpty) const SizedBox(height: 12),
                   Text(
                     title.isNotEmpty ? title : 'Announcement',
-                    style: GoogleFonts.poppins(
+                    style: GoogleFonts.roboto(
                       fontSize: 16,
                       color: appBlack,
                       fontWeight: FontWeight.w600,
@@ -154,7 +154,7 @@ class NotificationsPage extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     dateText.toUpperCase(),
-                    style: GoogleFonts.poppins(
+                    style: GoogleFonts.roboto(
                       fontSize: 12,
                       color: appBlack.withOpacity(0.7),
                       fontWeight: FontWeight.w400,
@@ -164,7 +164,7 @@ class NotificationsPage extends StatelessWidget {
                   if (content.isNotEmpty)
                     Text(
                       content,
-                      style: GoogleFonts.poppins(
+                      style: GoogleFonts.roboto(
                         fontSize: 13,
                         color: appBlack,
                         fontWeight: FontWeight.w400,
@@ -258,7 +258,7 @@ class NotificationsPage extends StatelessWidget {
                     return Center(
                       child: Text(
                         'Failed to load announcements.',
-                        style: GoogleFonts.poppins(
+                        style: GoogleFonts.roboto(
                           fontSize: 12,
                           color: appBlack.withOpacity(0.7),
                         ),
@@ -283,7 +283,7 @@ class NotificationsPage extends StatelessWidget {
                     return Center(
                       child: Text(
                         'No announcements yet.',
-                        style: GoogleFonts.poppins(
+                        style: GoogleFonts.roboto(
                           fontSize: 12,
                           color: appBlack.withOpacity(0.7),
                         ),
@@ -393,7 +393,7 @@ class NotificationsPage extends StatelessWidget {
                                               displayTitle,
                                               maxLines: 2,
                                               overflow: TextOverflow.ellipsis,
-                                              style: GoogleFonts.poppins(
+                                              style: GoogleFonts.roboto(
                                                 fontSize: 14,
                                                 color: appBlack,
                                                 fontWeight: FontWeight.w600,
@@ -405,7 +405,7 @@ class NotificationsPage extends StatelessWidget {
                                       const SizedBox(height: 8),
                                       Text(
                                         dateText,
-                                        style: GoogleFonts.poppins(
+                                        style: GoogleFonts.roboto(
                                           fontSize: 12,
                                           color: appBlack.withOpacity(0.7),
                                           fontWeight: FontWeight.w400,
@@ -417,7 +417,7 @@ class NotificationsPage extends StatelessWidget {
                                           content,
                                           maxLines: 3,
                                           overflow: TextOverflow.ellipsis,
-                                          style: GoogleFonts.poppins(
+                                          style: GoogleFonts.roboto(
                                             fontSize: 12,
                                             color: appBlack.withOpacity(0.75),
                                             fontWeight: FontWeight.w400,

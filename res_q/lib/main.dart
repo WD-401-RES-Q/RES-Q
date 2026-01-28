@@ -27,38 +27,38 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        textTheme: GoogleFonts.quicksandTextTheme().copyWith(
-          displayLarge: GoogleFonts.poppins(
+        textTheme: GoogleFonts.robotoTextTheme().copyWith(
+          displayLarge: GoogleFonts.roboto(
             textStyle: const TextStyle(
               fontSize: 48.0,
               fontWeight: FontWeight.bold,
             ),
           ),
-          displayMedium: GoogleFonts.poppins(
+          displayMedium: GoogleFonts.roboto(
             textStyle: const TextStyle(
               fontSize: 40.0,
               fontWeight: FontWeight.bold,
             ),
           ),
-          displaySmall: GoogleFonts.poppins(
+          displaySmall: GoogleFonts.roboto(
             textStyle: const TextStyle(
               fontSize: 32.0,
               fontWeight: FontWeight.w700,
             ),
           ),
-          headlineMedium: GoogleFonts.poppins(
+          headlineMedium: GoogleFonts.roboto(
             textStyle: const TextStyle(
               fontSize: 24.0,
               fontWeight: FontWeight.w600,
             ),
           ),
-          headlineSmall: GoogleFonts.poppins(
+          headlineSmall: GoogleFonts.roboto(
             textStyle: const TextStyle(
               fontSize: 20.0,
               fontWeight: FontWeight.w600,
             ),
           ),
-          titleLarge: GoogleFonts.poppins(
+          titleLarge: GoogleFonts.roboto(
             textStyle: const TextStyle(
               fontSize: 18.0,
               fontWeight: FontWeight.w600,
