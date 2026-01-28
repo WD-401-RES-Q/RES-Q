@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -1758,20 +1757,22 @@ class _ProfilePageState extends State<ProfilePage>
           value: selectedProblemType,
           hint: Text(
             hint,
-            style: GoogleFonts.robotoCondensed(
+            style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w500,
               color: Colors.grey[600],
               letterSpacing: 0.2,
+              fontFamily: 'RobotoCondensed',
             ),
           ),
           icon: Icon(Icons.keyboard_arrow_down_rounded, color: accentColor),
           dropdownColor: const Color(0xFFFFF9E8),
-          style: GoogleFonts.robotoCondensed(
+          style: const TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w600,
-            color: const Color(0xFF3A2A2A),
+            color: Color(0xFF3A2A2A),
             letterSpacing: 0.2,
+            fontFamily: 'RobotoCondensed',
           ),
           items: [
             'App Crashes',
@@ -1783,10 +1784,11 @@ class _ProfilePageState extends State<ProfilePage>
               value: value,
               child: Text(
                 value,
-                style: GoogleFonts.robotoCondensed(
+                style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: const Color(0xFF3A2A2A),
+                  color: Color(0xFF3A2A2A),
+                  fontFamily: 'RobotoCondensed',
                 ),
               ),
             );

@@ -6,7 +6,6 @@ import 'dart:ui';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
@@ -1438,7 +1437,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                 children: [
                   Text(
                     'Report Details',
-                    style: GoogleFonts.roboto(
+                    style: const TextStyle(
                       color: Colors.black,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -1524,7 +1523,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                     ),
                     child: Text(
                       reportData['incidentType'] ?? 'Unknown',
-                      style: GoogleFonts.roboto(
+                      style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
                         fontSize: 13,
@@ -1536,7 +1535,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                   // Reporter details
                   Text(
                     'Reporter Information',
-                    style: GoogleFonts.roboto(
+                    style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 15,
                       color: Colors.black87,
@@ -1554,7 +1553,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                   // Date and time
                   Text(
                     'Report Details',
-                    style: GoogleFonts.roboto(
+                    style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 15,
                       color: Colors.black87,
@@ -1617,7 +1616,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                       children: [
                         Text(
                           'Emergency Responder',
-                          style: GoogleFonts.roboto(
+                          style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 15,
                             color: Colors.black87,
@@ -1637,10 +1636,10 @@ class _ReportMapPageState extends State<ReportMapPage>
                             children: [
                               Text(
                                 'Status',
-                                style: GoogleFonts.roboto(
+                                style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w500,
-                                  color: Colors.grey[700],
+                                  color: Colors.grey,
                                 ),
                               ),
                               Container(
@@ -1661,7 +1660,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                                           reportData['status'])
                                       ?.toString() ??
                                       '',
-                                  style: GoogleFonts.roboto(
+                                  style: const TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w600,
                                     color: Colors.white,
@@ -1697,7 +1696,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                       children: [
                         Text(
                           'Responder Notes',
-                          style: GoogleFonts.roboto(
+                          style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 15,
                             color: Colors.black87,
@@ -1726,9 +1725,9 @@ class _ReportMapPageState extends State<ReportMapPage>
                               Expanded(
                                 child: Text(
                                   widget.reportData['annotations'],
-                                  style: GoogleFonts.roboto(
+                                  style: TextStyle(
                                     fontSize: 14,
-                                    color: Colors.grey[800],
+                                    color: Colors.grey,
                                     height: 1.5,
                                   ),
                                 ),
@@ -1748,7 +1747,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                       children: [
                         Text(
                           'Description',
-                          style: GoogleFonts.roboto(
+                          style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 15,
                             color: Colors.black87,
@@ -1757,9 +1756,9 @@ class _ReportMapPageState extends State<ReportMapPage>
                         const SizedBox(height: 8),
                         Text(
                           widget.reportData['details'],
-                          style: GoogleFonts.roboto(
+                          style: TextStyle(
                             fontSize: 14,
-                            color: Colors.grey[700],
+                            color: Colors.grey,
                             height: 1.5,
                           ),
                         ),
@@ -1780,17 +1779,17 @@ class _ReportMapPageState extends State<ReportMapPage>
       children: [
         Text(
           label,
-          style: GoogleFonts.roboto(
+          style: const TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w500,
-            color: Colors.grey[700],
+            color: Colors.grey,
           ),
         ),
         Flexible(
           child: Text(
             value,
             textAlign: TextAlign.right,
-            style: GoogleFonts.roboto(
+            style: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
               color: Colors.black,
@@ -1845,7 +1844,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                   children: [
                     Text(
                       'Your report',
-                      style: GoogleFonts.roboto(
+                      style: const TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 14,
                       ),
@@ -1853,9 +1852,9 @@ class _ReportMapPageState extends State<ReportMapPage>
                     const SizedBox(height: 2),
                     Text(
                       'Tap to view details again',
-                      style: GoogleFonts.roboto(
+                      style: const TextStyle(
                         fontSize: 12,
-                        color: Colors.grey[700],
+                        color: Colors.grey,
                       ),
                     ),
                   ],
@@ -2194,7 +2193,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                           children: [
                             Text(
                               'Your report is posted',
-                              style: GoogleFonts.roboto(
+                              style: const TextStyle(
                                 fontWeight: FontWeight.bold,
                                 fontSize: 14,
                               ),
@@ -2202,9 +2201,9 @@ class _ReportMapPageState extends State<ReportMapPage>
                             const SizedBox(height: 4),
                             Text(
                               'Emergency responders will be notified.',
-                              style: GoogleFonts.roboto(
+                              style: const TextStyle(
                                 fontSize: 12,
-                                color: Colors.grey[700],
+                                color: Colors.grey,
                               ),
                             ),
                           ],

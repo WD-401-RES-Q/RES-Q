@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -85,7 +84,7 @@ class AuthTextField extends StatelessWidget {
       children: [
         Text(
           label,
-          style: GoogleFonts.roboto(
+          style: const TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
             color: AppTheme.appBlack,
@@ -99,14 +98,14 @@ class AuthTextField extends StatelessWidget {
           inputFormatters: inputFormatters,
           validator: validator,
           autovalidateMode: autovalidateMode,
-          style: GoogleFonts.roboto(
+          style: const TextStyle(
             fontSize: 13,
             color: AppTheme.appBlack,
             fontWeight: FontWeight.w500,
           ),
           decoration: InputDecoration(
             hintText: hintText ?? label,
-            hintStyle: GoogleFonts.roboto(
+            hintStyle: TextStyle(
               fontSize: 12,
               color: AppTheme.appBlack.withOpacity(0.5),
               fontWeight: FontWeight.w400,
@@ -139,7 +138,7 @@ class AuthTextField extends StatelessWidget {
               borderSide: const BorderSide(color: Colors.red, width: 2),
             ),
             errorMaxLines: 2,
-            errorStyle: GoogleFonts.roboto(
+            errorStyle: const TextStyle(
               fontSize: 11,
               color: Colors.red,
               fontWeight: FontWeight.w500,
@@ -172,7 +171,7 @@ class IdPhotoUploadWidget extends StatelessWidget {
       children: [
         Text(
           'SUBMIT PHOTO OF VALID ID',
-          style: GoogleFonts.roboto(
+          style: const TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w500,
             color: AppTheme.appBlack,
@@ -195,7 +194,7 @@ class IdPhotoUploadWidget extends StatelessWidget {
                     idPhotoPath == null
                         ? '(Required) UPLOAD GOVERNMENT ID'
                         : '✓ ID UPLOADED',
-                    style: GoogleFonts.roboto(
+                    style: const TextStyle(
                       fontSize: 14,
                       color: Colors.black,
                       fontWeight: FontWeight.w500,
@@ -269,7 +268,7 @@ class DateOfBirthInput extends StatelessWidget {
 
     return InputDecoration(
       hintText: label,
-      hintStyle: GoogleFonts.roboto(
+      hintStyle: TextStyle(
         fontSize: 12,
         color: AppTheme.appBlack.withOpacity(0.5),
         fontWeight: FontWeight.w400,
@@ -329,7 +328,7 @@ class DateOfBirthInput extends StatelessWidget {
           children: [
             Text(
               'DATE OF BIRTH',
-              style: GoogleFonts.roboto(
+              style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
                 color: AppTheme.appBlack,
@@ -347,7 +346,7 @@ class DateOfBirthInput extends StatelessWidget {
                       LengthLimitingTextInputFormatter(2),
                     ],
                     onChanged: (value) => state.didChange(value),
-                    style: GoogleFonts.roboto(
+                    style: const TextStyle(
                       fontSize: 13,
                       color: AppTheme.appBlack,
                       fontWeight: FontWeight.w500,
@@ -368,7 +367,7 @@ class DateOfBirthInput extends StatelessWidget {
                       LengthLimitingTextInputFormatter(2),
                     ],
                     onChanged: (value) => state.didChange(value),
-                    style: GoogleFonts.roboto(
+                    style: const TextStyle(
                       fontSize: 13,
                       color: AppTheme.appBlack,
                       fontWeight: FontWeight.w500,
@@ -389,7 +388,7 @@ class DateOfBirthInput extends StatelessWidget {
                       LengthLimitingTextInputFormatter(4),
                     ],
                     onChanged: (value) => state.didChange(value),
-                    style: GoogleFonts.roboto(
+                    style: const TextStyle(
                       fontSize: 13,
                       color: AppTheme.appBlack,
                       fontWeight: FontWeight.w500,
@@ -406,7 +405,7 @@ class DateOfBirthInput extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 state.errorText ?? '',
-                style: GoogleFonts.roboto(
+                style: const TextStyle(
                   fontSize: 11,
                   color: Colors.red,
                   fontWeight: FontWeight.w500,
@@ -461,7 +460,7 @@ class TermsCheckbox extends StatelessWidget {
             onTap: onTermsTap,
             child: Text(
               'READ AND AGREE TO TERMS AND CONDITIONS',
-              style: GoogleFonts.roboto(
+              style: const TextStyle(
                 fontSize: 11,
                 color: AppTheme.appBlue,
                 decoration: TextDecoration.underline,
@@ -537,7 +536,7 @@ class PhoneInputField extends StatelessWidget {
           children: [
             Text(
               label,
-              style: GoogleFonts.roboto(
+              style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
                 color: AppTheme.appBlack,
@@ -560,7 +559,7 @@ class PhoneInputField extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Text(
                       '+63',
-                      style: GoogleFonts.roboto(
+                      style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                         color: AppTheme.appBlack,
@@ -582,14 +581,14 @@ class PhoneInputField extends StatelessWidget {
                       ],
                       autovalidateMode: AutovalidateMode.disabled,
                       onChanged: (value) => state.didChange(value),
-                      style: GoogleFonts.roboto(
+                      style: const TextStyle(
                         fontSize: 13,
                         color: AppTheme.appBlack,
                         fontWeight: FontWeight.w500,
                       ),
                       decoration: InputDecoration(
                     hintText: 'e.g. 912-345-6789',
-                        hintStyle: GoogleFonts.roboto(
+                        hintStyle: TextStyle(
                           fontSize: 12,
                           color: AppTheme.appBlack.withOpacity(0.5),
                         ),
@@ -608,7 +607,7 @@ class PhoneInputField extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 state.errorText ?? '',
-                style: GoogleFonts.roboto(
+                style: const TextStyle(
                   fontSize: 11,
                   color: Colors.red,
                   fontWeight: FontWeight.w500,
@@ -742,7 +741,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                   Expanded(
                     child: Text(
                       'ACCEPTED VALID IDs',
-                      style: GoogleFonts.roboto(
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
                         color: AppTheme.appBlack,
@@ -764,7 +763,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
               const SizedBox(height: 8),
               Text(
                 'Please upload a clear photo of any of the following government-issued IDs:',
-                style: GoogleFonts.roboto(
+                style: TextStyle(
                   fontSize: 12,
                   color: AppTheme.appBlack.withValues(alpha: 0.7),
                 ),
@@ -837,7 +836,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                             Expanded(
                               child: Text(
                                 id['name']!,
-                                style: GoogleFonts.roboto(
+                                style: const TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w500,
                                   color: AppTheme.appBlack,
@@ -869,7 +868,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                     Expanded(
                       child: Text(
                         'Make sure your ID photo is clear, well-lit, and shows the entire card including your photo.',
-                        style: GoogleFonts.roboto(
+                        style: const TextStyle(
                           fontSize: 11,
                           color: AppTheme.appBlack,
                           height: 1.4,
@@ -898,7 +897,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         ),
         title: Text(
           'Select Image Source',
-          style: GoogleFonts.roboto(
+          style: const TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w600,
             color: AppTheme.appBlack,
@@ -945,7 +944,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
               const SizedBox(width: 10),
               Text(
                 label,
-                style: GoogleFonts.roboto(
+                style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: AppTheme.appBlack,
@@ -1042,12 +1041,12 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                validation.wrongSide
-                    ? errorMessage
-                    : 'Image validation failed. Tips: Ensure good lighting, avoid blur, capture the entire ID.',
-                style: GoogleFonts.roboto(fontSize: 12),
-              ),
+            content: Text(
+              validation.wrongSide
+                  ? errorMessage
+                  : 'Image validation failed. Tips: Ensure good lighting, avoid blur, capture the entire ID.',
+              style: const TextStyle(fontSize: 12),
+            ),
               backgroundColor: Colors.red,
               duration: const Duration(seconds: 4),
             ),
@@ -1073,7 +1072,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
           SnackBar(
             content: Text(
               'Front of ID uploaded successfully',
-              style: GoogleFonts.roboto(fontSize: 12),
+              style: const TextStyle(fontSize: 12),
             ),
             backgroundColor: const Color(0xFF00A458),
             duration: const Duration(seconds: 2),
@@ -1174,7 +1173,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
             Flexible(
               child: Text(
                 '$title (REQUIRED)',
-                style: GoogleFonts.roboto(
+                style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: AppTheme.appBlack,
@@ -1217,7 +1216,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                         : Center(
                             child: Text(
                               'TAP TO UPLOAD',
-                              style: GoogleFonts.roboto(
+                              style: const TextStyle(
                                 fontSize: 13,
                                 color: AppTheme.appBlack,
                                 fontWeight: FontWeight.w500,
@@ -1266,7 +1265,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
           const SizedBox(height: 6),
           Text(
             error,
-            style: GoogleFonts.roboto(
+            style: const TextStyle(
               fontSize: 11,
               color: Colors.red,
               fontWeight: FontWeight.w500,
@@ -1287,7 +1286,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
           children: [
             Text(
               'SUBMIT PHOTO OF VALID ID',
-              style: GoogleFonts.roboto(
+              style: const TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
                 color: AppTheme.appBlack,
@@ -1393,7 +1392,7 @@ class TermsAndConditionsDialog {
                     const SizedBox(height: 16),
                     Text(
                       'TERMS AND CONDITIONS',
-                      style: GoogleFonts.roboto(
+                      style: const TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w700,
                         color: AppTheme.appBlack,
@@ -1414,7 +1413,7 @@ class TermsAndConditionsDialog {
                           controller: scrollController,
                           child: Text(
                             _getTermsAndConditionsText(),
-                            style: GoogleFonts.roboto(
+                            style: const TextStyle(
                               fontSize: 13,
                               height: 1.6,
                               color: AppTheme.appBlack,
@@ -1427,7 +1426,7 @@ class TermsAndConditionsDialog {
                     if (!canAgree)
                       Text(
                         'Scroll to the bottom to continue',
-                        style: GoogleFonts.roboto(
+                        style: TextStyle(
                           fontSize: 11,
                           color: AppTheme.appBlack.withOpacity(0.55),
                           fontStyle: FontStyle.italic,
@@ -1453,7 +1452,7 @@ class TermsAndConditionsDialog {
                               ),
                               child: Text(
                                 'CLOSE',
-                                style: GoogleFonts.roboto(
+                                style: const TextStyle(
                                   fontWeight: FontWeight.w600,
                                   color: AppTheme.appBlue,
                                 ),
@@ -1483,7 +1482,7 @@ class TermsAndConditionsDialog {
                               ),
                               child: Text(
                                 'I AGREE',
-                                style: GoogleFonts.roboto(
+                                style: TextStyle(
                                   fontWeight: FontWeight.w600,
                                   color: canAgree
                                       ? Colors.white

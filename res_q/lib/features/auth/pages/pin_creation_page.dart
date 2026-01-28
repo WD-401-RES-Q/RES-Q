@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -65,7 +64,10 @@ class _PINCreationPageState extends State<PINCreationPage> {
   Widget _logo() {
     return RichText(
       text: TextSpan(
-        style: GoogleFonts.roboto(fontSize: 26, fontWeight: FontWeight.w700),
+        style: const TextStyle(
+          fontSize: 26,
+          fontWeight: FontWeight.w700,
+        ),
         children: const [
           TextSpan(
             text: 'RES',
@@ -127,7 +129,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
               const SizedBox(height: 20),
               Text(
                 'Enable Biometric Login?',
-                style: GoogleFonts.roboto(
+                style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
                   color: appBlack,
@@ -137,7 +139,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
               const SizedBox(height: 12),
               Text(
                 'Would you like to use fingerprint or face recognition for faster login?',
-                style: GoogleFonts.roboto(
+                style: TextStyle(
                   fontSize: 14,
                   color: appBlack.withOpacity(0.7),
                 ),
@@ -146,7 +148,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
               const SizedBox(height: 8),
               Text(
                 'You can change this later in settings.',
-                style: GoogleFonts.roboto(
+                style: TextStyle(
                   fontSize: 12,
                   color: Colors.grey,
                   fontStyle: FontStyle.italic,
@@ -169,7 +171,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                       ),
                       child: Text(
                         'No Thanks',
-                        style: GoogleFonts.roboto(
+                        style: TextStyle(
                           fontWeight: FontWeight.w500,
                           color: appBlack,
                         ),
@@ -198,7 +200,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                           const SizedBox(width: 6),
                           Text(
                             'Enable',
-                            style: GoogleFonts.roboto(
+                            style: TextStyle(
                               fontWeight: FontWeight.w600,
                               color: Colors.white,
                             ),
@@ -303,7 +305,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 const SizedBox(height: 16),
                 Text(
                   'Account Pending Approval',
-                  style: GoogleFonts.roboto(
+                  style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
                     color: appBlack,
@@ -313,7 +315,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 const SizedBox(height: 12),
                 Text(
                   'Your account is currently pending admin approval. Please wait up to 48 hours for an administrator to review and approve your account.\n\nOnce approved, you will receive a text message and can create your PIN to login.',
-                  style: GoogleFonts.roboto(fontSize: 14, color: appBlack),
+                  style: TextStyle(fontSize: 14, color: appBlack),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 24),
@@ -332,7 +334,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                     ),
                     child: Text(
                       'OK',
-                      style: GoogleFonts.roboto(
+                      style: TextStyle(
                         fontWeight: FontWeight.w600,
                         color: Colors.white,
                       ),
@@ -385,7 +387,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                     const SizedBox(height: 12),
                     Text(
                       'Set up your 4-digit PIN for fast login',
-                      style: GoogleFonts.roboto(
+                      style: TextStyle(
                         fontSize: 14,
                         color: Colors.grey,
                       ),
@@ -413,7 +415,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                             const SizedBox(width: 12),
                             Text(
                               _formatPhoneForDisplay(_phoneNumber),
-                              style: GoogleFonts.roboto(
+                              style: TextStyle(
                                 fontSize: 16,
                                 color: appBlack,
                               ),
@@ -483,7 +485,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                           alignment: Alignment.centerLeft,
                           child: Text(
                             _pinError!,
-                            style: GoogleFonts.roboto(
+                            style: const TextStyle(
                               fontSize: 12,
                               color: Colors.red,
                             ),
@@ -553,7 +555,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                           alignment: Alignment.centerLeft,
                           child: Text(
                             _pinConfirmError!,
-                            style: GoogleFonts.roboto(
+                            style: const TextStyle(
                               fontSize: 12,
                               color: Colors.red,
                             ),
