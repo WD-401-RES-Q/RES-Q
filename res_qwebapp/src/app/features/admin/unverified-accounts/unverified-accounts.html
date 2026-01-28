@@ -36,8 +36,8 @@
           <td>{{ acc.contactNumber }}</td>
 
           <td>
-            <span *ngIf="acc.idPhotoPath" class="id-badge">✓ Uploaded</span>
-            <span *ngIf="!acc.idPhotoPath" class="id-badge missing">✗ Missing</span>
+            <button *ngIf="getIdPhotoUrl(acc)" type="button" class="id-badge id-link" (click)="openIdModal(acc)">✓ View ID</button>
+            <span *ngIf="!getIdPhotoUrl(acc)" class="id-badge missing">✗ Missing</span>
           </td>
 
           <td>
@@ -114,6 +114,19 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-primary" (click)="closeModal()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ID Preview Modal -->
+  <div class="modal-overlay" *ngIf="showIdModal" (click)="closeIdModal()">
+    <div class="modal-content id-modal" (click)="$event.stopPropagation()">
+      <div class="id-modal-header">
+        <h3 class="modal-title">VALID ID</h3>
+        <button type="button" class="id-modal-close" (click)="closeIdModal()">×</button>
+      </div>
+      <div class="id-modal-body">
+        <img *ngIf="idModalUrl" [src]="idModalUrl" alt="Valid ID" />
       </div>
     </div>
   </div>

@@ -2,6 +2,7 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FirestoreService } from '../../../core/services/firestore.service';
+import { FirebaseStorageService } from '../../../core/services/firebase-storage.service';
 import { Subscription, Observable } from 'rxjs';
 
 interface UnverifiedAccount {
@@ -42,9 +43,16 @@ export class UnverifiedAccountsComponent implements OnInit, OnDestroy {
   selectedAccount: UnverifiedAccount | null = null;
   rejectionReason = '';
 
+  // ID Preview Modal state
+  showIdModal = false;
+  idModalUrl: string | null = null;
+
   private subscription?: Subscription;
 
-  constructor(private firestoreService: FirestoreService) {
+  constructor(
+    private firestoreService: FirestoreService,
+    private firebaseStorageService: FirebaseStorageService
+  ) {
     console.log('UnverifiedAccountsComponent constructor called');
     // Expose the observables directly for the template
     this.accounts$ = this.firestoreService.pendingUsers$;
@@ -140,5 +148,32 @@ export class UnverifiedAccountsComponent implements OnInit, OnDestroy {
 
   closeModal() {
     this.showModal = false;
+  }
+
+  // Get the ID photo URL from storage path
+  getIdPhotoUrl(account: UnverifiedAccount): string | null {
+    // Check multiple possible field names for ID photo
+    const path = (account.idPhotoPath || (account as any).idPhoto || (account as any).validIdUrl || '').trim();
+    if (!path) {
+      return null;
+    }
+    if (path.startsWith('http')) {
+      return path;
+    }
+    return this.firebaseStorageService.getDownloadUrl(path);
+  }
+
+  openIdModal(account: UnverifiedAccount) {
+    const url = this.getIdPhotoUrl(account);
+    if (!url) {
+      return;
+    }
+    this.idModalUrl = url;
+    this.showIdModal = true;
+  }
+
+  closeIdModal() {
+    this.showIdModal = false;
+    this.idModalUrl = null;
   }
 }

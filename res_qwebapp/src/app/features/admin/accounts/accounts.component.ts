@@ -106,11 +106,14 @@ export class AccountsComponent implements OnInit, OnDestroy {
   }
 
   filterAccounts() {
+    // First, exclude banned accounts from the list
+    const activeAccounts = this.accounts.filter(acc => acc.accountStatus !== 'BANNED');
+
     if (!this.searchQuery.trim()) {
-      this.filteredAccounts = this.accounts;
+      this.filteredAccounts = activeAccounts;
     } else {
       const query = this.searchQuery.toLowerCase();
-      this.filteredAccounts = this.accounts.filter(acc => 
+      this.filteredAccounts = activeAccounts.filter(acc =>
         (acc.fullName?.toLowerCase().includes(query) || false) ||
         (acc.username?.toLowerCase().includes(query) || false) ||
         (acc.email?.toLowerCase().includes(query) || false) ||
@@ -245,47 +248,46 @@ export class AccountsComponent implements OnInit, OnDestroy {
     console.log('=== FINAL CONFIRM BAN CALLED ===');
     console.log('isProcessingBan:', this.isProcessingBan);
     console.log('accountToBan:', this.accountToBan);
-    
+
     if (this.isProcessingBan) {
       console.log('Already processing ban, ignoring duplicate call');
       return;
     }
-    
+
     if (!this.accountToBan) {
       console.log('No account to ban, returning');
       return;
     }
-    
+
     this.isProcessingBan = true;
     console.log('selectedBanReasons:', this.selectedBanReasons);
     console.log('banDuration:', this.banDuration);
-    
-    let banUntil: Date | null = null;
-    
-    if (this.banDuration === 'permanent') {
-      banUntil = null;
-    } else {
-      banUntil = new Date();
-      banUntil.setDate(banUntil.getDate() + 7);
-    }
-    
+
+    const accountId = this.accountToBan.id;
+
     try {
-      const updateData: any = {
-        accountStatus: 'BANNED',
-        banReasons: this.selectedBanReasons,
-        bannedAt: new Date()
-      };
-      
-      if (banUntil) {
-        updateData.bannedUntil = banUntil;
+      if (this.banDuration === 'permanent') {
+        // Permanent ban: Delete the account from Firebase
+        console.log('Permanent ban - deleting account from Firebase');
+        await this.firestoreService.deleteDocument('approved_users', accountId);
+        console.log('Account permanently deleted');
       } else {
-        updateData.bannedUntil = null;
+        // Temporary ban: Update status with ban expiry date
+        const banUntil = new Date();
+        banUntil.setDate(banUntil.getDate() + 7);
+
+        const updateData: any = {
+          accountStatus: 'BANNED',
+          banReasons: this.selectedBanReasons,
+          bannedAt: new Date(),
+          bannedUntil: banUntil
+        };
+
+        console.log('Temporary ban - updating Firestore with data:', updateData);
+        await this.firestoreService.updateDocument('approved_users', accountId, updateData);
+        console.log('Temporary ban successful');
       }
-      
-      console.log('Updating Firestore with data:', updateData);
-      await this.firestoreService.updateDocument('approved_users', this.accountToBan.id, updateData);
-      console.log('Ban successful, closing modal now');
-      
+
       this.ngZone.run(() => {
         this.showBanConfirmationModal = false;
         this.accountToBan = null;
@@ -293,11 +295,16 @@ export class AccountsComponent implements OnInit, OnDestroy {
         this.selectedBanReasons = [];
         this.resetBanReasons();
         this.isProcessingBan = false;
+        // Clear selection if the account was deleted
+        if (this.selected?.id === accountId) {
+          this.selected = this.filteredAccounts.length > 0 ? this.filteredAccounts[0] : null;
+        }
         this.cdr.markForCheck();
         console.log('Modal state updated and marked for check');
       });
     } catch (error) {
       console.error('Error banning account:', error);
+      alert('Failed to ban account. Please try again.');
       this.isProcessingBan = false;
     }
   }
@@ -334,5 +341,10 @@ export class AccountsComponent implements OnInit, OnDestroy {
       return path;
     }
     return this.firebaseStorageService.getDownloadUrl(path);
+  }
+
+  // Check if account has a temporary ban (has bannedUntil date)
+  isTemporaryBan(account: Account): boolean {
+    return account.accountStatus === 'BANNED' && account.bannedUntil != null;
   }
 }

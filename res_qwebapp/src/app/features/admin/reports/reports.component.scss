@@ -17,10 +17,31 @@
     color: #6b7280;
   }
 
+  /* FILTERS ROW */
+  .filters-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    margin-bottom: 24px;
+    align-items: center;
+  }
+
+  .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .filter-label {
+    font-size: 14px;
+    font-weight: 600;
+    font-family: 'Roboto', sans-serif;
+    color: var(--text-dark, #212121);
+  }
+
   /* FILTER DROPDOWN */
   .filter-dropdown-wrapper {
     position: relative;
-    margin-bottom: 24px;
     display: inline-block;
   }
 

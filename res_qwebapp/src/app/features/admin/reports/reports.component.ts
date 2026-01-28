@@ -46,6 +46,8 @@ interface Comment {
 }
 
 type FilterType = 'pending' | 'approved' | 'flagged';
+type DateFilterType = 'all' | 'today' | 'week' | 'month' | 'year';
+type IncidentFilterType = 'all' | 'fire' | 'flood' | 'vehicular' | 'earthquake' | 'other';
 
 @Component({
   selector: 'app-reports',
@@ -65,6 +67,14 @@ export class ReportsComponent implements OnInit, OnDestroy {
   // Filter state
   currentFilter: FilterType = 'pending';
   showFilterDropdown = false;
+
+  // Date filter state
+  dateFilter: DateFilterType = 'all';
+  showDateDropdown = false;
+
+  // Incident type filter state
+  incidentFilter: IncidentFilterType = 'all';
+  showIncidentDropdown = false;
   
   // All reports data
   allReports: Report[] = [];
@@ -90,15 +100,90 @@ export class ReportsComponent implements OnInit, OnDestroy {
 
   // Computed property for filtered reports
   get filteredReports(): Report[] {
+    let reports: Report[];
     switch (this.currentFilter) {
       case 'approved':
-        return this.approvedReports;
+        reports = this.approvedReports;
+        break;
       case 'flagged':
-        return this.flaggedReports;
+        reports = this.flaggedReports;
+        break;
       case 'pending':
       default:
-        return this.pendingReports;
+        reports = this.pendingReports;
+        break;
     }
+
+    // Apply date filter
+    if (this.dateFilter !== 'all') {
+      reports = this.applyDateFilter(reports);
+    }
+
+    // Apply incident type filter
+    if (this.incidentFilter !== 'all') {
+      reports = this.applyIncidentFilter(reports);
+    }
+
+    return reports;
+  }
+
+  private applyDateFilter(reports: Report[]): Report[] {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    return reports.filter(report => {
+      const reportDate = this.parseReportDate(report.date);
+      if (!reportDate) return true;
+
+      switch (this.dateFilter) {
+        case 'today':
+          return reportDate >= today;
+        case 'week':
+          const weekAgo = new Date(today);
+          weekAgo.setDate(weekAgo.getDate() - 7);
+          return reportDate >= weekAgo;
+        case 'month':
+          const monthAgo = new Date(today);
+          monthAgo.setMonth(monthAgo.getMonth() - 1);
+          return reportDate >= monthAgo;
+        case 'year':
+          const yearAgo = new Date(today);
+          yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+          return reportDate >= yearAgo;
+        default:
+          return true;
+      }
+    });
+  }
+
+  private applyIncidentFilter(reports: Report[]): Report[] {
+    return reports.filter(report => {
+      const category = (report.category || '').toLowerCase();
+      switch (this.incidentFilter) {
+        case 'fire':
+          return category.includes('fire');
+        case 'flood':
+          return category.includes('flood');
+        case 'vehicular':
+          return category.includes('vehicular') || category.includes('accident');
+        case 'earthquake':
+          return category.includes('earthquake');
+        case 'other':
+          return !category.includes('fire') &&
+                 !category.includes('flood') &&
+                 !category.includes('vehicular') &&
+                 !category.includes('accident') &&
+                 !category.includes('earthquake');
+        default:
+          return true;
+      }
+    });
+  }
+
+  private parseReportDate(dateStr: string): Date | null {
+    if (!dateStr || dateStr === '–') return null;
+    const parsed = new Date(dateStr);
+    return isNaN(parsed.getTime()) ? null : parsed;
   }
 
   ngOnInit() {
@@ -236,12 +321,63 @@ export class ReportsComponent implements OnInit, OnDestroy {
   // Filter switching
   toggleFilterDropdown() {
     this.showFilterDropdown = !this.showFilterDropdown;
+    this.showDateDropdown = false;
+    this.showIncidentDropdown = false;
   }
 
   selectFilter(filter: FilterType) {
     this.currentFilter = filter;
     this.showFilterDropdown = false;
     this.cdr.markForCheck();
+  }
+
+  // Date filter methods
+  toggleDateDropdown() {
+    this.showDateDropdown = !this.showDateDropdown;
+    this.showFilterDropdown = false;
+    this.showIncidentDropdown = false;
+  }
+
+  selectDateFilter(filter: DateFilterType) {
+    this.dateFilter = filter;
+    this.showDateDropdown = false;
+    this.cdr.markForCheck();
+  }
+
+  getDateFilterLabel(): string {
+    const labels: Record<DateFilterType, string> = {
+      'all': 'ALL TIME',
+      'today': 'TODAY',
+      'week': 'THIS WEEK',
+      'month': 'THIS MONTH',
+      'year': 'THIS YEAR'
+    };
+    return labels[this.dateFilter];
+  }
+
+  // Incident type filter methods
+  toggleIncidentDropdown() {
+    this.showIncidentDropdown = !this.showIncidentDropdown;
+    this.showFilterDropdown = false;
+    this.showDateDropdown = false;
+  }
+
+  selectIncidentFilter(filter: IncidentFilterType) {
+    this.incidentFilter = filter;
+    this.showIncidentDropdown = false;
+    this.cdr.markForCheck();
+  }
+
+  getIncidentFilterLabel(): string {
+    const labels: Record<IncidentFilterType, string> = {
+      'all': 'ALL TYPES',
+      'fire': 'FIRE',
+      'flood': 'FLOOD',
+      'vehicular': 'VEHICULAR',
+      'earthquake': 'EARTHQUAKE',
+      'other': 'OTHER'
+    };
+    return labels[this.incidentFilter];
   }
 
   // Approval actions (pending → approved)
@@ -292,12 +428,18 @@ export class ReportsComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const adminName = localStorage.getItem('adminName') || 'Admin';
+
     this.firestoreService
-      .updateDocument('reports', this.reportToReject.id, { status: 'Flagged' })
+      .updateDocument('reports', this.reportToReject.id, {
+        status: 'Flagged',
+        flaggedAt: new Date(),
+        flaggedBy: adminName
+      })
       .catch((err) => {
         console.error('Failed to reject report:', err);
       });
-    
+
     this.cancelReject();
   }
 
