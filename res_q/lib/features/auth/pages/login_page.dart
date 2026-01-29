@@ -31,6 +31,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   bool _showPinSuccess = false;
   bool _showPinError = false;
   String _pinErrorMessage = '';
+  bool _showPhoneError = false;
+  String _phoneErrorMessage = '';
 
   // Shake animation
   late AnimationController _shakeController;
@@ -233,7 +235,34 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   }
 
   Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
+    final phoneDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
+
+    if (phoneDigits.isEmpty) {
+      setState(() {
+        _showPhoneError = true;
+        _phoneErrorMessage = 'Enter phone number';
+      });
+      return;
+    }
+
+    if (phoneDigits.length != 10) {
+      setState(() {
+        _showPhoneError = true;
+        _phoneErrorMessage = 'Enter 10 digits';
+      });
+      return;
+    }
+
+    if (!phoneDigits.startsWith('9')) {
+      setState(() {
+        _showPhoneError = true;
+        _phoneErrorMessage = 'Must start with 9';
+      });
+      return;
+    }
+
+    setState(() => _showPhoneError = false);
+
     if (_initializing) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -652,18 +681,31 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                                           vertical: 16,
                                         ),
                                       ),
-                                      validator: (v) {
-                                        final digits = (v ?? '').replaceAll(RegExp(r'\D'), '');
-                                        if (digits.isEmpty) return 'Enter phone number';
-                                        if (digits.length != 10) return 'Enter 10 digits';
-                                        if (!digits.startsWith('9')) return 'Must start with 9';
-                                        return null;
+                                      onChanged: (_) {
+                                        if (_showPhoneError) {
+                                          setState(() => _showPhoneError = false);
+                                        }
                                       },
                                     ),
                                   ),
                                 ],
                               ),
                             ),
+                            // Show phone error message below phone input, outside the box
+                            if (_showPhoneError) ...[
+                              const SizedBox(height: 6),
+                              Padding(
+                                padding: const EdgeInsets.only(left: 4),
+                                child: Text(
+                                  _phoneErrorMessage,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.red,
+                                  ),
+                                ),
+                              ),
+                            ],
                             const SizedBox(height: 20),
 
                             Text(
