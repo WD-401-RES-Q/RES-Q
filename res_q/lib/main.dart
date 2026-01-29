@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'features/home/pages/home_page.dart';
@@ -27,43 +26,13 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        textTheme: GoogleFonts.robotoTextTheme().copyWith(
-          displayLarge: GoogleFonts.roboto(
-            textStyle: const TextStyle(
-              fontSize: 48.0,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          displayMedium: GoogleFonts.roboto(
-            textStyle: const TextStyle(
-              fontSize: 40.0,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          displaySmall: GoogleFonts.roboto(
-            textStyle: const TextStyle(
-              fontSize: 32.0,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          headlineMedium: GoogleFonts.roboto(
-            textStyle: const TextStyle(
-              fontSize: 24.0,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          headlineSmall: GoogleFonts.roboto(
-            textStyle: const TextStyle(
-              fontSize: 20.0,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          titleLarge: GoogleFonts.roboto(
-            textStyle: const TextStyle(
-              fontSize: 18.0,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
+        textTheme: const TextTheme(
+          displayLarge: TextStyle(fontSize: 48.0, fontWeight: FontWeight.bold),
+          displayMedium: TextStyle(fontSize: 40.0, fontWeight: FontWeight.bold),
+          displaySmall: TextStyle(fontSize: 32.0, fontWeight: FontWeight.w700),
+          headlineMedium: TextStyle(fontSize: 24.0, fontWeight: FontWeight.w600),
+          headlineSmall: TextStyle(fontSize: 20.0, fontWeight: FontWeight.w600),
+          titleLarge: TextStyle(fontSize: 18.0, fontWeight: FontWeight.w600),
         ),
       ),
       home: const LoadingScreen(), // <-- SHOW LOADING SCREEN FIRST

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 class ForgotPasswordPage extends StatefulWidget {
@@ -36,7 +35,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   InputDecoration _inputDecoration(String label) {
     return InputDecoration(
       labelText: label,
-      labelStyle: GoogleFonts.roboto(fontSize: 12, color: appBlack),
+      labelStyle: const TextStyle(
+        fontSize: 12,
+        color: appBlack,
+      ),
       filled: true,
       fillColor: Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -117,9 +119,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                     const SizedBox(height: 40),
 
                     // Title
-                    Text(
+                    const Text(
                       'FORGOT PASSWORD',
-                      style: GoogleFonts.roboto(
+                      style: TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.w900,
                         color: appBlack,
@@ -134,9 +136,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           // Email Address Label
-                          Text(
+                          const Text(
                             'EMAIL ADDRESS',
-                            style: GoogleFonts.roboto(
+                            style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
                               color: appBlack,
@@ -145,9 +147,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           const SizedBox(height: 8),
                           TextFormField(
                             controller: _emailCtl,
-                            style: GoogleFonts.robotoCondensed(
+                            style: const TextStyle(
                               fontSize: 15,
                               color: appBlack,
+                              fontFamily: 'RobotoCondensed',
                             ),
                             decoration: _inputDecoration(''),
                             validator: (v) =>
@@ -156,9 +159,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           const SizedBox(height: 24),
 
                           // New Password Label
-                          Text(
+                          const Text(
                             'NEW PASSWORD',
-                            style: GoogleFonts.roboto(
+                            style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
                               color: appBlack,
@@ -168,9 +171,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           TextFormField(
                             controller: _newPassCtl,
                             obscureText: _obscureNew,
-                            style: GoogleFonts.robotoCondensed(
+                            style: const TextStyle(
                               fontSize: 15,
                               color: appBlack,
+                              fontFamily: 'RobotoCondensed',
                             ),
                             decoration: _inputDecoration('').copyWith(
                               suffixIcon: IconButton(
@@ -192,9 +196,9 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           const SizedBox(height: 24),
 
                           // Confirm New Password Label
-                          Text(
+                          const Text(
                             'CONFIRM NEW PASSWORD',
-                            style: GoogleFonts.roboto(
+                            style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
                               color: appBlack,
@@ -204,9 +208,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                           TextFormField(
                             controller: _confirmCtl,
                             obscureText: _obscureConfirm,
-                            style: GoogleFonts.robotoCondensed(
+                            style: const TextStyle(
                               fontSize: 15,
                               color: appBlack,
+                              fontFamily: 'RobotoCondensed',
                             ),
                             decoration: _inputDecoration('').copyWith(
                               suffixIcon: IconButton(
@@ -255,7 +260,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                                       strokeWidth: 2,
                                       color: Colors.white,
                                     )
-                                  : Text(
+                                  : const Text(
                                       'UPDATE AND PROCEED TO LOGIN',
                                       style: TextStyle(
                                         fontSize: 17,

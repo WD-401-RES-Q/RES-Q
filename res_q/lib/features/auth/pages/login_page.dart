@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:local_auth/local_auth.dart';
@@ -433,7 +432,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
               const SizedBox(height: 16),
               Text(
                 'Account Pending Approval',
-                style: GoogleFonts.roboto(
+                style: const TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
                   color: appBlack,
@@ -443,7 +442,10 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
               const SizedBox(height: 12),
               Text(
                 'Your account is currently pending admin approval. Please wait up to 48 hours for an administrator to review and approve your account.',
-                style: GoogleFonts.roboto(fontSize: 14, color: appBlack),
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: appBlack,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
@@ -460,7 +462,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                   ),
                   child: Text(
                     'OK',
-                    style: GoogleFonts.roboto(
+                    style: const TextStyle(
                       fontWeight: FontWeight.w600,
                       color: Colors.white,
                     ),
@@ -719,7 +721,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                               const SizedBox(height: 12),
                               Text(
                                 _pinErrorMessage,
-                                style: GoogleFonts.roboto(
+                                style: const TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
                                   color: Colors.red,
@@ -760,7 +762,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                                     Expanded(
                                       child: Text(
                                         'Pin is good to go! Enter the pin in the pin section.',
-                                        style: GoogleFonts.roboto(
+                                        style: const TextStyle(
                                           fontSize: 13,
                                           color: Colors.white,
                                           fontWeight: FontWeight.w500,

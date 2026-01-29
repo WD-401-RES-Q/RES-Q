@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../common/widgets/app_buttons.dart';
 
@@ -220,7 +219,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
                         _phoneVerified
                             ? 'Enter a 4-digit PIN for quick login'
                             : 'Enter your registered phone number',
-                        style: GoogleFonts.roboto(
+                        style: TextStyle(
                           fontSize: 14,
                           color: appBlack.withOpacity(0.7),
                         ),
