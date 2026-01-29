@@ -41,6 +41,13 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   static const Duration _resolvedRetention = Duration(hours: 1);
   final Map<String, Timer> _resolvedRemovalTimers = {};
   List<Map<String, dynamic>> _resolvedReports = [];
+  QuerySnapshot<Map<String, dynamic>>? _latestReportSnapshot;
+
+  bool _showEarthquake = true;
+  bool _showFlood = true;
+  bool _showFire = true;
+  bool _showVehicular = true;
+  bool _showOthers = true;
 
   // Route related variables
   LatLng? _userLocation;
@@ -606,8 +613,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Container(
-          width: 46,
-          height: 46,
+          width: 40,
+          height: 40,
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(isActive ? 0.28 : 0.18),
             borderRadius: BorderRadius.circular(14),
@@ -620,7 +627,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
               ),
             ],
           ),
-          child: Icon(icon, color: Colors.white, size: 28),
+          child: Icon(icon, color: Colors.white, size: 24),
         ),
       ),
     );
@@ -640,6 +647,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   void _applyReportSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    _latestReportSnapshot = snapshot;
     _incidentMarkers.clear();
     final resolvedReports = <Map<String, dynamic>>[];
     for (var doc in snapshot.docs) {
@@ -648,6 +656,8 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       if (location != null) {
         final reportId = doc.id;
         final status = (data['status'] as String? ?? '').toLowerCase();
+        final incidentType = data['incidentType'] as String? ?? 'Unknown';
+        final shouldShowType = _shouldShowIncidentType(incidentType);
         final resolvedAt = _parseResolvedAt(data);
         final flaggedAt = _parseFlaggedAt(data) ?? _parseReportedAt(data);
         final isResolved =
@@ -660,14 +670,16 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
           if (!shouldKeep) {
             continue;
           }
-          if (isResolved) {
+          if (isResolved && shouldShowType) {
             resolvedReports.add({'id': reportId, 'data': data});
           }
         } else {
           _cancelResolvedRemoval(reportId);
         }
         final point = LatLng(location.latitude, location.longitude);
-        final incidentType = data['incidentType'] as String? ?? 'Unknown';
+        if (!shouldShowType) {
+          continue;
+        }
 
         final markerSize = isInactive ? 56.0 : 72.0;
         final badge = _buildStatusBadge(status, markerSize);
@@ -717,6 +729,26 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       });
     }
     print('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+  }
+
+  bool _shouldShowIncidentType(String incidentType) {
+    final normalized = incidentType.trim().toLowerCase();
+    if (normalized.contains('earthquake')) {
+      return _showEarthquake;
+    }
+    if (normalized.contains('flood')) {
+      return _showFlood;
+    }
+    if (normalized.contains('fire')) {
+      return _showFire;
+    }
+    if (normalized.contains('vehicular') ||
+        normalized.contains('road accident') ||
+        normalized.contains('car crash') ||
+        normalized.contains('vehicle')) {
+      return _showVehicular;
+    }
+    return _showOthers;
   }
 
   DateTime? _parseResolvedAt(Map<String, dynamic> data) {
@@ -940,10 +972,10 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     return GestureDetector(
       onTap: _toggleWeatherCard,
       child: Container(
-        width: 56,
-        height: 56,
+        width: 40,
+        height: 40,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -969,6 +1001,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         child: Icon(
           _weatherIcon(_weatherData?.state ?? WeatherState.cloudy),
           color: Colors.white,
+          size: 20,
         ),
       ),
     );
@@ -1623,14 +1656,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                   ),
                 ),
                 const SizedBox(height: 12),
-                FloatingActionButton(
+                FloatingActionButton.small(
                   backgroundColor: const Color(0xFFAC1B22),
                   onPressed: _goToCurrentLocation,
                   child: const Icon(Icons.my_location, color: Colors.white),
                 ),
-                const SizedBox(height: 16),
-                if (_isTracking)
-                  FloatingActionButton(
+                if (_isTracking) ...[
+                  const SizedBox(height: 16),
+                  FloatingActionButton.small(
                     backgroundColor: Colors.blue,
                     onPressed: () {
                       // Simulate emergency stop
@@ -1644,6 +1677,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                     },
                     child: const Icon(Icons.emergency, color: Colors.white),
                   ),
+                ],
               ],
             ),
           ),
@@ -1652,7 +1686,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
 
           // Zoom controls
           Positioned(
-            bottom: 200,
+            bottom: 24,
             right: 16,
             child: Column(
               children: [
@@ -1758,17 +1792,17 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   void _showFilterDialog() {
-    bool showEarthquake = true;
-    bool showFlood = true;
-    bool showFire = true;
-    bool showVehicular = true;
-    bool showOthers = true;
+    bool showEarthquake = _showEarthquake;
+    bool showFlood = _showFlood;
+    bool showFire = _showFire;
+    bool showVehicular = _showVehicular;
+    bool showOthers = _showOthers;
 
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
-          builder: (context, setState) {
+          builder: (context, setDialogState) {
             Widget buildFilterRow({
               required String label,
               required String assetPath,
@@ -1863,7 +1897,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                       assetPath: 'assets/icons/FINAL-EARTHQUAKE-ICON.png',
                       value: showEarthquake,
                       onChanged: (value) {
-                        setState(() => showEarthquake = value ?? false);
+                        setDialogState(
+                          () => showEarthquake = value ?? false,
+                        );
                       },
                     ),
                     buildFilterRow(
@@ -1871,7 +1907,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                       assetPath: 'assets/icons/FINAL-FLOOD-ICON.png',
                       value: showFlood,
                       onChanged: (value) {
-                        setState(() => showFlood = value ?? false);
+                        setDialogState(() => showFlood = value ?? false);
                       },
                     ),
                     buildFilterRow(
@@ -1879,7 +1915,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                       assetPath: 'assets/icons/FINAL-FIRE-ICON.png',
                       value: showFire,
                       onChanged: (value) {
-                        setState(() => showFire = value ?? false);
+                        setDialogState(() => showFire = value ?? false);
                       },
                     ),
                     buildFilterRow(
@@ -1887,7 +1923,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                       assetPath: 'assets/icons/FINAL-CRASH-ICON.png',
                       value: showVehicular,
                       onChanged: (value) {
-                        setState(() => showVehicular = value ?? false);
+                        setDialogState(() => showVehicular = value ?? false);
                       },
                     ),
                     buildFilterRow(
@@ -1895,7 +1931,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                       assetPath: 'assets/icons/FINAL-OTHERS-ICON.png',
                       value: showOthers,
                       onChanged: (value) {
-                        setState(() => showOthers = value ?? false);
+                        setDialogState(() => showOthers = value ?? false);
                       },
                     ),
                     const SizedBox(height: 8),
@@ -1913,7 +1949,23 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                         const SizedBox(width: 12),
                         Expanded(
                           child: ElevatedButton(
-                            onPressed: () => Navigator.pop(context),
+                            onPressed: () {
+                              Navigator.pop(context);
+                              setState(() {
+                                _showEarthquake = showEarthquake;
+                                _showFlood = showFlood;
+                                _showFire = showFire;
+                                _showVehicular = showVehicular;
+                                _showOthers = showOthers;
+                              });
+
+                              final snapshot = _latestReportSnapshot;
+                              if (snapshot != null) {
+                                _applyReportSnapshot(snapshot);
+                              } else {
+                                _loadReportsFromFirestore();
+                              }
+                            },
                             style: ElevatedButton.styleFrom(
                               backgroundColor: AppTheme.appBlue,
                               foregroundColor: Colors.white,

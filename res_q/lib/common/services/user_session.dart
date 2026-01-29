@@ -8,16 +8,31 @@ class ActiveReport {
 class UserSession {
   static Map<String, dynamic>? currentUserData;
   static String? currentUsername;
+  static String? _userId;
   static final List<ActiveReport> _activeReports = [];
 
   static void setUserData(Map<String, dynamic> data) {
     currentUserData = data;
     currentUsername = data['username'] as String?;
+    // Try to get userId from various possible fields
+    _userId = data['id'] as String? ??
+              data['uid'] as String? ??
+              data['userId'] as String? ??
+              currentUsername;
+  }
+
+  static void setUserId(String? userId) {
+    _userId = userId;
+  }
+
+  static String? getUserId() {
+    return _userId ?? currentUsername;
   }
 
   static void clear() {
     currentUserData = null;
     currentUsername = null;
+    _userId = null;
     _activeReports.clear();
   }
 
