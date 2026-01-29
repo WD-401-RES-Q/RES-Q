@@ -39,7 +39,7 @@ class _BottomNavBarState extends State<BottomNavBar> {
     final configs = widget.itemConfigs ?? _defaultItems;
 
     return Container(
-      height: 68,
+      padding: const EdgeInsets.only(top: 6),
       decoration: const BoxDecoration(
         color: AppColors.appBlue,
         borderRadius: BorderRadius.only(
@@ -49,50 +49,53 @@ class _BottomNavBarState extends State<BottomNavBar> {
       ),
       child: SafeArea(
         top: false,
-        child: BottomNavigationBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          type: BottomNavigationBarType.fixed,
-          selectedItemColor: AppColors.appYellow,
-          unselectedItemColor: Colors.white,
-          selectedFontSize: 9,
-          unselectedFontSize: 9,
-          selectedLabelStyle: const TextStyle(
-            fontFamily: 'Roboto',
-            fontWeight: FontWeight.w900,
-            shadows: [
-              Shadow(
-                color: Color(0x66000000),
-                offset: Offset(0, 1),
-                blurRadius: 2,
-              ),
-            ],
+        bottom: false,
+        child: ClipRect(
+          child: BottomNavigationBar(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            type: BottomNavigationBarType.fixed,
+            selectedItemColor: AppColors.appYellow,
+            unselectedItemColor: Colors.white,
+            selectedFontSize: 8,
+            unselectedFontSize: 8,
+            selectedLabelStyle: const TextStyle(
+              fontFamily: 'Roboto',
+              fontWeight: FontWeight.w900,
+              shadows: [
+                Shadow(
+                  color: Color(0x66000000),
+                  offset: Offset(0, 1),
+                  blurRadius: 2,
+                ),
+              ],
+            ),
+            unselectedLabelStyle: const TextStyle(
+              fontFamily: 'Roboto',
+              fontWeight: FontWeight.w900,
+              shadows: [
+                Shadow(
+                  color: Color(0x66000000),
+                  offset: Offset(0, 1),
+                  blurRadius: 2,
+                ),
+              ],
+            ),
+            currentIndex: widget.currentIndex,
+            onTap: widget.onTap,
+            items: List.generate(configs.length, (index) {
+              final config = configs[index];
+              final isActive = widget.currentIndex == index;
+              return BottomNavigationBarItem(
+                icon: Image.asset(
+                  isActive ? config.activeIconPath : config.inactiveIconPath,
+                  width: config.iconWidth,
+                  height: config.iconHeight,
+                ),
+                label: config.label,
+              );
+            }),
           ),
-          unselectedLabelStyle: const TextStyle(
-            fontFamily: 'Roboto',
-            fontWeight: FontWeight.w900,
-            shadows: [
-              Shadow(
-                color: Color(0x66000000),
-                offset: Offset(0, 1),
-                blurRadius: 2,
-              ),
-            ],
-          ),
-          currentIndex: widget.currentIndex,
-          onTap: widget.onTap,
-          items: List.generate(configs.length, (index) {
-            final config = configs[index];
-            final isActive = widget.currentIndex == index;
-            return BottomNavigationBarItem(
-              icon: Image.asset(
-                isActive ? config.activeIconPath : config.inactiveIconPath,
-                width: config.iconWidth,
-                height: config.iconHeight,
-              ),
-              label: config.label,
-            );
-          }),
         ),
       ),
     );
