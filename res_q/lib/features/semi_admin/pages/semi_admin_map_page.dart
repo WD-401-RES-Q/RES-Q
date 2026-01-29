@@ -62,6 +62,13 @@ class _AdminMapPageState extends State<AdminMapPage>
   static const Duration _resolvedRetention = Duration(hours: 1);
   final Map<String, Timer> _resolvedRemovalTimers = {};
   List<Map<String, dynamic>> _resolvedReports = [];
+  QuerySnapshot<Map<String, dynamic>>? _latestReportSnapshot;
+
+  bool _showEarthquake = true;
+  bool _showFlood = true;
+  bool _showFire = true;
+  bool _showVehicular = true;
+  bool _showOthers = true;
 
   // Route related variables
   LatLng? _userLocation;
@@ -161,71 +168,98 @@ class _AdminMapPageState extends State<AdminMapPage>
 
   Future<void> _loadReportsFromFirestore() async {
     try {
-      _incidentMarkers.clear();
-      final resolvedReports = <Map<String, dynamic>>[];
       final snapshot = await FirebaseFirestore.instance
           .collection('reports')
           .where('location', isNotEqualTo: null)
           .get();
-
-      for (final doc in snapshot.docs) {
-        final data = doc.data();
-        final location = data['location'] as GeoPoint?;
-        if (location == null) continue;
-
-        final reportId = doc.id;
-        final status = (data['status'] as String? ?? '').toLowerCase();
-        final resolvedAt = _parseResolvedAt(data);
-        final flaggedAt = _parseFlaggedAt(data) ?? _parseReportedAt(data);
-        final isResolved =
-            status == 'resolved' || status == 'incident resolved';
-        final isFlagged = status == 'flagged' || status == 'unverified';
-        final isInactive = isResolved || isFlagged;
-        if (isInactive) {
-          final inactiveAt = isResolved ? resolvedAt : flaggedAt;
-          final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
-          if (!shouldKeep) {
-            continue;
-          }
-          if (isResolved) {
-            resolvedReports.add({'id': reportId, 'data': data});
-          }
-        } else {
-          _cancelResolvedRemoval(reportId);
-        }
-
-        final point = LatLng(location.latitude, location.longitude);
-        final incidentType = data['incidentType'] as String? ?? 'Unknown';
-
-        final markerSize = isInactive ? 56.0 : 72.0;
-        _incidentMarkers.add(
-          Marker(
-            key: ValueKey('incident-$reportId'),
-            point: point,
-            width: markerSize,
-            height: markerSize,
-            child: _buildIncidentMarker(
-              assetPath: _getMarkerAssetForIncidentType(incidentType),
-              data: data,
-              reportId: reportId,
-              position: point,
-              interactive: !isInactive,
-              size: markerSize,
-              opacity: isInactive ? 0.45 : 1,
-            ),
-          ),
-        );
-      }
-
-      if (mounted) {
-        setState(() {
-          _resolvedReports = resolvedReports;
-        });
-      }
-      print('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+      _applyReportSnapshot(snapshot);
     } catch (e) {
       print('❌ Failed to load reports: $e');
     }
+  }
+
+  void _applyReportSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    _latestReportSnapshot = snapshot;
+    _incidentMarkers.clear();
+    final resolvedReports = <Map<String, dynamic>>[];
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final location = data['location'] as GeoPoint?;
+      if (location == null) continue;
+
+      final reportId = doc.id;
+      final status = (data['status'] as String? ?? '').toLowerCase();
+      final incidentType = data['incidentType'] as String? ?? 'Unknown';
+      final shouldShowType = _shouldShowIncidentType(incidentType);
+      final resolvedAt = _parseResolvedAt(data);
+      final flaggedAt = _parseFlaggedAt(data) ?? _parseReportedAt(data);
+      final isResolved = status == 'resolved' || status == 'incident resolved';
+      final isFlagged = status == 'flagged' || status == 'unverified';
+      final isInactive = isResolved || isFlagged;
+      if (isInactive) {
+        final inactiveAt = isResolved ? resolvedAt : flaggedAt;
+        final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
+        if (!shouldKeep) {
+          continue;
+        }
+        if (isResolved && shouldShowType) {
+          resolvedReports.add({'id': reportId, 'data': data});
+        }
+      } else {
+        _cancelResolvedRemoval(reportId);
+      }
+
+      if (!shouldShowType) {
+        continue;
+      }
+
+      final point = LatLng(location.latitude, location.longitude);
+      final markerSize = isInactive ? 56.0 : 72.0;
+      _incidentMarkers.add(
+        Marker(
+          key: ValueKey('incident-$reportId'),
+          point: point,
+          width: markerSize,
+          height: markerSize,
+          child: _buildIncidentMarker(
+            assetPath: _getMarkerAssetForIncidentType(incidentType),
+            data: data,
+            reportId: reportId,
+            position: point,
+            interactive: !isInactive,
+            size: markerSize,
+            opacity: isInactive ? 0.45 : 1,
+          ),
+        ),
+      );
+    }
+
+    if (mounted) {
+      setState(() {
+        _resolvedReports = resolvedReports;
+      });
+    }
+    print('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+  }
+
+  bool _shouldShowIncidentType(String incidentType) {
+    final normalized = incidentType.trim().toLowerCase();
+    if (normalized.contains('earthquake')) {
+      return _showEarthquake;
+    }
+    if (normalized.contains('flood')) {
+      return _showFlood;
+    }
+    if (normalized.contains('fire')) {
+      return _showFire;
+    }
+    if (normalized.contains('vehicular') ||
+        normalized.contains('road accident') ||
+        normalized.contains('car crash') ||
+        normalized.contains('vehicle')) {
+      return _showVehicular;
+    }
+    return _showOthers;
   }
 
   DateTime? _parseResolvedAt(Map<String, dynamic> data) {
@@ -509,10 +543,10 @@ class _AdminMapPageState extends State<AdminMapPage>
     return GestureDetector(
       onTap: _toggleWeatherCard,
       child: Container(
-        width: 56,
-        height: 56,
+        width: 40,
+        height: 40,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -538,6 +572,7 @@ class _AdminMapPageState extends State<AdminMapPage>
         child: Icon(
           _weatherIcon(_weatherData?.state ?? WeatherState.cloudy),
           color: Colors.white,
+          size: 20,
         ),
       ),
     );
@@ -1950,8 +1985,8 @@ class _AdminMapPageState extends State<AdminMapPage>
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Container(
-          width: 46,
-          height: 46,
+          width: 40,
+          height: 40,
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(isActive ? 0.28 : 0.18),
             borderRadius: BorderRadius.circular(14),
@@ -1964,7 +1999,7 @@ class _AdminMapPageState extends State<AdminMapPage>
               ),
             ],
           ),
-          child: Icon(icon, color: Colors.white, size: 28),
+          child: Icon(icon, color: Colors.white, size: 24),
         ),
       ),
     );
@@ -2007,49 +2042,197 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   void _showFilterDialog() {
+    bool showEarthquake = _showEarthquake;
+    bool showFlood = _showFlood;
+    bool showFire = _showFire;
+    bool showVehicular = _showVehicular;
+    bool showOthers = _showOthers;
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Filter Incidents'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Select incident types to display:'),
-            const SizedBox(height: 16),
-            CheckboxListTile(
-              title: const Text('Fire Incidents'),
-              value: true,
-              onChanged: (value) {},
-            ),
-            CheckboxListTile(
-              title: const Text('Medical Emergencies'),
-              value: true,
-              onChanged: (value) {},
-            ),
-            CheckboxListTile(
-              title: const Text('Road Obstructions'),
-              value: true,
-              onChanged: (value) {},
-            ),
-            CheckboxListTile(
-              title: const Text('Flood Warnings'),
-              value: true,
-              onChanged: (value) {},
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Apply Filters'),
-          ),
-        ],
-      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Widget buildFilterRow({
+              required String label,
+              required String assetPath,
+              required bool value,
+              required ValueChanged<bool?> onChanged,
+            }) {
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppTheme.appBlue.withOpacity(0.15),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.06),
+                      blurRadius: 6,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Image.asset(
+                      assetPath,
+                      width: 34,
+                      height: 34,
+                      fit: BoxFit.contain,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: AppText.body,
+                      ),
+                    ),
+                    Checkbox(
+                      value: value,
+                      onChanged: onChanged,
+                      activeColor: AppTheme.appBlue,
+                      checkColor: Colors.white,
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 18,
+                vertical: 24,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              backgroundColor: AppTheme.appOffWhite,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: AppTheme.appBlue,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.tune,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text('Filter Incidents', style: AppText.subheading),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Choose which incident types to display.',
+                      style: AppText.caption,
+                    ),
+                    const SizedBox(height: 12),
+                    buildFilterRow(
+                      label: 'Earthquake',
+                      assetPath: 'assets/icons/FINAL-EARTHQUAKE-ICON.png',
+                      value: showEarthquake,
+                      onChanged: (value) {
+                        setDialogState(() => showEarthquake = value ?? false);
+                      },
+                    ),
+                    buildFilterRow(
+                      label: 'Flood',
+                      assetPath: 'assets/icons/FINAL-FLOOD-ICON.png',
+                      value: showFlood,
+                      onChanged: (value) {
+                        setDialogState(() => showFlood = value ?? false);
+                      },
+                    ),
+                    buildFilterRow(
+                      label: 'Fire',
+                      assetPath: 'assets/icons/FINAL-FIRE-ICON.png',
+                      value: showFire,
+                      onChanged: (value) {
+                        setDialogState(() => showFire = value ?? false);
+                      },
+                    ),
+                    buildFilterRow(
+                      label: 'Vehicular',
+                      assetPath: 'assets/icons/FINAL-CRASH-ICON.png',
+                      value: showVehicular,
+                      onChanged: (value) {
+                        setDialogState(() => showVehicular = value ?? false);
+                      },
+                    ),
+                    buildFilterRow(
+                      label: 'Others',
+                      assetPath: 'assets/icons/FINAL-OTHERS-ICON.png',
+                      value: showOthers,
+                      onChanged: (value) {
+                        setDialogState(() => showOthers = value ?? false);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppTheme.appBlue,
+                            ),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              setState(() {
+                                _showEarthquake = showEarthquake;
+                                _showFlood = showFlood;
+                                _showFire = showFire;
+                                _showVehicular = showVehicular;
+                                _showOthers = showOthers;
+                              });
+
+                              final snapshot = _latestReportSnapshot;
+                              if (snapshot != null) {
+                                _applyReportSnapshot(snapshot);
+                              } else {
+                                _loadReportsFromFirestore();
+                              }
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.appBlue,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text('Apply'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -2431,7 +2614,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                   ),
                 ),
                 const SizedBox(height: 12),
-                FloatingActionButton(
+                FloatingActionButton.small(
                   backgroundColor: Colors.white,
                   foregroundColor: const Color(0xFFAC1B22),
                   elevation: 4,
