@@ -3,12 +3,12 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FirestoreService } from '../../../core/services/firestore.service';
 import { FirebaseStorageService } from '../../../core/services/firebase-storage.service';
+import { EmailService } from '../../../core/services/email.service';
 import { Subscription, Observable } from 'rxjs';
 
 interface UnverifiedAccount {
   id: string;
   fullName: string;
-  username: string;
   email: string;
   address: string;
   dateOfBirth: string;
@@ -51,7 +51,8 @@ export class UnverifiedAccountsComponent implements OnInit, OnDestroy {
 
   constructor(
     private firestoreService: FirestoreService,
-    private firebaseStorageService: FirebaseStorageService
+    private firebaseStorageService: FirebaseStorageService,
+    private emailService: EmailService
   ) {
     console.log('UnverifiedAccountsComponent constructor called');
     // Expose the observables directly for the template
@@ -111,11 +112,23 @@ export class UnverifiedAccountsComponent implements OnInit, OnDestroy {
     if (!this.selectedAccount) return;
 
     const accountName = this.selectedAccount.fullName;
-    
+    const accountEmail = this.selectedAccount.email;
+
     try {
       await this.firestoreService.approvePendingUser(this.selectedAccount, this.adminUsername);
+
+      // Send approval notification email
+      if (accountEmail) {
+        const emailSent = await this.emailService.sendApprovalEmail(accountEmail, accountName);
+        if (emailSent) {
+          console.log('Approval email sent successfully to:', accountEmail);
+        } else {
+          console.warn('Failed to send approval email, but account was approved');
+        }
+      }
+
       this.closeConfirmModal();
-      this.showModalMessage('Success', `${accountName} has been approved successfully!`, 'success');
+      this.showModalMessage('Success', `${accountName} has been approved successfully! ${accountEmail ? 'An email notification has been sent.' : ''}`, 'success');
     } catch (error: any) {
       this.closeConfirmModal();
       this.showModalMessage('Approval Failed', `Error: ${error.message || 'Unknown error occurred'}`, 'error');
@@ -128,11 +141,23 @@ export class UnverifiedAccountsComponent implements OnInit, OnDestroy {
     }
 
     const accountName = this.selectedAccount.fullName;
-    
+    const accountEmail = this.selectedAccount.email;
+
     try {
       await this.firestoreService.rejectPendingUser(this.selectedAccount, this.adminUsername, this.rejectionReason);
+
+      // Send rejection notification email
+      if (accountEmail) {
+        const emailSent = await this.emailService.sendRejectionEmail(accountEmail, accountName, this.rejectionReason);
+        if (emailSent) {
+          console.log('Rejection email sent successfully to:', accountEmail);
+        } else {
+          console.warn('Failed to send rejection email, but account was rejected');
+        }
+      }
+
       this.closeConfirmModal();
-      this.showModalMessage('Rejected', `${accountName} has been rejected.`, 'success');
+      this.showModalMessage('Rejected', `${accountName} has been rejected. ${accountEmail ? 'An email notification has been sent.' : ''}`, 'success');
     } catch (error: any) {
       this.closeConfirmModal();
       this.showModalMessage('Rejection Failed', `Error: ${error.message || 'Unknown error occurred'}`, 'error');
@@ -153,7 +178,7 @@ export class UnverifiedAccountsComponent implements OnInit, OnDestroy {
   // Get the ID photo URL from storage path
   getIdPhotoUrl(account: UnverifiedAccount): string | null {
     // Check multiple possible field names for ID photo
-    const path = (account.idPhotoPath || (account as any).idPhoto || (account as any).validIdUrl || '').trim();
+    const path = (account.idPhotoPath || (account as any).idPhotoFront || (account as any).idPhoto || (account as any).validIdUrl || '').trim();
     if (!path) {
       return null;
     }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class PINCreationPage extends StatefulWidget {
   const PINCreationPage({super.key});
@@ -62,23 +63,9 @@ class _PINCreationPageState extends State<PINCreationPage> {
   }
 
   Widget _logo() {
-    return RichText(
-      text: TextSpan(
-        style: const TextStyle(
-          fontSize: 26,
-          fontWeight: FontWeight.w700,
-        ),
-        children: const [
-          TextSpan(
-            text: 'RES',
-            style: TextStyle(color: appBlue),
-          ),
-          TextSpan(
-            text: 'Q',
-            style: TextStyle(color: appRed),
-          ),
-        ],
-      ),
+    return SvgPicture.asset(
+      'assets/icons/RES-Q_LOGO.svg',
+      height: 48,
     );
   }
 
@@ -599,6 +586,16 @@ class _PINCreationPageState extends State<PINCreationPage> {
                                 ),
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Please remember your PIN. You will need it to login.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: appBlack.withOpacity(0.6),
+                        fontFamily: 'RobotoCondensed',
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ],
                 ),

@@ -16,7 +16,6 @@
       <thead>
         <tr>
           <th>Name</th>
-          <th>Username</th>
           <th>Email</th>
           <th>Address</th>
           <th>Birthdate</th>
@@ -29,7 +28,6 @@
       <tbody>
         <tr *ngFor="let acc of accounts">
           <td>{{ acc.fullName }}</td>
-          <td>@{{ acc.username }}</td>
           <td>{{ acc.email }}</td>
           <td>{{ acc.address }}</td>
           <td>{{ acc.dateOfBirth }}</td>

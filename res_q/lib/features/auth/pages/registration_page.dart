@@ -21,21 +21,17 @@ class _RegistrationPageState extends State<RegistrationPage> {
   final _formKey = GlobalKey<FormState>();
   final _firstNameCtl = TextEditingController();
   final _lastNameCtl = TextEditingController();
-  final _usernameCtl = TextEditingController();
-  final _passwordCtl = TextEditingController();
   final _emailCtl = TextEditingController();
   final _contactCtl = TextEditingController();
   final _addressCtl = TextEditingController();
   final _dobDayCtl = TextEditingController();
   final _dobMonthCtl = TextEditingController();
   final _dobYearCtl = TextEditingController();
-  final _pinCtl = TextEditingController();
 
   bool _loading = false;
   bool _agree = false;
   bool _dobSubmitAttempted = false;
   String? _frontIdUrl;
-  bool _obscurePassword = true;
   String? _termsError;
   String? _idPhotoError;
 
@@ -64,15 +60,12 @@ class _RegistrationPageState extends State<RegistrationPage> {
   void dispose() {
     _firstNameCtl.dispose();
     _lastNameCtl.dispose();
-    _usernameCtl.dispose();
-    _passwordCtl.dispose();
     _emailCtl.dispose();
     _contactCtl.dispose();
     _addressCtl.dispose();
     _dobDayCtl.dispose();
     _dobMonthCtl.dispose();
     _dobYearCtl.dispose();
-    _pinCtl.dispose();
     super.dispose();
   }
 
@@ -133,7 +126,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
       ' ',
     );
     final normalizedFullName = '$normalizedFirstName $normalizedLastName';
-    final normalizedUsername = _usernameCtl.text.trim();
     final normalizedEmail = _emailCtl.text.trim();
     final normalizedAddress = _addressCtl.text.trim();
     final dobMonth = _dobMonthCtl.text.trim();
@@ -187,10 +179,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
     final Map<String, dynamic> userData = {
       'fullName': normalizedFullName,
-      'username': normalizedUsername,
       'email': normalizedEmail.isEmpty ? null : normalizedEmail,
-      'password': _passwordCtl.text.trim(),
-      'pin': _pinCtl.text.trim(),
       'contactNumber': phone,
       'address': normalizedAddress,
       'dateOfBirth': '$dobMonth/$dobDay/$dobYear',
@@ -281,11 +270,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
     return true;
   }
 
-  bool _isValidUsername(String username) {
-    if (username.length < 3 || username.length > 20) return false;
-    return RegExp(r'^[A-Za-z0-9_]+$').hasMatch(username);
-  }
-
   bool _isValidEmail(String email) {
     return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
   }
@@ -322,27 +306,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
     final normalized = (value ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
     if (normalized.isEmpty) return 'Last name is required';
     if (!_isValidNamePart(normalized)) return 'Enter a valid last name';
-    return null;
-  }
-
-  String? _validateUsername(String? value) {
-    final username = (value ?? '').trim();
-    if (username.isEmpty) return 'Username is required';
-    if (!_isValidUsername(username)) {
-      return '3-20 chars, letters/numbers/_ only';
-    }
-    return null;
-  }
-
-  String? _validatePassword(String? value) {
-    final password = value ?? '';
-    if (password.isEmpty) return 'Password is required';
-    final hasUpper = RegExp(r'[A-Z]').hasMatch(password);
-    final hasNumber = RegExp(r'[0-9]').hasMatch(password);
-    final hasSpecial = RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(password);
-    if (password.length < 8 || !hasUpper || !hasNumber || !hasSpecial) {
-      return '8+ chars, uppercase, number, special char (!@#\$%^&*)';
-    }
     return null;
   }
 
@@ -398,41 +361,46 @@ class _RegistrationPageState extends State<RegistrationPage> {
     return Scaffold(
       backgroundColor: AppTheme.appOffWhite,
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 360),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppDimensions.paddingXLarge,
-                  vertical: AppDimensions.paddingLarge,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // BACK BUTTON AND LOGO ROW
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const ResqBackButton(),
-                        const ResqLogo(fontSize: 48),
-                        const SizedBox(width: 44), // Balance the row
-                      ],
-                    ),
-                    const SizedBox(height: AppDimensions.paddingSmall),
+        child: Column(
+          children: [
+            // Fixed header with back button and logo
+            Padding(
+              padding: const EdgeInsets.only(
+                top: AppDimensions.paddingMedium,
+                left: AppDimensions.paddingXLarge,
+                right: AppDimensions.paddingXLarge,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const ResqBackButton(),
+                  const ResqLogo(fontSize: 48),
+                  const SizedBox(width: 44), // Balance the row
+                ],
+              ),
+            ),
+            const SizedBox(height: AppDimensions.paddingSmall),
+            Text(
+              'REGISTER',
+              style: AppTextStyles.authPageTitle,
+            ),
+            const SizedBox(height: AppDimensions.paddingMedium),
 
-                    Center(
-                      child: Text(
-                        'REGISTER',
-                        style: AppTextStyles.authPageTitle,
+            // Scrollable form content
+            Expanded(
+              child: Center(
+                child: SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppDimensions.paddingXLarge,
+                        vertical: AppDimensions.paddingMedium,
                       ),
-                    ),
-                    const SizedBox(height: AppDimensions.paddingXLarge),
-
-                    Form(
-                      key: _formKey,
-                      child: Column(
-                        children: [
+                      child: Form(
+                        key: _formKey,
+                        child: Column(
+                          children: [
                           // FIRST NAME AND LAST NAME INLINE
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -469,41 +437,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                 ),
                               ),
                             ],
-                          ),
-                          const SizedBox(height: AppDimensions.paddingMedium),
-
-                          AuthTextField(
-                            controller: _usernameCtl,
-                            label: 'USERNAME',
-                            hintText: 'e.g. juan_delacruz',
-                            validator: _validateUsername,
-                            autovalidateMode:
-                                AutovalidateMode.onUserInteraction,
-                          ),
-                          const SizedBox(height: AppDimensions.paddingMedium),
-
-                          AuthTextField(
-                            controller: _passwordCtl,
-                            label: 'PASSWORD',
-                            hintText: 'e.g. Resq@123',
-                            obscureText: _obscurePassword,
-                            validator: _validatePassword,
-                            autovalidateMode:
-                                AutovalidateMode.onUserInteraction,
-                            suffixIcon: IconButton(
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility_outlined
-                                    : Icons.visibility_off_outlined,
-                                size: 20,
-                                color: AppTheme.appBlack,
-                              ),
-                              onPressed: () {
-                                setState(() {
-                                  _obscurePassword = !_obscurePassword;
-                                });
-                              },
-                            ),
                           ),
                           const SizedBox(height: AppDimensions.paddingMedium),
 
@@ -553,7 +486,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                           IdVerificationWidget(
                             onUploadComplete: _onIdUploadComplete,
                             initialFrontUrl: _frontIdUrl,
-                            usernameForPath: _usernameCtl.text,
+                            usernameForPath: _contactCtl.text.replaceAll(RegExp(r'\D'), ''),
                           ),
                           if (_idPhotoError != null) ...[
                             const SizedBox(height: AppDimensions.paddingSmall),
@@ -575,26 +508,27 @@ class _RegistrationPageState extends State<RegistrationPage> {
                           ],
                           const SizedBox(height: AppDimensions.paddingLarge),
 
-                          ResqPillButton(
-                            label: 'CREATE ACCOUNT',
-                            loading: _loading,
-                            onPressed:
-                                (_loading || _frontIdUrl == null)
-                                ? null
-                                : _submit,
-                            height: 48,
-                            radius: 30,
-                            backgroundColor: AppTheme.appRed,
-                            textStyle: AppTextStyles.authButton,
-                          ),
-                        ],
+                            ResqPillButton(
+                              label: 'CREATE ACCOUNT',
+                              loading: _loading,
+                              onPressed:
+                                  (_loading || _frontIdUrl == null)
+                                  ? null
+                                  : _submit,
+                              height: 48,
+                              radius: 30,
+                              backgroundColor: AppTheme.appRed,
+                              textStyle: AppTextStyles.authButton,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );

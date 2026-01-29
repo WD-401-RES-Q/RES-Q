@@ -3,10 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../home/pages/home_page.dart';
 import '../../semi_admin/pages/semi_admin_main_page.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/services/registration_prefs.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 class LoginPage extends StatefulWidget {
@@ -41,6 +43,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   // Biometrics
   final LocalAuthentication _localAuth = LocalAuthentication();
   bool _canUseBiometrics = false;
+  bool _biometricsEnabled = false;
+  String? _biometricsPhone;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
@@ -87,6 +91,13 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
     if (!_canUseBiometrics) {
       _showError('Biometrics not available on this device. Please use PIN.');
+      return;
+    }
+
+    // Check if biometrics is enabled for this phone number
+    final phone = '+63$phoneInput';
+    if (!_biometricsEnabled || _biometricsPhone != phone) {
+      _showError('Biometric login not enabled for this account. Please use PIN or enable biometrics in settings.');
       return;
     }
 
@@ -200,8 +211,29 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
   Future<void> _initialize() async {
     await _seedSemiAdminsIfEmpty();
+    await _loadSavedData();
     if (mounted) {
       setState(() => _initializing = false);
+    }
+  }
+
+  Future<void> _loadSavedData() async {
+    try {
+      // Load saved phone number for convenience
+      final savedPhone = await RegistrationPrefs.getPhoneNumber();
+      if (savedPhone != null && savedPhone.isNotEmpty && mounted) {
+        setState(() {
+          _phoneCtl.text = _formatPhoneNumber(savedPhone);
+        });
+      }
+
+      // Load biometrics preferences
+      final prefs = await SharedPreferences.getInstance();
+      _biometricsEnabled = prefs.getBool('biometrics_enabled') ?? false;
+      _biometricsPhone = prefs.getString('biometrics_phone');
+      debugPrint('📱 Biometrics enabled: $_biometricsEnabled, phone: $_biometricsPhone');
+    } catch (e) {
+      debugPrint('Error loading saved data: $e');
     }
   }
 
@@ -819,46 +851,25 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
                             Align(
                               alignment: Alignment.center,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pushNamed(
-                                      context,
-                                      '/approved-pin-creation',
-                                    ),
-                                    style: TextButton.styleFrom(
-                                      padding: EdgeInsets.zero,
-                                      minimumSize: const Size(0, 0),
-                                    ),
-                                    child: RichText(
-                                      text: TextSpan(
-                                        children: [
-                                          TextSpan(
-                                            text: 'Approved Account? ',
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w400,
-                                              color: appBlack,
-                                              fontFamily: 'RobotoCondensed',
-                                            ),
-                                          ),
-                                          TextSpan(
-                                            text: 'Create PIN Here!',
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w700,
-                                              color: appBlue,
-                                              fontFamily: 'RobotoCondensed',
-                                              decoration:
-                                                  TextDecoration.underline,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
+                              child: TextButton(
+                                onPressed: () => Navigator.pushNamed(
+                                  context,
+                                  '/approved-pin-creation',
+                                ),
+                                style: TextButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: const Size(0, 0),
+                                ),
+                                child: Text(
+                                  'Forgot PIN?',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: appBlue,
+                                    fontFamily: 'RobotoCondensed',
+                                    decoration: TextDecoration.underline,
                                   ),
-                                ],
+                                ),
                               ),
                             ),
 

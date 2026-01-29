@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/widgets/app_buttons.dart';
 
 class ApprovedPinCreationPage extends StatefulWidget {
@@ -27,6 +29,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
   Map<String, dynamic>? _userData;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final LocalAuthentication _localAuth = LocalAuthentication();
 
   @override
   void dispose() {
@@ -71,20 +74,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
       _userId = doc.id;
       _userData = doc.data();
 
-      // Check if PIN already exists
-      if (_userData!['pin'] != null &&
-          _userData!['pin'].toString().isNotEmpty) {
-        setState(() => _loading = false);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('You already have a PIN. Please use the login page.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-        return;
-      }
-
+      // Allow PIN reset - no longer blocking users who have existing PIN
       setState(() {
         _loading = false;
         _phoneVerified = true;
@@ -93,7 +83,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('✓ Phone verified! Please create your 4-digit PIN.'),
+          content: Text('✓ Phone verified! Please enter your new 4-digit PIN.'),
           backgroundColor: appGreen,
         ),
       );
@@ -103,6 +93,155 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
       );
+    }
+  }
+
+  Future<bool> _checkBiometricsAvailable() async {
+    try {
+      final canAuthenticateWithBiometrics = await _localAuth.canCheckBiometrics;
+      final canAuthenticate = canAuthenticateWithBiometrics || await _localAuth.isDeviceSupported();
+      final availableBiometrics = await _localAuth.getAvailableBiometrics();
+      return canAuthenticate && availableBiometrics.isNotEmpty;
+    } catch (e) {
+      debugPrint('Biometrics check error: $e');
+      return false;
+    }
+  }
+
+  Future<bool?> _showBiometricsOptInDialog() async {
+    final canUseBiometrics = await _checkBiometricsAvailable();
+
+    if (!canUseBiometrics || !mounted) {
+      return null; // Skip if biometrics not available
+    }
+
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: appBlue.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.fingerprint,
+                  size: 48,
+                  color: appBlue,
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'Enable Biometric Login?',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: appBlack,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Would you like to use fingerprint or face recognition for faster login?',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: appBlack.withOpacity(0.7),
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'You can change this later in settings.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                  fontStyle: FontStyle.italic,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: appBlack,
+                        side: BorderSide(color: appBlack.withOpacity(0.3)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: const Text(
+                        'No Thanks',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w500,
+                          color: appBlack,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: appBlue,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.fingerprint,
+                            size: 18,
+                            color: Colors.white,
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            'Enable',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveBiometricsPreference(bool enabled, String? phoneNumber) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('biometrics_enabled', enabled);
+      if (phoneNumber != null) {
+        await prefs.setString('biometrics_phone', phoneNumber);
+      }
+      debugPrint('✅ Biometrics preference saved: $enabled for phone: $phoneNumber');
+    } catch (e) {
+      debugPrint('Error saving biometrics preference: $e');
     }
   }
 
@@ -139,6 +278,16 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
       });
 
       setState(() => _loading = false);
+
+      if (!mounted) return;
+
+      // Show biometrics opt-in dialog
+      final phoneNumber = _userData?['contactNumber'] as String?;
+      final enableBiometrics = await _showBiometricsOptInDialog();
+
+      if (enableBiometrics != null) {
+        await _saveBiometricsPreference(enableBiometrics, phoneNumber);
+      }
 
       if (!mounted) return;
 
@@ -206,7 +355,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Text(
-                        _phoneVerified ? 'CREATE YOUR PIN' : 'VERIFY PHONE',
+                        _phoneVerified ? 'RESET PIN' : 'FORGOT PIN',
                         style: const TextStyle(
                           fontSize: 32,
                           fontWeight: FontWeight.w900,
@@ -217,8 +366,8 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
                       const SizedBox(height: 16),
                       Text(
                         _phoneVerified
-                            ? 'Enter a 4-digit PIN for quick login'
-                            : 'Enter your registered phone number',
+                            ? 'Enter a new 4-digit PIN'
+                            : 'Enter your registered phone number to reset your PIN',
                         style: TextStyle(
                           fontSize: 14,
                           color: appBlack.withOpacity(0.7),
@@ -283,7 +432,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
                                     ),
                                   )
                                 : const Text(
-                                    'VERIFY PHONE',
+                                    'VERIFY',
                                     style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.w600,
