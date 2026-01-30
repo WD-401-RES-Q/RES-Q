@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -19,11 +20,16 @@ class MapPage extends StatefulWidget {
   State<MapPage> createState() => _MapPageState();
 }
 
-class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
+class _MapPageState extends State<MapPage> with TickerProviderStateMixin, WidgetsBindingObserver {
   final MapController _mapController = MapController();
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
   late final AnimationController _pinBounceController;
   WeatherState _weatherState = WeatherState.none;
+
+  // Weather cache (shared across instances, 15 min TTL)
+  static _WeatherData? _cachedWeatherData;
+  static DateTime? _weatherCacheTime;
+  static const Duration _weatherCacheDuration = Duration(minutes: 15);
   bool _showWeatherCard = false;
   bool _isWeatherLoading = false;
   String? _weatherError;
@@ -68,6 +74,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
     _pinBounceController = AnimationController(
@@ -78,7 +85,20 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Pause animation when app is in background to save CPU
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _pinBounceController.stop();
+    } else if (state == AppLifecycleState.resumed) {
+      if (!_pinBounceController.isAnimating) {
+        _pinBounceController.repeat(reverse: true);
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _reportsSubscription?.cancel();
     _trackingTimer?.cancel();
     for (final timer in _resolvedRemovalTimers.values) {
@@ -232,11 +252,25 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: mediaType == 'photo'
-                          ? Image.network(
-                              mediaUrl,
+                          ? CachedNetworkImage(
+                              imageUrl: mediaUrl,
                               height: 200,
                               width: double.infinity,
                               fit: BoxFit.cover,
+                              placeholder: (context, url) => Container(
+                                height: 200,
+                                color: const Color(0xFFF3F4F6),
+                                child: const Center(
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              ),
+                              errorWidget: (context, url, error) => Container(
+                                height: 200,
+                                color: const Color(0xFFF3F4F6),
+                                child: const Center(
+                                  child: Icon(Icons.error_outline, color: Colors.grey),
+                                ),
+                              ),
                             )
                           : Container(
                               height: 200,
@@ -363,7 +397,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       // Zoom to fit route
       _zoomToRoute();
     } catch (e) {
-      print('Error calculating route: $e');
+      debugPrint('Error calculating route: $e');
       _routeInstructions = 'Failed to calculate route';
     } finally {
       setState(() {
@@ -638,11 +672,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     _reportsSubscription = FirebaseFirestore.instance
         .collection('reports')
         .where('location', isNotEqualTo: null)
+        .orderBy('location')
+        .orderBy('reportedAt', descending: true)
+        .limit(100) // Limit to 100 most recent reports for performance
         .snapshots()
         .listen((snapshot) {
       _applyReportSnapshot(snapshot);
     }, onError: (error) {
-      print('❌ Failed to subscribe to reports: $error');
+      debugPrint('❌ Failed to subscribe to reports: $error');
     });
   }
 
@@ -728,7 +765,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         _resolvedReports = resolvedReports;
       });
     }
-    print('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+    debugPrint('✅ Loaded ${snapshot.docs.length} reports from Firestore');
   }
 
   bool _shouldShowIncidentType(String incidentType) {
@@ -1007,35 +1044,78 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     );
   }
 
+  // Track weather card drag offset for swipe-to-dismiss
+  Offset? _weatherCardOffset;
+
   Widget _buildWeatherCard() {
     if (!_showWeatherCard) {
       return const SizedBox.shrink();
     }
+    final offset = _weatherCardOffset ?? Offset.zero;
     return Positioned(
       top: 76,
       left: 16,
       right: 16,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.7),
+      child: GestureDetector(
+        onPanUpdate: (details) {
+          setState(() {
+            _weatherCardOffset = (_weatherCardOffset ?? Offset.zero) + details.delta;
+          });
+        },
+        onPanEnd: (details) {
+          final currentOffset = _weatherCardOffset ?? Offset.zero;
+          // Dismiss if dragged far enough horizontally or upward
+          final horizontalThreshold = 80.0;
+          final verticalThreshold = -50.0; // Negative because up is negative Y
+
+          if (currentOffset.dx.abs() > horizontalThreshold ||
+              currentOffset.dy < verticalThreshold) {
+            setState(() {
+              _showWeatherCard = false;
+              _weatherCardOffset = Offset.zero;
+            });
+          } else {
+            // Snap back if not dismissed
+            setState(() {
+              _weatherCardOffset = Offset.zero;
+            });
+          }
+        },
+        child: AnimatedContainer(
+          duration: offset == Offset.zero
+              ? const Duration(milliseconds: 200)
+              : Duration.zero,
+          transform: Matrix4.translationValues(
+            offset.dx,
+            offset.dy.clamp(-100.0, 20.0), // Limit vertical drag
+            0,
+          ),
+          child: Opacity(
+            opacity: (1 - (offset.distance / 150)).clamp(0.3, 1.0),
+            child: ClipRRect(
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: Colors.white.withOpacity(0.35),
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.12),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.7),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.35),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.12),
+                        blurRadius: 12,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: _buildWeatherCardContent(),
                 ),
-              ],
+              ),
             ),
-            child: _buildWeatherCardContent(),
           ),
         ),
       ),
@@ -1153,6 +1233,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   Future<_WeatherData> _fetchWeatherForAngeles() async {
+    // Return cached data if still valid
+    if (_cachedWeatherData != null && _weatherCacheTime != null) {
+      final elapsed = DateTime.now().difference(_weatherCacheTime!);
+      if (elapsed < _weatherCacheDuration) {
+        return _cachedWeatherData!;
+      }
+    }
+
     const lat = 15.1450;
     const lon = 120.5887;
     final uri = Uri.parse(
@@ -1178,13 +1266,20 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     final code = (daily['weathercode'] as List<dynamic>).first as num;
     final state = _mapWeatherState(code.toInt());
     final description = _mapWeatherDescription(code.toInt());
-    return _WeatherData(
+
+    final weatherData = _WeatherData(
       temperature: temperature,
       max: max.toDouble(),
       min: min.toDouble(),
       state: state,
       description: description,
     );
+
+    // Cache the result
+    _cachedWeatherData = weatherData;
+    _weatherCacheTime = DateTime.now();
+
+    return weatherData;
   }
 
   WeatherState _mapWeatherState(int code) {
@@ -1238,10 +1333,13 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       final snapshot = await FirebaseFirestore.instance
           .collection('reports')
           .where('location', isNotEqualTo: null)
+          .orderBy('location')
+          .orderBy('reportedAt', descending: true)
+          .limit(100)
           .get();
       _applyReportSnapshot(snapshot);
     } catch (e) {
-      print('❌ Failed to load reports: $e');
+      debugPrint('❌ Failed to load reports: $e');
     }
   }
 

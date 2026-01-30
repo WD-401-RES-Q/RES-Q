@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -51,10 +52,15 @@ class _WeatherData {
 }
 
 class _ReportMapPageState extends State<ReportMapPage>
-    with AutomaticKeepAliveClientMixin, TickerProviderStateMixin {
+    with AutomaticKeepAliveClientMixin, TickerProviderStateMixin, WidgetsBindingObserver {
   final MapController _mapController = MapController();
   late final AnimationController _pinBounceController;
   WeatherState _weatherState = WeatherState.none;
+
+  // Weather cache (shared across instances, 15 min TTL)
+  static _WeatherData? _cachedWeatherData;
+  static DateTime? _weatherCacheTime;
+  static const Duration _weatherCacheDuration = Duration(minutes: 15);
   bool _showWeatherCard = false;
   bool _isWeatherLoading = false;
   String? _weatherError;
@@ -90,6 +96,7 @@ class _ReportMapPageState extends State<ReportMapPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _userLocation = _initialCenter;
     _pinBounceController = AnimationController(
       vsync: this,
@@ -122,11 +129,24 @@ class _ReportMapPageState extends State<ReportMapPage>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pinBounceController.dispose();
     _reportSubscription?.cancel();
     _commentsSubscription?.cancel();
     _routeDebounce?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Pause animation when app is in background to save CPU
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _pinBounceController.stop();
+    } else if (state == AppLifecycleState.resumed) {
+      if (!_pinBounceController.isAnimating) {
+        _pinBounceController.repeat(reverse: true);
+      }
+    }
   }
 
   Future<void> _showLocationSharingModal() async {
@@ -197,7 +217,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         // Center map on user location
         _mapController.move(userLatLng, 16.0);
 
-        print('✅ Location shared: ${position.latitude}, ${position.longitude}');
+        debugPrint('✅ Location shared: ${position.latitude}, ${position.longitude}');
 
         // Show report details card
         Future.delayed(const Duration(milliseconds: 500), () {
@@ -209,7 +229,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         });
       }
     } catch (e) {
-      print('❌ Failed to share location: $e');
+      debugPrint('❌ Failed to share location: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1312,6 +1332,14 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   Future<_WeatherData> _fetchWeatherForAngeles() async {
+    // Return cached data if still valid
+    if (_cachedWeatherData != null && _weatherCacheTime != null) {
+      final elapsed = DateTime.now().difference(_weatherCacheTime!);
+      if (elapsed < _weatherCacheDuration) {
+        return _cachedWeatherData!;
+      }
+    }
+
     const lat = 15.1450;
     const lon = 120.5887;
     final uri = Uri.parse(
@@ -1337,13 +1365,20 @@ class _ReportMapPageState extends State<ReportMapPage>
     final code = (daily['weathercode'] as List<dynamic>).first as num;
     final state = _mapWeatherState(code.toInt());
     final description = _mapWeatherDescription(code.toInt());
-    return _WeatherData(
+
+    final weatherData = _WeatherData(
       temperature: temperature,
       max: max.toDouble(),
       min: min.toDouble(),
       state: state,
       description: description,
     );
+
+    // Cache the result
+    _cachedWeatherData = weatherData;
+    _weatherCacheTime = DateTime.now();
+
+    return weatherData;
   }
 
   WeatherState _mapWeatherState(int code) {
@@ -1484,22 +1519,19 @@ class _ReportMapPageState extends State<ReportMapPage>
                       (widget.reportData['mediaUrl'] as String).isNotEmpty)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        reportData['mediaUrl'],
+                      child: CachedNetworkImage(
+                        imageUrl: reportData['mediaUrl'],
                         height: 200,
                         width: double.infinity,
                         fit: BoxFit.cover,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return Container(
-                            height: 200,
-                            color: Colors.grey[300],
-                            child: const Center(
-                              child: CircularProgressIndicator(),
-                            ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) => Container(
+                        placeholder: (context, url) => Container(
+                          height: 200,
+                          color: Colors.grey[300],
+                          child: const Center(
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                        errorWidget: (context, url, error) => Container(
                           height: 200,
                           color: Colors.grey[300],
                           child: const Center(

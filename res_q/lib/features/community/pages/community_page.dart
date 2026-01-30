@@ -723,9 +723,12 @@ class _CommunityPageState extends State<CommunityPage> {
           child: FractionallySizedBox(
             widthFactor: 0.98,
             child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
+              child: GestureDetector(
+                onTap: () => FocusScope.of(context).unfocus(),
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                   if (mediaUrl.isNotEmpty)
@@ -953,6 +956,7 @@ class _CommunityPageState extends State<CommunityPage> {
                   ),
                   ],
                 ),
+              ),
               ),
             ),
           ),

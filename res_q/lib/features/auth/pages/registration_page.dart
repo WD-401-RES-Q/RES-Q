@@ -225,6 +225,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
         },
         codeSent: (String verificationId, int? resendToken) {
           setState(() => _loading = false);
+          TextInput.finishAutofillContext(); // Trigger "Save to Google" prompt
 
           if (mounted) {
             Navigator.pushNamed(
@@ -390,18 +391,22 @@ class _RegistrationPageState extends State<RegistrationPage> {
             Expanded(
               child: Center(
                 child: SingleChildScrollView(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 360),
-                    child: Padding(
+                  child: GestureDetector(
+                    onTap: () => FocusScope.of(context).unfocus(),
+                    behavior: HitTestBehavior.opaque,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 360),
+                      child: Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: AppDimensions.paddingXLarge,
                         vertical: AppDimensions.paddingMedium,
                       ),
-                      child: Form(
-                        key: _formKey,
-                        child: Column(
-                          children: [
-                          // FIRST NAME AND LAST NAME INLINE
+                      child: AutofillGroup(
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            children: [
+                            // FIRST NAME AND LAST NAME INLINE
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -410,6 +415,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                   controller: _firstNameCtl,
                                   label: 'FIRST NAME',
                                   hintText: 'e.g. Juan',
+                                  autofillHints: const [AutofillHints.givenName],
                                   inputFormatters: [
                                     FilteringTextInputFormatter.allow(
                                       RegExp(r"[a-zA-Z .'-]"),
@@ -426,6 +432,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                   controller: _lastNameCtl,
                                   label: 'LAST NAME',
                                   hintText: 'e.g. Dela Cruz',
+                                  autofillHints: const [AutofillHints.familyName],
                                   inputFormatters: [
                                     FilteringTextInputFormatter.allow(
                                       RegExp(r"[a-zA-Z .'-]"),
@@ -445,6 +452,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                             label: 'EMAIL ADDRESS',
                             hintText: 'e.g. juan@email.com',
                             keyboardType: TextInputType.emailAddress,
+                            autofillHints: const [AutofillHints.email],
                             validator: _validateEmail,
                             autovalidateMode:
                                 AutovalidateMode.onUserInteraction,
@@ -455,6 +463,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                           PhoneInputField(
                             controller: _contactCtl,
                             validator: validatePhilippinePhone,
+                            autofillHints: const [AutofillHints.telephoneNumber],
                             autovalidateMode:
                                 AutovalidateMode.onUserInteraction,
                           ),
@@ -464,6 +473,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                             controller: _addressCtl,
                             label: 'HOME ADDRESS',
                             hintText: 'e.g. Blk 3 Lot 2, Brgy. Mabini, QC',
+                            autofillHints: const [AutofillHints.fullStreetAddress],
                             validator: _validateAddress,
                             autovalidateMode:
                                 AutovalidateMode.onUserInteraction,
@@ -520,7 +530,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
                               backgroundColor: AppTheme.appRed,
                               textStyle: AppTextStyles.authButton,
                             ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -528,6 +539,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                 ),
               ),
             ),
+          ),
           ],
         ),
       ),

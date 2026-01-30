@@ -60,6 +60,7 @@ class AuthTextField extends StatelessWidget {
   final Widget? suffixIcon;
   final String? Function(String?)? validator;
   final AutovalidateMode? autovalidateMode;
+  final Iterable<String>? autofillHints;
 
   const AuthTextField({
     super.key,
@@ -73,6 +74,7 @@ class AuthTextField extends StatelessWidget {
     this.suffixIcon,
     this.validator,
     this.autovalidateMode,
+    this.autofillHints,
   });
 
   @override
@@ -98,6 +100,7 @@ class AuthTextField extends StatelessWidget {
           inputFormatters: inputFormatters,
           validator: validator,
           autovalidateMode: autovalidateMode,
+          autofillHints: autofillHints,
           style: const TextStyle(
             fontSize: 13,
             color: AppTheme.appBlack,
@@ -507,6 +510,7 @@ class PhoneInputField extends StatelessWidget {
   final String? Function(String?)? validator;
   final AutovalidateMode? autovalidateMode;
   final String label;
+  final Iterable<String>? autofillHints;
 
   const PhoneInputField({
     super.key,
@@ -514,6 +518,7 @@ class PhoneInputField extends StatelessWidget {
     this.validator,
     this.autovalidateMode,
     this.label = 'CONTACT NUMBER',
+    this.autofillHints,
   });
 
   /// Get the full phone number with +63 prefix
@@ -580,6 +585,7 @@ class PhoneInputField extends StatelessWidget {
                         PhilippinePhoneFormatter(),
                       ],
                       autovalidateMode: AutovalidateMode.disabled,
+                      autofillHints: autofillHints,
                       onChanged: (value) => state.didChange(value),
                       style: const TextStyle(
                         fontSize: 13,

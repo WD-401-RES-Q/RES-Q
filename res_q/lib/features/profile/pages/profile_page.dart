@@ -2,9 +2,13 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../common/services/user_session.dart';
@@ -31,6 +35,24 @@ class _ProfilePageState extends State<ProfilePage>
   final ImagePicker _imagePicker = ImagePicker();
   XFile? _profilePhoto;
   Uint8List? _profilePhotoBytes;
+  String? _profilePhotoUrl; // URL from Firebase Storage
+  bool _isUploadingPhoto = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedProfilePhoto();
+  }
+
+  /// Load the saved profile photo URL from UserSession
+  void _loadSavedProfilePhoto() {
+    final savedUrl = UserSession.currentUserData?['profilePhotoUrl'] as String?;
+    if (savedUrl != null && savedUrl.isNotEmpty) {
+      setState(() {
+        _profilePhotoUrl = savedUrl;
+      });
+    }
+  }
 
   @override
   bool get wantKeepAlive => true;
@@ -296,38 +318,46 @@ class _ProfilePageState extends State<ProfilePage>
   Future<bool> _requestGalleryPermission() async {
     if (kIsWeb) return true;
 
-    // For Android 13+ use photos permission, for older use storage
-    Permission permission;
+    // For Android 13+ (API 33+), image_picker uses the system photo picker
+    // which doesn't require explicit permission. For older versions, we need storage.
     if (Platform.isAndroid) {
-      permission = Permission.photos;
-      final status = await permission.status;
-      if (status.isGranted) return true;
+      // Try photos permission first (Android 13+)
+      var status = await Permission.photos.status;
+      if (status.isGranted || status.isLimited) return true;
 
-      // Try photos first, fallback to storage for older Android
       if (status.isDenied) {
-        var result = await permission.request();
-        if (result.isGranted) return true;
-
-        // Fallback to storage permission for older Android versions
-        permission = Permission.storage;
-        result = await permission.request();
-        return result.isGranted;
+        final result = await Permission.photos.request();
+        if (result.isGranted || result.isLimited) return true;
       }
 
+      // Fallback to storage for older Android versions
+      status = await Permission.storage.status;
+      if (status.isGranted) return true;
+
+      if (status.isDenied) {
+        final result = await Permission.storage.request();
+        if (result.isGranted) return true;
+      }
+
+      // If both are permanently denied, show dialog
       if (status.isPermanentlyDenied) {
         if (mounted) {
           _showPermissionDeniedDialog('Photo Library');
         }
         return false;
       }
+
+      // On Android 13+, if permission is "limited" or we got here,
+      // image_picker might still work with the system picker
+      return true;
     } else {
-      permission = Permission.photos;
-      final status = await permission.status;
-      if (status.isGranted) return true;
+      // iOS
+      final status = await Permission.photos.status;
+      if (status.isGranted || status.isLimited) return true;
 
       if (status.isDenied) {
-        final result = await permission.request();
-        return result.isGranted;
+        final result = await Permission.photos.request();
+        return result.isGranted || result.isLimited;
       }
 
       if (status.isPermanentlyDenied) {
@@ -338,7 +368,7 @@ class _ProfilePageState extends State<ProfilePage>
       }
     }
 
-    return false;
+    return true; // Default to true to let image_picker handle it
   }
 
   void _showPermissionDeniedDialog(String permissionName) {
@@ -502,23 +532,91 @@ class _ProfilePageState extends State<ProfilePage>
         setState(() => _profilePhoto = XFile(cropped.path));
       }
 
+      // Upload to Firebase Storage and save URL to Firestore
+      await _uploadProfilePhotoToFirebase(cropped.path);
+    } catch (e) {
+      debugPrint('Failed to crop profile photo: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Profile picture updated!'),
+            content: Text('Failed to crop photo. Please try again.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Upload profile photo to Firebase Storage and save URL to Firestore
+  Future<void> _uploadProfilePhotoToFirebase(String filePath) async {
+    final contactNumber = UserSession.currentUserData?['contactNumber'] as String?;
+    if (contactNumber == null) {
+      debugPrint('❌ Cannot upload profile photo: No contact number found');
+      return;
+    }
+
+    setState(() => _isUploadingPhoto = true);
+
+    try {
+      // Create a unique filename using contact number
+      final fileName = 'profile_${contactNumber.replaceAll('+', '')}.jpg';
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('profile_photos')
+          .child(fileName);
+
+      // Upload the file
+      final file = File(filePath);
+      final uploadTask = await storageRef.putFile(
+        file,
+        SettableMetadata(contentType: 'image/jpeg'),
+      );
+
+      // Get the download URL
+      final downloadUrl = await uploadTask.ref.getDownloadURL();
+      debugPrint('✅ Profile photo uploaded: $downloadUrl');
+
+      // Save URL to Firestore in approved_users collection
+      final userQuery = await FirebaseFirestore.instance
+          .collection('approved_users')
+          .where('contactNumber', isEqualTo: contactNumber)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isNotEmpty) {
+        await userQuery.docs.first.reference.update({
+          'profilePhotoUrl': downloadUrl,
+        });
+        debugPrint('✅ Profile photo URL saved to Firestore');
+
+        // Update local UserSession data
+        UserSession.currentUserData?['profilePhotoUrl'] = downloadUrl;
+        setState(() {
+          _profilePhotoUrl = downloadUrl;
+        });
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profile picture saved!'),
             backgroundColor: Color(0xFF22C55E),
           ),
         );
       }
     } catch (e) {
-      debugPrint('Failed to crop profile photo: $e');
+      debugPrint('❌ Failed to upload profile photo: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to crop photo. Please try again.'),
-            backgroundColor: Colors.red,
+          const SnackBar(
+            content: Text('Photo selected but failed to save. Will retry on next app open.'),
+            backgroundColor: Colors.orange,
           ),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploadingPhoto = false);
       }
     }
   }
@@ -712,12 +810,8 @@ class _ProfilePageState extends State<ProfilePage>
       text: userData['address']?.toString() ?? '',
     );
     final phoneNumber = userData['contactNumber']?.toString() ?? '';
-    // Try multiple possible document ID fields
-    final docId = userData['username']?.toString() ??
-        userData['uid']?.toString() ??
-        userData['id']?.toString() ??
-        UserSession.getUserId() ??
-        '';
+    // Get the Firestore document ID (set during login)
+    final docId = userData['docId']?.toString() ?? '';
     bool isEditing = false;
     bool isSaving = false;
     String? errorMessage;
@@ -1099,328 +1193,651 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Widget _buildAccountSecurityContent() {
-    final currentPasswordCtl = TextEditingController();
-    final newPasswordCtl = TextEditingController();
-    final confirmPasswordCtl = TextEditingController();
-    bool isLoading = false;
-    String? errorMessage;
-    String? successMessage;
-    bool obscureCurrent = true;
-    bool obscureNew = true;
-    bool obscureConfirm = true;
-
     final userData = UserSession.currentUserData ?? {};
-    final storedPassword = userData['password']?.toString() ?? '';
-    final username = userData['username']?.toString() ?? '';
+    final docId = userData['docId']?.toString() ?? '';
+    final contactNumber = userData['contactNumber']?.toString() ?? '';
 
     return StatefulBuilder(
       builder: (context, setModalState) {
-        return SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Current Password
-              _buildPasswordField(
-                label: 'Current Password',
-                controller: currentPasswordCtl,
-                obscureText: obscureCurrent,
-                onToggleVisibility: () {
-                  setModalState(() => obscureCurrent = !obscureCurrent);
-                },
-              ),
-              const SizedBox(height: 16),
+        return FutureBuilder<List<dynamic>>(
+          future: Future.wait([
+            _checkBiometricsAvailable(),
+            _getBiometricsEnabled(),
+          ]),
+          builder: (context, snapshot) {
+            final biometricsAvailable = snapshot.data?[0] as bool? ?? false;
+            final biometricsEnabled = snapshot.data?[1] as bool? ?? false;
 
-              // New Password
-              _buildPasswordField(
-                label: 'New Password',
-                controller: newPasswordCtl,
-                obscureText: obscureNew,
-                onToggleVisibility: () {
-                  setModalState(() => obscureNew = !obscureNew);
-                },
-              ),
-              const SizedBox(height: 8),
-
-              // Password requirements hint
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue[200]!),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Password Requirements:',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.blue[800],
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '• At least 8 characters\n'
-                      '• At least one uppercase letter (A-Z)\n'
-                      '• At least one number (0-9)\n'
-                      '• At least one special character (!@#\$%^&*)',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.blue[700],
-                        height: 1.4,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Confirm New Password
-              _buildPasswordField(
-                label: 'Confirm New Password',
-                controller: confirmPasswordCtl,
-                obscureText: obscureConfirm,
-                onToggleVisibility: () {
-                  setModalState(() => obscureConfirm = !obscureConfirm);
-                },
-              ),
-
-              if (errorMessage != null) ...[
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.red[50],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.red[200]!),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.error_outline, color: Colors.red[700], size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          errorMessage!,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.red[700],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-
-              if (successMessage != null) ...[
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.green[50],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.green[200]!),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.check_circle_outline,
-                          color: Colors.green[700], size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          successMessage!,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.green[700],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-
-              const SizedBox(height: 24),
-
-              // Update Password Button
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: isLoading
-                      ? null
-                      : () async {
-                          final currentPassword = currentPasswordCtl.text;
-                          final newPassword = newPasswordCtl.text;
-                          final confirmPassword = confirmPasswordCtl.text;
-
-                          setModalState(() {
-                            errorMessage = null;
-                            successMessage = null;
-                          });
-
-                          // Validate current password
-                          if (currentPassword.isEmpty) {
-                            setModalState(() =>
-                                errorMessage = 'Please enter your current password');
-                            return;
-                          }
-
-                          if (currentPassword != storedPassword) {
-                            setModalState(() =>
-                                errorMessage = 'Current password is incorrect');
-                            return;
-                          }
-
-                          // Validate new password
-                          final passwordValidation =
-                              _validatePassword(newPassword);
-                          if (passwordValidation != null) {
-                            setModalState(() => errorMessage = passwordValidation);
-                            return;
-                          }
-
-                          // Check passwords match
-                          if (newPassword != confirmPassword) {
-                            setModalState(
-                                () => errorMessage = 'New passwords do not match');
-                            return;
-                          }
-
-                          // Check new password is different from current
-                          if (newPassword == currentPassword) {
-                            setModalState(() => errorMessage =
-                                'New password must be different from current password');
-                            return;
-                          }
-
-                          setModalState(() => isLoading = true);
-
-                          try {
-                            // Update password in Firestore
-                            await FirebaseFirestore.instance
-                                .collection('approved_users')
-                                .doc(username)
-                                .update({'password': newPassword});
-
-                            // Update local session
-                            UserSession.currentUserData?['password'] = newPassword;
-
-                            // Clear fields
-                            currentPasswordCtl.clear();
-                            newPasswordCtl.clear();
-                            confirmPasswordCtl.clear();
-
-                            setModalState(() {
-                              isLoading = false;
-                              successMessage = 'Password updated successfully!';
-                            });
-                          } catch (e) {
-                            debugPrint('Failed to update password: $e');
-                            setModalState(() {
-                              isLoading = false;
-                              errorMessage =
-                                  'Failed to update password. Please try again.';
-                            });
-                          }
-                        },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFAC1B22),
-                    shape: RoundedRectangleBorder(
+            return SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Biometrics Section
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[50],
                       borderRadius: BorderRadius.circular(12),
                     ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFAC1B22).withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(
+                                Icons.fingerprint,
+                                color: Color(0xFFAC1B22),
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Biometric Login',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    biometricsAvailable
+                                        ? 'Use fingerprint or face to login'
+                                        : 'Not available on this device',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Switch(
+                              value: biometricsEnabled,
+                              onChanged: biometricsAvailable
+                                  ? (value) async {
+                                      await _setBiometricsEnabled(value);
+                                      setModalState(() {});
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              value
+                                                  ? 'Biometric login enabled'
+                                                  : 'Biometric login disabled',
+                                            ),
+                                            backgroundColor: const Color(0xFF22C55E),
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  : null,
+                              activeColor: const Color(0xFFAC1B22),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                  child: isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text(
-                          'UPDATE PASSWORD',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
+
+                  const SizedBox(height: 16),
+
+                  // Change PIN Section
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[50],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFAC1B22).withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(
+                                Icons.lock_outline,
+                                color: Color(0xFFAC1B22),
+                                size: 24,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Change PIN',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Update your 6-digit security PIN',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 44,
+                          child: ElevatedButton(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _showChangePinDialog(docId, contactNumber);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFAC1B22),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text(
+                              'CHANGE PIN',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ),
                         ),
-                ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Info box
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue[200]!),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Keep your PIN private. Never share it with anyone.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.blue[700],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
   }
 
-  String? _validatePassword(String password) {
-    if (password.isEmpty) return 'Password is required';
-    if (password.length < 8) return 'Password must be at least 8 characters';
-    if (!RegExp(r'[A-Z]').hasMatch(password)) {
-      return 'Password must contain at least one uppercase letter';
+  Future<bool> _checkBiometricsAvailable() async {
+    if (kIsWeb) return false;
+    try {
+      final localAuth = LocalAuthentication();
+      final canCheck = await localAuth.canCheckBiometrics;
+      final isDeviceSupported = await localAuth.isDeviceSupported();
+      return canCheck && isDeviceSupported;
+    } catch (e) {
+      debugPrint('Error checking biometrics: $e');
+      return false;
     }
-    if (!RegExp(r'[0-9]').hasMatch(password)) {
-      return 'Password must contain at least one number';
-    }
-    if (!RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(password)) {
-      return 'Password must contain at least one special character (!@#\$%^&*)';
-    }
-    return null;
   }
 
-  Widget _buildPasswordField({
-    required String label,
-    required TextEditingController controller,
-    required bool obscureText,
-    required VoidCallback onToggleVisibility,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey[700],
-          ),
-        ),
-        const SizedBox(height: 8),
-        TextField(
-          controller: controller,
-          obscureText: obscureText,
-          decoration: InputDecoration(
-            hintText: '••••••••',
-            hintStyle: const TextStyle(fontSize: 13),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey[300]!),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFFAC1B22), width: 2),
-            ),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            suffixIcon: IconButton(
-              icon: Icon(
-                obscureText ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-                color: Colors.grey[600],
-                size: 20,
+  Future<bool> _getBiometricsEnabled() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final contactNumber = UserSession.currentUserData?['contactNumber'] as String?;
+      if (contactNumber == null) return false;
+      return prefs.getBool('biometrics_enabled_$contactNumber') ?? false;
+    } catch (e) {
+      debugPrint('Error getting biometrics setting: $e');
+      return false;
+    }
+  }
+
+  Future<void> _setBiometricsEnabled(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final contactNumber = UserSession.currentUserData?['contactNumber'] as String?;
+      if (contactNumber == null) return;
+      await prefs.setBool('biometrics_enabled_$contactNumber', enabled);
+    } catch (e) {
+      debugPrint('Error setting biometrics: $e');
+    }
+  }
+
+  void _showChangePinDialog(String docId, String contactNumber) {
+    final currentPinControllers = List.generate(6, (_) => TextEditingController());
+    final newPinControllers = List.generate(6, (_) => TextEditingController());
+    final confirmPinControllers = List.generate(6, (_) => TextEditingController());
+    final currentPinFocusNodes = List.generate(6, (_) => FocusNode());
+    final newPinFocusNodes = List.generate(6, (_) => FocusNode());
+    final confirmPinFocusNodes = List.generate(6, (_) => FocusNode());
+
+    int step = 1; // 1: current PIN, 2: new PIN, 3: confirm PIN
+    String? errorMessage;
+    bool isLoading = false;
+    String currentPinEntered = '';
+    String newPinEntered = '';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            String getTitle() {
+              switch (step) {
+                case 1:
+                  return 'ENTER CURRENT PIN';
+                case 2:
+                  return 'ENTER NEW PIN';
+                case 3:
+                  return 'CONFIRM NEW PIN';
+                default:
+                  return 'CHANGE PIN';
+              }
+            }
+
+            String getSubtitle() {
+              switch (step) {
+                case 1:
+                  return 'Enter your current 6-digit PIN';
+                case 2:
+                  return 'Create a new 6-digit PIN';
+                case 3:
+                  return 'Re-enter your new PIN to confirm';
+                default:
+                  return '';
+              }
+            }
+
+            List<TextEditingController> getControllers() {
+              switch (step) {
+                case 1:
+                  return currentPinControllers;
+                case 2:
+                  return newPinControllers;
+                case 3:
+                  return confirmPinControllers;
+                default:
+                  return currentPinControllers;
+              }
+            }
+
+            List<FocusNode> getFocusNodes() {
+              switch (step) {
+                case 1:
+                  return currentPinFocusNodes;
+                case 2:
+                  return newPinFocusNodes;
+                case 3:
+                  return confirmPinFocusNodes;
+                default:
+                  return currentPinFocusNodes;
+              }
+            }
+
+            return Dialog(
+              backgroundColor: const Color(0xFFF7F8F3),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
               ),
-              onPressed: onToggleVisibility,
-            ),
-          ),
-        ),
-      ],
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Close button
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: GestureDetector(
+                        onTap: () {
+                          // Dispose controllers and focus nodes
+                          for (var c in currentPinControllers) {
+                            c.dispose();
+                          }
+                          for (var c in newPinControllers) {
+                            c.dispose();
+                          }
+                          for (var c in confirmPinControllers) {
+                            c.dispose();
+                          }
+                          for (var f in currentPinFocusNodes) {
+                            f.dispose();
+                          }
+                          for (var f in newPinFocusNodes) {
+                            f.dispose();
+                          }
+                          for (var f in confirmPinFocusNodes) {
+                            f.dispose();
+                          }
+                          Navigator.pop(dialogContext);
+                        },
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.grey[200],
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            size: 18,
+                            color: Color(0xFF666666),
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    // Lock icon
+                    Container(
+                      width: 70,
+                      height: 70,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFFAC1B22),
+                          width: 3,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.lock_outline,
+                        size: 35,
+                        color: Color(0xFFAC1B22),
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Title
+                    Text(
+                      getTitle(),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFFAC1B22),
+                        letterSpacing: 0.5,
+                        fontFamily: 'RobotoCondensed',
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    // Subtitle
+                    Text(
+                      getSubtitle(),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey[600],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // PIN Input Fields
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(6, (index) {
+                        return Container(
+                          width: 40,
+                          height: 48,
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          child: TextField(
+                            controller: getControllers()[index],
+                            focusNode: getFocusNodes()[index],
+                            keyboardType: TextInputType.number,
+                            textAlign: TextAlign.center,
+                            maxLength: 1,
+                            obscureText: true,
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            decoration: InputDecoration(
+                              counterText: '',
+                              filled: true,
+                              fillColor: Colors.white,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.grey[300]!),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide(color: Colors.grey[300]!),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(
+                                  color: Color(0xFFAC1B22),
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                            onChanged: (value) {
+                              if (value.isNotEmpty && index < 5) {
+                                getFocusNodes()[index + 1].requestFocus();
+                              }
+                              if (value.isEmpty && index > 0) {
+                                getFocusNodes()[index - 1].requestFocus();
+                              }
+                              setDialogState(() => errorMessage = null);
+                            },
+                          ),
+                        );
+                      }),
+                    ),
+
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        errorMessage!,
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontSize: 13,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+
+                    const SizedBox(height: 24),
+
+                    // Step indicator
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(3, (index) {
+                        return Container(
+                          width: 8,
+                          height: 8,
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: step > index
+                                ? const Color(0xFFAC1B22)
+                                : Colors.grey[300],
+                          ),
+                        );
+                      }),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Continue/Submit Button
+                    SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: ElevatedButton(
+                        onPressed: isLoading
+                            ? null
+                            : () async {
+                                final pin = getControllers()
+                                    .map((c) => c.text)
+                                    .join();
+
+                                if (pin.length != 6) {
+                                  setDialogState(() =>
+                                      errorMessage = 'Please enter all 6 digits');
+                                  return;
+                                }
+
+                                if (step == 1) {
+                                  // Verify current PIN
+                                  setDialogState(() => isLoading = true);
+                                  try {
+                                    final query = await FirebaseFirestore.instance
+                                        .collection('approved_users')
+                                        .where('contactNumber', isEqualTo: contactNumber)
+                                        .where('pin', isEqualTo: pin)
+                                        .limit(1)
+                                        .get();
+
+                                    if (query.docs.isEmpty) {
+                                      setDialogState(() {
+                                        isLoading = false;
+                                        errorMessage = 'Incorrect PIN';
+                                        for (var c in currentPinControllers) {
+                                          c.clear();
+                                        }
+                                        currentPinFocusNodes[0].requestFocus();
+                                      });
+                                      return;
+                                    }
+
+                                    currentPinEntered = pin;
+                                    setDialogState(() {
+                                      isLoading = false;
+                                      step = 2;
+                                      errorMessage = null;
+                                    });
+                                    newPinFocusNodes[0].requestFocus();
+                                  } catch (e) {
+                                    debugPrint('Error verifying PIN: $e');
+                                    setDialogState(() {
+                                      isLoading = false;
+                                      errorMessage = 'Error verifying PIN. Try again.';
+                                    });
+                                  }
+                                } else if (step == 2) {
+                                  // Check new PIN is different from current
+                                  if (pin == currentPinEntered) {
+                                    setDialogState(() => errorMessage =
+                                        'New PIN must be different from current PIN');
+                                    return;
+                                  }
+                                  newPinEntered = pin;
+                                  setDialogState(() {
+                                    step = 3;
+                                    errorMessage = null;
+                                  });
+                                  confirmPinFocusNodes[0].requestFocus();
+                                } else if (step == 3) {
+                                  // Confirm new PIN matches
+                                  if (pin != newPinEntered) {
+                                    setDialogState(() {
+                                      errorMessage = 'PINs do not match';
+                                      for (var c in confirmPinControllers) {
+                                        c.clear();
+                                      }
+                                      confirmPinFocusNodes[0].requestFocus();
+                                    });
+                                    return;
+                                  }
+
+                                  // Update PIN in Firestore
+                                  setDialogState(() => isLoading = true);
+                                  try {
+                                    await FirebaseFirestore.instance
+                                        .collection('approved_users')
+                                        .doc(docId)
+                                        .update({'pin': newPinEntered});
+
+                                    // Update local session
+                                    UserSession.currentUserData?['pin'] = newPinEntered;
+
+                                    // Close dialog
+                                    if (mounted) {
+                                      Navigator.pop(dialogContext);
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('PIN changed successfully!'),
+                                          backgroundColor: Color(0xFF22C55E),
+                                        ),
+                                      );
+                                    }
+                                  } catch (e) {
+                                    debugPrint('Error updating PIN: $e');
+                                    setDialogState(() {
+                                      isLoading = false;
+                                      errorMessage = 'Failed to update PIN. Try again.';
+                                    });
+                                  }
+                                }
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFAC1B22),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: isLoading
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(
+                                step == 3 ? 'SAVE NEW PIN' : 'CONTINUE',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -2066,14 +2483,17 @@ class _ProfilePageState extends State<ProfilePage>
             .trim();
     final profileInitial =
         profileName.isNotEmpty ? profileName[0].toUpperCase() : '?';
-    final hasProfilePhoto = _profilePhotoBytes != null || _profilePhoto != null;
+    final hasProfilePhoto = _profilePhotoBytes != null || _profilePhoto != null || _profilePhotoUrl != null;
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.only(bottom: 120),
-          child: Column(
-            children: [
+          child: GestureDetector(
+            onTap: () => FocusScope.of(context).unfocus(),
+            behavior: HitTestBehavior.opaque,
+            child: Column(
+              children: [
               // ───────── TOP BAR ─────────
               Padding(
                 padding: const EdgeInsets.symmetric(
@@ -2122,6 +2542,16 @@ class _ProfilePageState extends State<ProfilePage>
               Stack(
                 alignment: Alignment.center,
                 children: [
+                  // Show loading indicator while uploading
+                  if (_isUploadingPhoto)
+                    const SizedBox(
+                      width: 110,
+                      height: 110,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        color: Color(0xFFAC1B22),
+                      ),
+                    ),
                   CircleAvatar(
                     radius: 55,
                     backgroundColor: const Color(0xFFAC1B22),
@@ -2129,7 +2559,9 @@ class _ProfilePageState extends State<ProfilePage>
                         ? MemoryImage(_profilePhotoBytes!)
                         : (_profilePhoto != null
                             ? FileImage(File(_profilePhoto!.path))
-                            : null),
+                            : (_profilePhotoUrl != null
+                                ? CachedNetworkImageProvider(_profilePhotoUrl!)
+                                : null)),
                     child: hasProfilePhoto
                         ? null
                         : Text(
@@ -2335,6 +2767,7 @@ class _ProfilePageState extends State<ProfilePage>
 
               const SizedBox(height: 40),
             ],
+          ),
           ),
         ),
       ),

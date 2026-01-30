@@ -285,9 +285,12 @@ class _OTPPageState extends State<OTPPage> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 360),
-              child: Padding(
+            child: GestureDetector(
+              onTap: () => FocusScope.of(context).unfocus(),
+              behavior: HitTestBehavior.opaque,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 360),
+                child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 24,
                   vertical: 16,
@@ -439,6 +442,7 @@ class _OTPPageState extends State<OTPPage> {
                   ],
                 ),
               ),
+            ),
             ),
           ),
         ),
