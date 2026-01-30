@@ -1,7 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../../../common/services/user_session.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -10,607 +9,12 @@ class NotificationsPage extends StatefulWidget {
   State<NotificationsPage> createState() => _NotificationsPageState();
 }
 
-class _NotificationsPageState extends State<NotificationsPage>
-    with SingleTickerProviderStateMixin {
+class _NotificationsPageState extends State<NotificationsPage> {
   // OFFICIAL COLORS
   static const appBlue = Color(0xFFAC1B22);
   static const appRed = Color(0xFFFFC806);
   static const appBlack = Color(0xFF212121);
   static const appWhite = Color(0xFFF7F8F3);
-
-  late TabController _tabController;
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  void _showImageZoom(BuildContext context, String imageUrl) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(16),
-          backgroundColor: Colors.transparent,
-          child: Stack(
-            children: [
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: InteractiveViewer(
-                    minScale: 1,
-                    maxScale: 4,
-                    child: Image.network(
-                      imageUrl,
-                      fit: BoxFit.contain,
-                      loadingBuilder: (context, child, loadingProgress) {
-                        if (loadingProgress == null) return child;
-                        return const SizedBox(
-                          height: 260,
-                          child: Center(
-                            child: CircularProgressIndicator(
-                              valueColor:
-                                  AlwaysStoppedAnimation<Color>(Colors.white),
-                            ),
-                          ),
-                        );
-                      },
-                      errorBuilder: (context, error, stackTrace) {
-                        return const SizedBox(
-                          height: 260,
-                          child: Center(
-                            child: Icon(
-                              Icons.error_outline,
-                              color: Colors.white,
-                              size: 48,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 10,
-                right: 10,
-                child: GestureDetector(
-                  onTap: () => Navigator.pop(context),
-                  child: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.6),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.close, color: Colors.white),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _showAnnouncementDialog(
-    BuildContext context,
-    Map<String, dynamic> data,
-  ) {
-    final title = (data['title'] as String?) ?? '';
-    final content = (data['content'] as String?) ?? '';
-    final imageUrl = (data['imageUrl'] as String?) ?? '';
-    final ts = data['createdAt'];
-    DateTime date = DateTime.now();
-    if (ts is Timestamp) {
-      date = ts.toDate();
-    } else if (ts is DateTime) {
-      date = ts;
-    }
-    final dateText = DateFormat('MMM d yyyy').format(date);
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          insetPadding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-          backgroundColor: appWhite,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: FractionallySizedBox(
-            widthFactor: 0.95,
-            child: SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (imageUrl.isNotEmpty)
-                      GestureDetector(
-                        onTap: () => _showImageZoom(context, imageUrl),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: SizedBox(
-                            height: 180,
-                            width: double.infinity,
-                            child: Image.network(
-                              imageUrl,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return const Center(
-                                  child: Icon(
-                                    Icons.error_outline,
-                                    color: appBlack,
-                                    size: 48,
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ),
-                      ),
-                    if (imageUrl.isNotEmpty) const SizedBox(height: 12),
-                    Text(
-                      title.isNotEmpty ? title : 'Announcement',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        color: appBlack,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      dateText.toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: appBlack.withOpacity(0.7),
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (content.isNotEmpty)
-                      Text(
-                        content,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: appBlack,
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                    const SizedBox(height: 16),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text(
-                          'CLOSE',
-                          style: TextStyle(
-                            fontFamily: 'RobotoCondensed',
-                            fontWeight: FontWeight.w600,
-                            color: appBlue,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildAnnouncementsTab() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('announcements')
-          .orderBy('createdAt', descending: true)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(appBlue),
-            ),
-          );
-        }
-
-        if (snapshot.hasError) {
-          return Center(
-            child: Text(
-              'Failed to load announcements.',
-              style: TextStyle(
-                fontSize: 12,
-                color: appBlack.withOpacity(0.7),
-              ),
-            ),
-          );
-        }
-
-        final docs = snapshot.data?.docs ?? [];
-        final visibleDocs = docs.where((doc) {
-          final data = doc.data() as Map<String, dynamic>;
-          return data['isPlaceholder'] != true;
-        }).toList();
-
-        if (visibleDocs.isEmpty) {
-          return Center(
-            child: Text(
-              'No announcements yet.',
-              style: TextStyle(
-                fontSize: 12,
-                color: appBlack.withOpacity(0.7),
-              ),
-            ),
-          );
-        }
-
-        return ListView.separated(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: visibleDocs.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 16),
-          itemBuilder: (context, index) {
-            final data = visibleDocs[index].data() as Map<String, dynamic>;
-            return _buildAnnouncementCard(data);
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildAnnouncementCard(Map<String, dynamic> data) {
-    final title = (data['title'] as String?) ?? '';
-    final content = (data['content'] as String?) ?? '';
-    final imageUrl = (data['imageUrl'] as String?) ?? '';
-    final ts = data['createdAt'];
-    DateTime date = DateTime.now();
-    if (ts is Timestamp) {
-      date = ts.toDate();
-    } else if (ts is DateTime) {
-      date = ts;
-    }
-    final dateText = DateFormat('MMM d, yyyy — h:mm a').format(date);
-    final displayTitle = title.isNotEmpty ? title : 'Announcement';
-
-    return Center(
-      child: GestureDetector(
-        onTap: () => _showAnnouncementDialog(context, data),
-        child: Container(
-          width: 343,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: appBlack.withOpacity(0.12)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.08),
-                blurRadius: 18,
-                spreadRadius: 0,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          clipBehavior: Clip.hardEdge,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: double.infinity,
-                height: 150,
-                child: imageUrl.isNotEmpty
-                    ? Image.network(imageUrl, fit: BoxFit.cover)
-                    : Container(
-                        color: Colors.white,
-                        alignment: Alignment.center,
-                        child: Icon(
-                          Icons.campaign,
-                          size: 40,
-                          color: appBlack.withOpacity(0.25),
-                        ),
-                      ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: appRed,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Text(
-                            'Important',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: appBlack,
-                              fontFamily: 'RobotoCondensed',
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            displayTitle,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: appBlack,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      dateText,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: appBlack.withOpacity(0.7),
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                    if (content.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        content,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: appBlack.withOpacity(0.75),
-                          fontWeight: FontWeight.w400,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNearbyIncidentsTab() {
-    final userId = UserSession.getUserId();
-
-    if (userId == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.notifications_off,
-                size: 48, color: appBlack.withOpacity(0.3)),
-            const SizedBox(height: 12),
-            Text(
-              'Login to receive nearby incident alerts',
-              style: TextStyle(
-                fontSize: 14,
-                color: appBlack.withOpacity(0.7),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .collection('notifications')
-          .orderBy('createdAt', descending: true)
-          .limit(50)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(appBlue),
-            ),
-          );
-        }
-
-        if (snapshot.hasError) {
-          return Center(
-            child: Text(
-              'Failed to load notifications.',
-              style: TextStyle(
-                fontSize: 12,
-                color: appBlack.withOpacity(0.7),
-              ),
-            ),
-          );
-        }
-
-        final docs = snapshot.data?.docs ?? [];
-
-        if (docs.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.notifications_none,
-                    size: 48, color: appBlack.withOpacity(0.3)),
-                const SizedBox(height: 12),
-                Text(
-                  'No nearby incidents reported yet.',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: appBlack.withOpacity(0.7),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'You\'ll be notified when incidents\noccur within 5km of your location.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: appBlack.withOpacity(0.5),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return ListView.separated(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: docs.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            final data = docs[index].data() as Map<String, dynamic>;
-            return _buildIncidentNotificationCard(data, docs[index].id);
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildIncidentNotificationCard(
-      Map<String, dynamic> data, String docId) {
-    final title = (data['title'] as String?) ?? 'Incident Alert';
-    final body = (data['body'] as String?) ?? '';
-    final incidentType = (data['incidentType'] as String?) ?? 'Incident';
-    final isRead = (data['read'] as bool?) ?? false;
-    final ts = data['createdAt'];
-    DateTime date = DateTime.now();
-    if (ts is Timestamp) {
-      date = ts.toDate();
-    }
-    final dateText = DateFormat('MMM d, h:mm a').format(date);
-
-    IconData iconData;
-    Color iconColor;
-    switch (incidentType.toLowerCase()) {
-      case 'fire':
-        iconData = Icons.local_fire_department;
-        iconColor = Colors.orange;
-        break;
-      case 'flood':
-        iconData = Icons.water;
-        iconColor = Colors.blue;
-        break;
-      case 'earthquake':
-        iconData = Icons.vibration;
-        iconColor = Colors.brown;
-        break;
-      case 'road accident':
-      case 'vehicular accident':
-        iconData = Icons.car_crash;
-        iconColor = Colors.red;
-        break;
-      default:
-        iconData = Icons.warning_amber;
-        iconColor = appBlue;
-    }
-
-    return Center(
-      child: Container(
-        width: 343,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isRead ? Colors.white : appBlue.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color:
-                isRead ? appBlack.withOpacity(0.12) : appBlue.withOpacity(0.3),
-          ),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: iconColor.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(iconData, color: iconColor, size: 24),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight:
-                                isRead ? FontWeight.w500 : FontWeight.w700,
-                            color: appBlack,
-                          ),
-                        ),
-                      ),
-                      if (!isRead)
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: appBlue,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    body,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: appBlack.withOpacity(0.7),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    dateText,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: appBlack.withOpacity(0.5),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -632,10 +36,18 @@ class _NotificationsPageState extends State<NotificationsPage>
                     fontFamily: 'Roboto',
                   ),
                   children: [
-                    TextSpan(text: 'N', style: TextStyle(color: appBlue)),
-                    TextSpan(text: 'O', style: TextStyle(color: appRed)),
                     TextSpan(
-                        text: 'TIFICATION', style: TextStyle(color: appBlue)),
+                      text: 'N',
+                      style: TextStyle(color: appBlue),
+                    ),
+                    TextSpan(
+                      text: 'O',
+                      style: TextStyle(color: appRed),
+                    ),
+                    TextSpan(
+                      text: 'TIFICATION',
+                      style: TextStyle(color: appBlue),
+                    ),
                   ],
                 ),
               ),
@@ -643,56 +55,739 @@ class _NotificationsPageState extends State<NotificationsPage>
 
             const SizedBox(height: 16),
 
-            // TAB BAR
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: appBlack.withOpacity(0.12)),
-              ),
-              child: TabBar(
-                controller: _tabController,
-                labelColor: Colors.white,
-                unselectedLabelColor: appBlack,
-                indicatorSize: TabBarIndicatorSize.tab,
-                dividerColor: Colors.transparent,
-                indicator: BoxDecoration(
-                  color: appBlue,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                indicatorPadding: const EdgeInsets.all(4),
-                labelStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  fontFamily: 'RobotoCondensed',
-                ),
-                unselectedLabelStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w400,
-                  fontFamily: 'RobotoCondensed',
-                ),
-                tabs: const [
-                  Tab(text: 'Announcements'),
-                  Tab(text: 'Nearby Incidents'),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            // TAB CONTENT
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [
-                  _buildAnnouncementsTab(),
-                  _buildNearbyIncidentsTab(),
-                ],
-              ),
-            ),
+            // Unified notification feed
+            Expanded(child: _buildUnifiedNotificationFeed()),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildUnifiedNotificationFeed() {
+    return StreamBuilder<List<_NotificationItem>>(
+      stream: _getCombinedNotificationsStream(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(appBlue),
+            ),
+          );
+        }
+
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 48,
+                  color: appBlack.withOpacity(0.3),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Failed to load notifications.',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: appBlack.withOpacity(0.7),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        final notifications = snapshot.data ?? [];
+
+        if (notifications.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.notifications_none,
+                  size: 64,
+                  color: appBlack.withOpacity(0.25),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'No notifications yet',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: appBlack.withOpacity(0.7),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'You\'ll see announcements and\nincident alerts here.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: appBlack.withOpacity(0.5),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.only(bottom: 16),
+          itemCount: notifications.length,
+          itemBuilder: (context, index) {
+            final notification = notifications[index];
+            return _buildNotificationCard(notification);
+          },
+        );
+      },
+    );
+  }
+
+  Stream<List<_NotificationItem>> _getCombinedNotificationsStream() {
+    // Stream for announcements - we'll combine with reports
+    final announcementsStream = FirebaseFirestore.instance
+        .collection('announcements')
+        .orderBy('createdAt', descending: true)
+        .limit(20)
+        .snapshots()
+        .map((snapshot) {
+          return snapshot.docs
+              .where((doc) {
+                final data = doc.data();
+                return data['isPlaceholder'] != true;
+              })
+              .map((doc) => _NotificationItem.fromAnnouncement(doc))
+              .toList();
+        });
+
+    // Combine announcements with reports
+    return announcementsStream.asyncMap((announcements) async {
+      final reportsSnapshot = await FirebaseFirestore.instance
+          .collection('reports')
+          .orderBy('reportedAt', descending: true)
+          .limit(30)
+          .get();
+
+      final reports = reportsSnapshot.docs
+          .where((doc) {
+            final data = doc.data();
+            return data['location'] != null;
+          })
+          .map((doc) => _NotificationItem.fromReport(doc))
+          .toList();
+
+      // Combine and sort by timestamp
+      final combined = [...announcements, ...reports];
+      combined.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+      return combined;
+    });
+  }
+
+  Widget _buildNotificationCard(_NotificationItem notification) {
+    final isAnnouncement = notification.type == _NotificationType.announcement;
+    final timeAgo = _getTimeAgo(notification.timestamp);
+
+    return GestureDetector(
+      onTap: () => _showNotificationDetail(notification),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        decoration: BoxDecoration(
+          color: notification.isNew ? appBlue.withOpacity(0.04) : Colors.white,
+          border: Border(
+            bottom: BorderSide(color: appBlack.withOpacity(0.08), width: 1),
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Icon/Avatar
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: isAnnouncement
+                    ? appRed.withOpacity(0.15)
+                    : _getIncidentColor(
+                        notification.incidentType,
+                      ).withOpacity(0.15),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isAnnouncement
+                    ? Icons.campaign
+                    : _getIncidentIcon(notification.incidentType),
+                color: isAnnouncement
+                    ? const Color(0xFFB8860B)
+                    : _getIncidentColor(notification.incidentType),
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Title with badge
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isAnnouncement ? appRed : appBlue,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          isAnnouncement
+                              ? 'ANNOUNCEMENT'
+                              : notification.incidentType?.toUpperCase() ??
+                                    'INCIDENT',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: isAnnouncement ? appBlack : Colors.white,
+                            fontFamily: 'RobotoCondensed',
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      if (notification.isNew)
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: appBlue,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  // Main text
+                  Text(
+                    notification.title,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: notification.isNew
+                          ? FontWeight.w600
+                          : FontWeight.w500,
+                      color: appBlack,
+                      height: 1.3,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (notification.subtitle != null &&
+                      notification.subtitle!.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      notification.subtitle!,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: appBlack.withOpacity(0.6),
+                        height: 1.3,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  // Time and location
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.access_time,
+                        size: 12,
+                        color: appBlack.withOpacity(0.4),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        timeAgo,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: appBlack.withOpacity(0.5),
+                        ),
+                      ),
+                      if (!isAnnouncement && notification.location != null) ...[
+                        const SizedBox(width: 12),
+                        Icon(
+                          Icons.location_on_outlined,
+                          size: 12,
+                          color: appBlack.withOpacity(0.4),
+                        ),
+                        const SizedBox(width: 2),
+                        Expanded(
+                          child: Text(
+                            notification.location!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: appBlack.withOpacity(0.5),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            // Thumbnail for announcements with images
+            if (isAnnouncement &&
+                notification.imageUrl != null &&
+                notification.imageUrl!.isNotEmpty) ...[
+              const SizedBox(width: 12),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  notification.imageUrl!,
+                  width: 60,
+                  height: 60,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _markNotificationAsRead(_NotificationItem notification) async {
+    try {
+      if (notification.type == _NotificationType.announcement) {
+        await FirebaseFirestore.instance
+            .collection('announcements')
+            .doc(notification.id)
+            .update({'isNew': false});
+      } else {
+        await FirebaseFirestore.instance
+            .collection('reports')
+            .doc(notification.id)
+            .update({'isNew': false});
+      }
+    } catch (e) {
+      debugPrint('Error marking notification as read: $e');
+    }
+  }
+
+  void _showNotificationDetail(_NotificationItem notification) {
+    final isAnnouncement = notification.type == _NotificationType.announcement;
+
+    // Mark as read when opened
+    _markNotificationAsRead(notification);
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        backgroundColor: appWhite,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 500),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isAnnouncement ? appRed : appBlue,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          isAnnouncement
+                              ? 'ANNOUNCEMENT'
+                              : notification.incidentType?.toUpperCase() ??
+                                    'INCIDENT',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: isAnnouncement ? appBlack : Colors.white,
+                            fontFamily: 'RobotoCondensed',
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.close,
+                            size: 18,
+                            color: Color(0xFF666666),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Image for announcements
+                  if (isAnnouncement &&
+                      notification.imageUrl != null &&
+                      notification.imageUrl!.isNotEmpty)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.network(
+                        notification.imageUrl!,
+                        width: double.infinity,
+                        height: 180,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  if (isAnnouncement &&
+                      notification.imageUrl != null &&
+                      notification.imageUrl!.isNotEmpty)
+                    const SizedBox(height: 16),
+
+                  // Title
+                  Text(
+                    notification.title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: appBlack,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // Date
+                  Text(
+                    DateFormat(
+                      'MMM d, yyyy — h:mm a',
+                    ).format(notification.timestamp),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: appBlack.withOpacity(0.5),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Content
+                  if (notification.subtitle != null &&
+                      notification.subtitle!.isNotEmpty)
+                    Text(
+                      notification.subtitle!,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: appBlack.withOpacity(0.8),
+                        height: 1.5,
+                      ),
+                    ),
+
+                  // Location for incidents
+                  if (!isAnnouncement && notification.location != null) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: appBlue.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: appBlue.withOpacity(0.2)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.location_on, color: appBlue, size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              notification.location!,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: appBlack,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  // Reporter info for incidents
+                  if (!isAnnouncement && notification.reporter != null) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.person_outline,
+                          size: 16,
+                          color: appBlack.withOpacity(0.5),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Reported by ${notification.reporter}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: appBlack.withOpacity(0.6),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+
+                  // Status for incidents
+                  if (!isAnnouncement && notification.status != null) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _getStatusColor(
+                          notification.status!,
+                        ).withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _getStatusColor(notification.status!),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _getStatusIcon(notification.status!),
+                            size: 16,
+                            color: _getStatusColor(notification.status!),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Status: ${notification.status!.toUpperCase()}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: _getStatusColor(notification.status!),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _getTimeAgo(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inSeconds < 60) {
+      return 'Just now';
+    } else if (difference.inMinutes < 60) {
+      final mins = difference.inMinutes;
+      return '$mins ${mins == 1 ? 'min' : 'mins'} ago';
+    } else if (difference.inHours < 24) {
+      final hours = difference.inHours;
+      return '$hours ${hours == 1 ? 'hour' : 'hours'} ago';
+    } else if (difference.inDays < 7) {
+      final days = difference.inDays;
+      return '$days ${days == 1 ? 'day' : 'days'} ago';
+    } else {
+      return DateFormat('MMM d').format(dateTime);
+    }
+  }
+
+  IconData _getIncidentIcon(String? type) {
+    switch (type?.toLowerCase()) {
+      case 'fire':
+        return Icons.local_fire_department;
+      case 'flood':
+        return Icons.water;
+      case 'earthquake':
+        return Icons.waves;
+      case 'vehicular':
+      case 'road accident':
+        return Icons.car_crash;
+      default:
+        return Icons.report_problem;
+    }
+  }
+
+  Color _getIncidentColor(String? type) {
+    switch (type?.toLowerCase()) {
+      case 'fire':
+        return const Color(0xFFEF4444);
+      case 'flood':
+        return const Color(0xFF3B82F6);
+      case 'earthquake':
+        return const Color(0xFF8B5CF6);
+      case 'vehicular':
+      case 'road accident':
+        return const Color(0xFFF97316);
+      case 'road obstruction':
+        return const Color(0xFFF59E0B);
+      default:
+        return appBlue;
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return const Color(0xFF3B82F6);
+      case 'responding':
+        return const Color(0xFFF59E0B);
+      case 'on scene':
+      case 'on-scene':
+        return const Color(0xFF8B5CF6);
+      case 'resolved':
+      case 'incident resolved':
+        return const Color(0xFF22C55E);
+      case 'flagged':
+      case 'unverified':
+        return const Color(0xFFEF4444);
+      default:
+        return appBlue;
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return Icons.hourglass_empty;
+      case 'responding':
+        return Icons.directions_run;
+      case 'on scene':
+      case 'on-scene':
+        return Icons.location_on;
+      case 'resolved':
+      case 'incident resolved':
+        return Icons.check_circle;
+      case 'flagged':
+      case 'unverified':
+        return Icons.flag;
+      default:
+        return Icons.info_outline;
+    }
+  }
+}
+
+enum _NotificationType { announcement, incident }
+
+class _NotificationItem {
+  final String id;
+  final _NotificationType type;
+  final String title;
+  final String? subtitle;
+  final DateTime timestamp;
+  final String? imageUrl;
+  final String? incidentType;
+  final String? location;
+  final String? reporter;
+  final String? status;
+  final bool isNew;
+
+  _NotificationItem({
+    required this.id,
+    required this.type,
+    required this.title,
+    this.subtitle,
+    required this.timestamp,
+    this.imageUrl,
+    this.incidentType,
+    this.location,
+    this.reporter,
+    this.status,
+    this.isNew = false,
+  });
+
+  factory _NotificationItem.fromAnnouncement(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data()!;
+    final ts = data['createdAt'];
+    DateTime timestamp = DateTime.now();
+    if (ts is Timestamp) {
+      timestamp = ts.toDate();
+    }
+
+    // Check if explicitly marked as new, otherwise use time-based logic (24 hours)
+    bool isNew;
+    if (data['isNew'] != null) {
+      isNew = data['isNew'] as bool;
+    } else {
+      isNew = DateTime.now().difference(timestamp).inHours < 24;
+    }
+
+    return _NotificationItem(
+      id: doc.id,
+      type: _NotificationType.announcement,
+      title: data['title'] as String? ?? 'Announcement',
+      subtitle: data['content'] as String?,
+      timestamp: timestamp,
+      imageUrl: data['imageUrl'] as String?,
+      isNew: isNew,
+    );
+  }
+
+  factory _NotificationItem.fromReport(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data()!;
+    final ts = data['reportedAt'];
+    DateTime timestamp = DateTime.now();
+    if (ts is Timestamp) {
+      timestamp = ts.toDate();
+    }
+
+    final incidentType = data['incidentType'] as String? ?? 'Incident';
+    final reporter = data['name'] as String?;
+    final details = data['details'] as String?;
+    final barangay = data['barangay'] as String?;
+    final status = data['status'] as String?;
+
+    // Check if explicitly marked as new, otherwise use time-based logic (6 hours)
+    bool isNew;
+    if (data['isNew'] != null) {
+      isNew = data['isNew'] as bool;
+    } else {
+      isNew = DateTime.now().difference(timestamp).inHours < 6;
+    }
+
+    return _NotificationItem(
+      id: doc.id,
+      type: _NotificationType.incident,
+      title: '$incidentType incident reported',
+      subtitle: details,
+      timestamp: timestamp,
+      incidentType: incidentType,
+      location: barangay ?? 'Location not specified',
+      reporter: reporter,
+      status: status,
+      isNew: isNew,
     );
   }
 }

@@ -1131,10 +1131,10 @@ class _ReportMapPageState extends State<ReportMapPage>
     return GestureDetector(
       onTap: _toggleWeatherCard,
       child: Container(
-        width: 56,
-        height: 56,
+        width: 40,
+        height: 40,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -1160,6 +1160,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         child: Icon(
           _weatherIcon(_weatherData?.state ?? WeatherState.cloudy),
           color: Colors.white,
+          size: 20,
         ),
       ),
     );
@@ -2095,25 +2096,14 @@ class _ReportMapPageState extends State<ReportMapPage>
                           ),
                         ],
                       ),
-                      Row(
-                        children: [
-                          if (UserSession.activeReports.length > 1)
-                            IconButton(
-                              icon: const Icon(
-                                Icons.swap_horiz,
-                                color: Colors.white,
-                              ),
-                              onPressed: _showReportSwitcher,
-                            ),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.my_location,
-                              color: Colors.white,
-                            ),
-                            onPressed: _goToCurrentLocation,
+                      if (UserSession.activeReports.length > 1)
+                        IconButton(
+                          icon: const Icon(
+                            Icons.swap_horiz,
+                            color: Colors.white,
                           ),
-                        ],
-                      ),
+                          onPressed: _showReportSwitcher,
+                        ),
                     ],
                   ),
                 ),
@@ -2139,30 +2129,6 @@ class _ReportMapPageState extends State<ReportMapPage>
               ),
             ),
           ),
-
-          // Draggable report card that sits on the nav bar
-          if (_showReportCard)
-            Positioned.fill(
-              child: DraggableScrollableSheet(
-                maxChildSize: 0.92,
-                initialChildSize: 0.5,
-                minChildSize: 0.15,
-                snap: true,
-                snapSizes: const [0.15, 0.5, 0.92],
-                expand: false,
-                builder: (context, scrollController) =>
-                    _buildReportSheet(scrollController),
-              ),
-            ),
-
-          // Local peek card (comes from map page only)
-          if (!_showReportCard)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 76, // sits just above the bottom nav bar
-              child: SafeArea(top: false, child: _buildPeekCard()),
-            ),
 
           // Success card
           if (_showSuccessCard)
@@ -2223,25 +2189,84 @@ class _ReportMapPageState extends State<ReportMapPage>
               ),
             ),
 
+          _buildWeatherCard(),
+
+          // Floating buttons - positioned before the sheet so they get covered when dragged up
           Positioned(
-            bottom: 96,
-            right: 16,
+            bottom: MediaQuery.of(context).size.height * 0.18 + 16,
+            left: 16,
             child: Column(
               children: [
                 _buildWeatherButton(),
                 const SizedBox(height: 12),
-                FloatingActionButton(
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFFAC1B22),
-                  elevation: 4,
+                FloatingActionButton.small(
+                  heroTag: 'report_location',
+                  backgroundColor: const Color(0xFFAC1B22),
                   onPressed: _goToCurrentLocation,
-                  child: const Icon(Icons.my_location),
+                  child: const Icon(Icons.my_location, color: Colors.white),
                 ),
               ],
             ),
           ),
 
-          _buildWeatherCard(),
+          // Zoom controls on the right
+          Positioned(
+            bottom: MediaQuery.of(context).size.height * 0.18 + 16,
+            right: 16,
+            child: Column(
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'report_zoom_in',
+                  backgroundColor: Colors.white,
+                  onPressed: () {
+                    final currentZoom = _mapController.camera.zoom;
+                    _mapController.move(
+                      _mapController.camera.center,
+                      currentZoom + 1,
+                    );
+                  },
+                  child: const Icon(Icons.add, color: Color(0xFF004FC6)),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton.small(
+                  heroTag: 'report_zoom_out',
+                  backgroundColor: Colors.white,
+                  onPressed: () {
+                    final currentZoom = _mapController.camera.zoom;
+                    _mapController.move(
+                      _mapController.camera.center,
+                      currentZoom - 1,
+                    );
+                  },
+                  child: const Icon(Icons.remove, color: Color(0xFF004FC6)),
+                ),
+              ],
+            ),
+          ),
+
+          // Draggable report card that sits on the nav bar - positioned after buttons so it covers them
+          if (_showReportCard)
+            Positioned.fill(
+              child: DraggableScrollableSheet(
+                maxChildSize: 0.92,
+                initialChildSize: 0.5,
+                minChildSize: 0.15,
+                snap: true,
+                snapSizes: const [0.15, 0.5, 0.92],
+                expand: false,
+                builder: (context, scrollController) =>
+                    _buildReportSheet(scrollController),
+              ),
+            ),
+
+          // Local peek card (comes from map page only)
+          if (!_showReportCard)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 76, // sits just above the bottom nav bar
+              child: SafeArea(top: false, child: _buildPeekCard()),
+            ),
         ],
       ),
       bottomNavigationBar: widget.showBottomNav
