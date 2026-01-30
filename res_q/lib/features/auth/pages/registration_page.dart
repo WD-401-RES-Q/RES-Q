@@ -225,7 +225,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
         },
         codeSent: (String verificationId, int? resendToken) {
           setState(() => _loading = false);
-          TextInput.finishAutofillContext(); // Trigger "Save to Google" prompt
+          _finishAutofillContext(); // Trigger "Save to Google" prompt
 
           if (mounted) {
             Navigator.pushNamed(
@@ -254,6 +254,14 @@ class _RegistrationPageState extends State<RegistrationPage> {
           ),
         );
       }
+    }
+  }
+
+  void _finishAutofillContext() {
+    try {
+      TextInput.finishAutofillContext();
+    } catch (e) {
+      debugPrint('Failed to finish autofill: $e');
     }
   }
 

@@ -5,6 +5,7 @@ import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
@@ -60,6 +61,7 @@ class _ReportMapPageState extends State<ReportMapPage>
   // Weather cache (shared across instances, 15 min TTL)
   static _WeatherData? _cachedWeatherData;
   static DateTime? _weatherCacheTime;
+  static Future<_WeatherData>? _weatherRequestInFlight;
   static const Duration _weatherCacheDuration = Duration(minutes: 15);
   bool _showWeatherCard = false;
   bool _isWeatherLoading = false;
@@ -1331,6 +1333,13 @@ class _ReportMapPageState extends State<ReportMapPage>
     );
   }
 
+  @visibleForTesting
+  static void resetWeatherCacheForTesting() {
+    _cachedWeatherData = null;
+    _weatherCacheTime = null;
+    _weatherRequestInFlight = null;
+  }
+
   Future<_WeatherData> _fetchWeatherForAngeles() async {
     // Return cached data if still valid
     if (_cachedWeatherData != null && _weatherCacheTime != null) {
@@ -1340,6 +1349,27 @@ class _ReportMapPageState extends State<ReportMapPage>
       }
     }
 
+    if (_weatherRequestInFlight != null) {
+      return _weatherRequestInFlight!;
+    }
+
+    final request = _requestWeatherFromApi();
+    _weatherRequestInFlight = request;
+    try {
+      final weatherData = await request;
+      _cachedWeatherData = weatherData;
+      _weatherCacheTime = DateTime.now();
+      return weatherData;
+    } catch (_) {
+      _cachedWeatherData = null;
+      _weatherCacheTime = null;
+      rethrow;
+    } finally {
+      _weatherRequestInFlight = null;
+    }
+  }
+
+  Future<_WeatherData> _requestWeatherFromApi() async {
     const lat = 15.1450;
     const lon = 120.5887;
     final uri = Uri.parse(
@@ -1366,19 +1396,13 @@ class _ReportMapPageState extends State<ReportMapPage>
     final state = _mapWeatherState(code.toInt());
     final description = _mapWeatherDescription(code.toInt());
 
-    final weatherData = _WeatherData(
+    return _WeatherData(
       temperature: temperature,
       max: max.toDouble(),
       min: min.toDouble(),
       state: state,
       description: description,
     );
-
-    // Cache the result
-    _cachedWeatherData = weatherData;
-    _weatherCacheTime = DateTime.now();
-
-    return weatherData;
   }
 
   WeatherState _mapWeatherState(int code) {
@@ -1531,13 +1555,18 @@ class _ReportMapPageState extends State<ReportMapPage>
                             child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                         ),
-                        errorWidget: (context, url, error) => Container(
-                          height: 200,
-                          color: Colors.grey[300],
-                          child: const Center(
-                            child: Icon(Icons.image_not_supported),
-                          ),
-                        ),
+                        errorWidget: (context, url, error) {
+                          debugPrint(
+                            'Failed to load image: $url, error: $error',
+                          );
+                          return Container(
+                            height: 200,
+                            color: Colors.grey[300],
+                            child: const Center(
+                              child: Icon(Icons.image_not_supported),
+                            ),
+                          );
+                        },
                       ),
                     ),
                   if (widget.reportData['mediaUrl'] != null &&

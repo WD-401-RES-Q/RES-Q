@@ -134,7 +134,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin biometric login successful!');
-        TextInput.finishAutofillContext(); // Trigger "Save to Google" prompt
+        _finishAutofillContext(); // Trigger "Save to Google" prompt
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -158,9 +158,10 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       }
 
       final userDoc = userQuery.docs.first;
-      final userData = userDoc.data();
-      // Include the Firestore document ID in userData for later use
-      userData['docId'] = userDoc.id;
+      final userData = {
+        ...userDoc.data(),
+        'docId': userDoc.id,
+      };
       final accountStatus = userData['accountStatus'] as String?;
 
       if (accountStatus != 'approved') {
@@ -179,16 +180,24 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       // Login successful
       UserSession.setUserData(userData);
-      TextInput.finishAutofillContext(); // Trigger "Save to Google" prompt
+      _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const MainPage()),
         );
       }
-    } catch (e) {
+  } catch (e) {
       setState(() => _loading = false);
       _showError('Error: $e');
+    }
+  }
+
+  void _finishAutofillContext() {
+    try {
+      TextInput.finishAutofillContext();
+    } catch (e) {
+      debugPrint('Failed to finish autofill: $e');
     }
   }
 
@@ -351,7 +360,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin login successful via PIN!');
-        TextInput.finishAutofillContext(); // Trigger "Save to Google" prompt
+        _finishAutofillContext(); // Trigger "Save to Google" prompt
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -376,9 +385,10 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       }
 
       final userDoc = userQuery.docs.first;
-      final userData = userDoc.data();
-      // Include the Firestore document ID in userData for later use
-      userData['docId'] = userDoc.id;
+      final userData = {
+        ...userDoc.data(),
+        'docId': userDoc.id,
+      };
       final accountStatus = userData['accountStatus'] as String?;
 
       if (accountStatus != 'approved') {
@@ -397,7 +407,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       // Login successful
       UserSession.setUserData(userData);
-      TextInput.finishAutofillContext(); // Trigger "Save to Google" prompt
+      _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
         Navigator.of(context).pushReplacement(
