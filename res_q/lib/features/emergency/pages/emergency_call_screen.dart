@@ -36,7 +36,7 @@ class EmergencyCallScreen extends StatelessWidget {
               
               // Text below the image
               const Text(
-                'STAY CALM. CURRENTLY\nCONTACTING ACDRRMO...',
+                'STAY CALM. CURRENTLY\nCONTACTING RESPONDERS...',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 24,
