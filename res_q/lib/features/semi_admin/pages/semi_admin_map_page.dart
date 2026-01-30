@@ -1258,10 +1258,13 @@ class _AdminMapPageState extends State<AdminMapPage>
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 560),
                 child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                  child: GestureDetector(
+                    onTap: () => FocusScope.of(context).unfocus(),
+                    behavior: HitTestBehavior.opaque,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                       Row(
                         children: [
                       Container(
@@ -1605,6 +1608,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                     ],
                   ),
                     ],
+                  ),
                   ),
                 ),
               ),

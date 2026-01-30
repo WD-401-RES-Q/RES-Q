@@ -723,9 +723,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       backgroundColor: const Color(0xFFF7F8F3),
       body: SafeArea(
         child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-            child: Column(
+          child: GestureDetector(
+            onTap: () => FocusScope.of(context).unfocus(),
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+              child: Column(
               children: [
                 // Back button + logo row
                 Row(
@@ -1130,6 +1133,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 const SizedBox(height: 24),
               ],
             ),
+          ),
           ),
         ),
       ),

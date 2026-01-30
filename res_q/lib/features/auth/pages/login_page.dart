@@ -134,6 +134,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin biometric login successful!');
+        _finishAutofillContext(); // Trigger "Save to Google" prompt
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -156,7 +157,11 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         return;
       }
 
-      final userData = userQuery.docs.first.data();
+      final userDoc = userQuery.docs.first;
+      final userData = {
+        ...userDoc.data(),
+        'docId': userDoc.id,
+      };
       final accountStatus = userData['accountStatus'] as String?;
 
       if (accountStatus != 'approved') {
@@ -175,15 +180,24 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       // Login successful
       UserSession.setUserData(userData);
+      _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const MainPage()),
         );
       }
-    } catch (e) {
+  } catch (e) {
       setState(() => _loading = false);
       _showError('Error: $e');
+    }
+  }
+
+  void _finishAutofillContext() {
+    try {
+      TextInput.finishAutofillContext();
+    } catch (e) {
+      debugPrint('Failed to finish autofill: $e');
     }
   }
 
@@ -346,6 +360,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin login successful via PIN!');
+        _finishAutofillContext(); // Trigger "Save to Google" prompt
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -369,7 +384,11 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         return;
       }
 
-      final userData = userQuery.docs.first.data();
+      final userDoc = userQuery.docs.first;
+      final userData = {
+        ...userDoc.data(),
+        'docId': userDoc.id,
+      };
       final accountStatus = userData['accountStatus'] as String?;
 
       if (accountStatus != 'approved') {
@@ -388,6 +407,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       // Login successful
       UserSession.setUserData(userData);
+      _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
         Navigator.of(context).pushReplacement(
@@ -614,18 +634,22 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
             Expanded(
               child: Center(
                 child: SingleChildScrollView(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 360),
-                    child: Padding(
+                  child: GestureDetector(
+                    onTap: () => FocusScope.of(context).unfocus(),
+                    behavior: HitTestBehavior.opaque,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 360),
+                      child: Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 24,
                         vertical: 16,
                       ),
-                      child: Form(
-                        key: _formKey,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
+                      child: AutofillGroup(
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
                             // Phone Number Field with +63 prefix
                             Text(
                               'PHONE NUMBER',
@@ -681,6 +705,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                                     child: TextFormField(
                                       controller: _phoneCtl,
                                       keyboardType: TextInputType.phone,
+                                      autofillHints: const [AutofillHints.telephoneNumber],
                                       inputFormatters: [
                                         FilteringTextInputFormatter.digitsOnly,
                                         LengthLimitingTextInputFormatter(10),
@@ -912,7 +937,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                                 ),
                               ),
                             ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -920,6 +946,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                 ),
               ),
             ),
+          ),
           ],
         ),
       ),

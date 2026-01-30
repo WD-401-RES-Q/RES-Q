@@ -345,9 +345,12 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 360),
-              child: Padding(
+            child: GestureDetector(
+              onTap: () => FocusScope.of(context).unfocus(),
+              behavior: HitTestBehavior.opaque,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 360),
+                child: Padding(
                 padding: const EdgeInsets.all(24.0),
                 child: Form(
                   key: _formKey,
@@ -474,6 +477,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
                   ),
                 ),
               ),
+            ),
             ),
           ),
         ),
