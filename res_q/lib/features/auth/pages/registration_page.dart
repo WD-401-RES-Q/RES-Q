@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
@@ -535,7 +535,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                   : _submit,
                               height: 48,
                               radius: 30,
-                              backgroundColor: AppTheme.appRed,
+                              backgroundColor: AppTheme.appOffYellow,
                               textStyle: AppTextStyles.authButton,
                             ),
                             ],
@@ -554,3 +554,5 @@ class _RegistrationPageState extends State<RegistrationPage> {
     );
   }
 }
+
+
