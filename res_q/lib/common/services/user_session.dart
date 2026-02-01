@@ -18,6 +18,8 @@ class UserSession {
     _userId = data['id'] as String? ??
               data['uid'] as String? ??
               data['userId'] as String? ??
+              data['docId'] as String? ??
+              data['contactNumber'] as String? ??
               currentUsername;
   }
 

@@ -1,10 +1,10 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 /// App-wide color constants
 class AppColors {
   // Brand colors
-  static const Color appBlue = Color(0xFFAC1B22);
   static const Color appRed = Color(0xFFAC1B22);
+  static const Color appOffYellow = Color(0xFFFFC806);
   static const Color appGreen = Color(0xFF00A458); // True green
   static const Color appYellow = Color(0xFFFFC806); // Yellow for under review
   static const Color appBlack = Color(0xFF212121);
@@ -26,3 +26,4 @@ extension ColorUtilities on Color {
   /// Get opacity variant of color
   Color withCustomOpacity(double opacity) => withOpacity(opacity);
 }
+

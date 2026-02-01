@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/widgets/app_snackbar.dart';
 import '../../auth/pages/login_page.dart';
 
 // ============================================================================
@@ -438,11 +439,11 @@ class _ProfilePageState extends State<ProfilePage>
     } catch (e) {
       debugPrint('Failed to capture profile photo: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to capture photo. Please try again.'),
-            backgroundColor: Colors.red,
-          ),
+        AppSnackBar.show(
+          context,
+          'Failed to capture photo. Please try again.',
+          type: AppSnackBarType.error,
+          useRootOverlay: true,
         );
       }
     }
@@ -477,11 +478,11 @@ class _ProfilePageState extends State<ProfilePage>
     } catch (e) {
       debugPrint('Failed to pick profile photo: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to select photo. Please try again.'),
-            backgroundColor: Colors.red,
-          ),
+        AppSnackBar.show(
+          context,
+          'Failed to select photo. Please try again.',
+          type: AppSnackBarType.error,
+          useRootOverlay: true,
         );
       }
     }
@@ -537,11 +538,11 @@ class _ProfilePageState extends State<ProfilePage>
     } catch (e) {
       debugPrint('Failed to crop profile photo: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to crop photo. Please try again.'),
-            backgroundColor: Colors.red,
-          ),
+        AppSnackBar.show(
+          context,
+          'Failed to crop photo. Please try again.',
+          type: AppSnackBarType.error,
+          useRootOverlay: true,
         );
       }
     }
@@ -597,21 +598,21 @@ class _ProfilePageState extends State<ProfilePage>
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Profile picture saved!'),
-            backgroundColor: Color(0xFF22C55E),
-          ),
+        AppSnackBar.show(
+          context,
+          'Profile picture saved!',
+          type: AppSnackBarType.success,
+          useRootOverlay: true,
         );
       }
     } catch (e) {
       debugPrint('❌ Failed to upload profile photo: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Photo selected but failed to save. Will retry on next app open.'),
-            backgroundColor: Colors.orange,
-          ),
+        AppSnackBar.show(
+          context,
+          'Photo selected but failed to save. Will retry on next app open.',
+          type: AppSnackBarType.warning,
+          useRootOverlay: true,
         );
       }
     } finally {
@@ -969,9 +970,6 @@ class _ProfilePageState extends State<ProfilePage>
                                     errorMessage = null;
                                   });
 
-                                  // Capture messenger before async gap
-                                  final messenger = ScaffoldMessenger.of(context);
-
                                   try {
                                     // Use set with merge to handle both create and update
                                     await FirebaseFirestore.instance
@@ -997,12 +995,11 @@ class _ProfilePageState extends State<ProfilePage>
                                     });
 
                                     if (mounted) {
-                                      messenger.showSnackBar(
-                                        const SnackBar(
-                                          content:
-                                              Text('Profile updated successfully!'),
-                                          backgroundColor: Color(0xFF22C55E),
-                                        ),
+                                      AppSnackBar.show(
+                                        context,
+                                        'Profile updated successfully!',
+                                        type: AppSnackBarType.success,
+                                        useRootOverlay: true,
                                       );
                                       // Refresh the main page
                                       setState(() {});
@@ -1268,15 +1265,15 @@ class _ProfilePageState extends State<ProfilePage>
                                       await _setBiometricsEnabled(value);
                                       setModalState(() {});
                                       if (mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              value
-                                                  ? 'Biometric login enabled'
-                                                  : 'Biometric login disabled',
-                                            ),
-                                            backgroundColor: const Color(0xFF22C55E),
-                                          ),
+                                        AppSnackBar.show(
+                                          context,
+                                          value
+                                              ? 'Biometric login enabled'
+                                              : 'Biometric login disabled',
+                                          type: value
+                                              ? AppSnackBarType.success
+                                              : AppSnackBarType.info,
+                                          useRootOverlay: true,
                                         );
                                       }
                                     }
@@ -1791,11 +1788,11 @@ class _ProfilePageState extends State<ProfilePage>
                                     // Close dialog
                                     if (mounted) {
                                       Navigator.pop(dialogContext);
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('PIN changed successfully!'),
-                                          backgroundColor: Color(0xFF22C55E),
-                                        ),
+                                      AppSnackBar.show(
+                                        context,
+                                        'PIN changed successfully!',
+                                        type: AppSnackBarType.success,
+                                        useRootOverlay: true,
                                       );
                                     }
                                   } catch (e) {
@@ -1946,11 +1943,11 @@ class _ProfilePageState extends State<ProfilePage>
             'Learn how to use RESQ',
             onTap: () {
               // User guide content - can be expanded later
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('User Guide coming soon!'),
-                  backgroundColor: Color(0xFFAC1B22),
-                ),
+              AppSnackBar.show(
+                context,
+                'User Guide coming soon!',
+                type: AppSnackBarType.info,
+                useRootOverlay: true,
               );
             },
           ),
@@ -1969,11 +1966,11 @@ class _ProfilePageState extends State<ProfilePage>
                   await launchUrl(emailUri);
                 } else {
                   if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Could not open email app'),
-                        backgroundColor: Colors.red,
-                      ),
+                    AppSnackBar.show(
+                      context,
+                      'Could not open email app',
+                      type: AppSnackBarType.error,
+                      useRootOverlay: true,
                     );
                   }
                 }
@@ -2161,12 +2158,11 @@ class _ProfilePageState extends State<ProfilePage>
                               await launchUrl(emailUri);
                               if (mounted) {
                                 Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                        'Email app opened. Please send your report.'),
-                                    backgroundColor: Color(0xFF22C55E),
-                                  ),
+                                AppSnackBar.show(
+                                  context,
+                                  'Email app opened. Please send your report.',
+                                  type: AppSnackBarType.success,
+                                  useRootOverlay: true,
                                 );
                               }
                             } else {
@@ -2337,12 +2333,11 @@ class _ProfilePageState extends State<ProfilePage>
                               await launchUrl(emailUri);
                               if (mounted) {
                                 Navigator.pop(context);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                        'Email app opened. Thank you for your feedback!'),
-                                    backgroundColor: Color(0xFF22C55E),
-                                  ),
+                                AppSnackBar.show(
+                                  context,
+                                  'Email app opened. Thank you for your feedback!',
+                                  type: AppSnackBarType.success,
+                                  useRootOverlay: true,
                                 );
                               }
                             } else {

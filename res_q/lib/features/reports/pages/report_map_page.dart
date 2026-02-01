@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
@@ -158,7 +158,7 @@ class _ReportMapPageState extends State<ReportMapPage>
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            const Icon(Icons.location_on, color: AppColors.appBlue, size: 28),
+            const Icon(Icons.location_on, color: AppColors.appRed, size: 28),
             const SizedBox(width: 12),
             Text('Share Location', style: AppText.subheading),
           ],
@@ -1955,9 +1955,9 @@ class _ReportMapPageState extends State<ReportMapPage>
       case 'PENDING':
         return const Color(0xFF2563EB);
       case 'RESPONDING':
-        return AppColors.appRed;
+        return AppColors.appOffYellow;
       case 'ON SCENE':
-        return AppColors.appBlue;
+        return AppColors.appRed;
       case 'FLAGGED':
         return const Color(0xFFDC2626);
       case 'RESOLVED':
@@ -2363,3 +2363,5 @@ class _RouteResult {
   final double distanceMeters;
   final double durationSeconds;
 }
+
+

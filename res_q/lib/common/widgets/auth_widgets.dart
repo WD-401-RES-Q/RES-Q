@@ -1,4 +1,4 @@
-import 'dart:io';
+﻿import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -130,7 +130,7 @@ class AuthTextField extends StatelessWidget {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(fieldRadius),
-              borderSide: const BorderSide(color: AppTheme.appBlue, width: 1.8),
+              borderSide: const BorderSide(color: AppTheme.appRed, width: 1.8),
             ),
             errorBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(fieldRadius),
@@ -214,7 +214,7 @@ class IdPhotoUploadWidget extends StatelessWidget {
                 child: Container(
                   height: 64,
                   decoration: BoxDecoration(
-                    color: uploadingPhoto ? Colors.grey[400] : AppTheme.appRed,
+                    color: uploadingPhoto ? Colors.grey[400] : AppTheme.appOffYellow,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Center(
@@ -289,7 +289,7 @@ class DateOfBirthInput extends StatelessWidget {
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(fieldRadius),
-        borderSide: const BorderSide(color: AppTheme.appBlue, width: 1.8),
+        borderSide: const BorderSide(color: AppTheme.appRed, width: 1.8),
       ),
       errorText: hasError ? '' : null,
       errorStyle: const TextStyle(fontSize: 0, height: 0),
@@ -452,7 +452,7 @@ class TermsCheckbox extends StatelessWidget {
               onChanged: null,
               checkColor: Colors.white,
               fillColor: WidgetStateProperty.resolveWith((states) {
-                if (agreed) return AppTheme.appBlue;
+                if (agreed) return AppTheme.appRed;
                 return Colors.grey[400];
               }),
             ),
@@ -465,7 +465,7 @@ class TermsCheckbox extends StatelessWidget {
               'READ AND AGREE TO TERMS AND CONDITIONS',
               style: const TextStyle(
                 fontSize: 11,
-                color: AppTheme.appBlue,
+                color: AppTheme.appRed,
                 decoration: TextDecoration.underline,
                 fontWeight: FontWeight.w600,
               ),
@@ -732,7 +732,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                     width: 32,
                     height: 32,
                     decoration: BoxDecoration(
-                      color: AppTheme.appBlue,
+                      color: AppTheme.appRed,
                       shape: BoxShape.circle,
                     ),
                     child: const Center(
@@ -758,7 +758,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(
                       Icons.close,
-                      color: AppTheme.appBlue,
+                      color: AppTheme.appRed,
                       size: 22,
                     ),
                     padding: EdgeInsets.zero,
@@ -835,7 +835,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                           children: [
                             Icon(
                               iconData,
-                              color: AppTheme.appBlue,
+                              color: AppTheme.appRed,
                               size: 20,
                             ),
                             const SizedBox(width: 12),
@@ -860,14 +860,14 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppTheme.appBlue.withValues(alpha: 0.1),
+                  color: AppTheme.appRed.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   children: [
                     const Icon(
                       Icons.tips_and_updates,
-                      color: AppTheme.appBlue,
+                      color: AppTheme.appRed,
                       size: 18,
                     ),
                     const SizedBox(width: 10),
@@ -946,7 +946,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
-              Icon(icon, color: AppTheme.appBlue),
+              Icon(icon, color: AppTheme.appRed),
               const SizedBox(width: 10),
               Text(
                 label,
@@ -1241,7 +1241,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                 child: Container(
                   height: boxHeight,
                   decoration: BoxDecoration(
-                    color: isUploading ? Colors.grey[400] : AppTheme.appRed,
+                    color: isUploading ? Colors.grey[400] : AppTheme.appOffYellow,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Center(
@@ -1305,7 +1305,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                 width: 20,
                 height: 20,
                 decoration: BoxDecoration(
-                  color: AppTheme.appBlue,
+                  color: AppTheme.appRed,
                   shape: BoxShape.circle,
                 ),
                 child: const Center(
@@ -1390,7 +1390,7 @@ class TermsAndConditionsDialog {
                           onPressed: () => Navigator.pop(context),
                           icon: const Icon(
                             Icons.close,
-                            color: AppTheme.appBlue,
+                            color: AppTheme.appRed,
                           ),
                         ),
                       ],
@@ -1448,10 +1448,10 @@ class TermsAndConditionsDialog {
                               onPressed: () => Navigator.pop(context),
                               style: OutlinedButton.styleFrom(
                                 side: const BorderSide(
-                                  color: AppTheme.appBlue,
+                                  color: AppTheme.appRed,
                                   width: 1.4,
                                 ),
-                                foregroundColor: AppTheme.appBlue,
+                                foregroundColor: AppTheme.appRed,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -1460,7 +1460,7 @@ class TermsAndConditionsDialog {
                                 'CLOSE',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w600,
-                                  color: AppTheme.appBlue,
+                                  color: AppTheme.appRed,
                                 ),
                               ),
                             ),
@@ -1478,7 +1478,7 @@ class TermsAndConditionsDialog {
                                     }
                                   : null,
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: AppTheme.appRed,
+                                backgroundColor: AppTheme.appOffYellow,
                                 disabledBackgroundColor:
                                     AppTheme.appBlack.withOpacity(0.15),
                                 shape: RoundedRectangleBorder(
@@ -1645,3 +1645,5 @@ By clicking "I AGREE," you acknowledge that:
 - You understand your responsibilities in accurate disaster reporting''';
   }
 }
+
+

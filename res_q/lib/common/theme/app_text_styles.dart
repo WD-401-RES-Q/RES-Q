@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'app_colors.dart';
 
 /// App-wide text style constants
@@ -236,7 +236,7 @@ class AppTextStyles {
     fontFamily: 'Roboto',
     fontSize: 11,
     fontWeight: FontWeight.w600,
-    color: AppColors.appBlue,
+    color: AppColors.appRed,
     decoration: TextDecoration.underline,
   );
 
@@ -247,3 +247,4 @@ class AppTextStyles {
     color: Colors.grey,
   );
 }
+

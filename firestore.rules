@@ -13,6 +13,12 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == uid;
     }
 
+    function isValidUserVotes() {
+      return request.resource.data.keys().hasOnly(['votes']) &&
+          request.resource.data.votes is map &&
+          request.resource.data.votes.values().hasOnly(['green', 'red', 'none']);
+    }
+
     // Admins collection - open read for admin login (no Firebase Auth)
     match /admins/{docId} {
       allow read: if true;
@@ -68,6 +74,13 @@ service cloud.firestore {
         allow update: if true;
         allow delete: if false;
       }
+    }
+
+    // User votes (verify/report selections per user)
+    match /userVotes/{docId} {
+      allow read: if true;
+      allow create, update: if isValidUserVotes();
+      allow delete: if false;
     }
 
     // Root-level comments collection

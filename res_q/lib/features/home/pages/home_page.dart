@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
+import '../../../common/widgets/app_snackbar.dart';
 
 import '../../community/pages/community_page.dart';
 import '../../notifications/pages/notifications_page.dart';
@@ -290,11 +291,10 @@ class _HomePageContentState extends State<_HomePageContent>
                     }
                   },
                   onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Press and hold to place a call'),
-                        duration: Duration(seconds: 2),
-                      ),
+                    AppSnackBar.show(
+                      context,
+                      'Press and hold to place a call',
+                      type: AppSnackBarType.info,
                     );
                   },
                   child: _buildAnimatedBorder(

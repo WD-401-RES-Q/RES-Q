@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
 class BottomNavItemConfig {
@@ -41,7 +41,7 @@ class _BottomNavBarState extends State<BottomNavBar> {
     return Container(
       padding: const EdgeInsets.only(top: 6),
       decoration: const BoxDecoration(
-        color: AppColors.appBlue,
+        color: AppColors.appRed,
         borderRadius: BorderRadius.only(
           topLeft: Radius.circular(10),
           topRight: Radius.circular(10),
@@ -129,3 +129,4 @@ class _BottomNavBarState extends State<BottomNavBar> {
     ),
   ];
 }
+

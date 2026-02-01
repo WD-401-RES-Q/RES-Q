@@ -354,262 +354,411 @@ class _CommunityPageState extends State<CommunityPage> {
           builder: (dialogContext) {
             return Dialog(
               insetPadding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 32,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 520,
+                  minWidth: 300,
+                  maxHeight: MediaQuery.of(context).size.height * 0.72,
+                ),
+                child: StatefulBuilder(
+                  builder: (context, setStateDialog) {
+                    return Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // HEADER (Yellow/Green background with white text)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 16,
+                          ),
+                          decoration: BoxDecoration(
+                            color: headerColor,
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(20),
+                              topRight: Radius.circular(20),
+                            ),
+                          ),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // Close button (X) on top right
+                              Positioned(
+                                right: 0,
+                                top: 0,
+                                child: GestureDetector(
+                                  onTap: () =>
+                                      Navigator.of(dialogContext).pop(false),
+                                  child: Container(
+                                    width: 32,
+                                    height: 32,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.2),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.close,
+                                      color: Colors.white,
+                                      size: 20,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              // Header text
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 8),
+                                child: Text(
+                                  headerText,
+                                  style: const TextStyle(
+                                    fontFamily: 'Roboto',
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // BODY (White background)
+                        Flexible(
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(24),
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.only(
+                                bottomLeft: Radius.circular(20),
+                                bottomRight: Radius.circular(20),
+                              ),
+                            ),
+                            child: SingleChildScrollView(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  // Question
+                                  Text(
+                                    question,
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(
+                                      fontFamily: 'RobotoCondensed',
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.w400,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 24),
+
+                                  // Reasons (Checkboxes)
+                                  ...List.generate(reasons.length, (i) {
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8.0,
+                                      ),
+                                      child: InkWell(
+                                        onTap: () {
+                                          setStateDialog(() {
+                                            selected[i] = !selected[i];
+                                          });
+                                        },
+                                        child: Row(
+                                          children: [
+                                            Container(
+                                              width: 40,
+                                              height: 40,
+                                              decoration: BoxDecoration(
+                                                borderRadius:
+                                                    BorderRadius.circular(
+                                                  6,
+                                                ),
+                                                border: Border.all(
+                                                  color: Colors.black,
+                                                  width: 2,
+                                                ),
+                                                color: selected[i]
+                                                    ? headerColor
+                                                        .withOpacity(0.1)
+                                                    : Colors.white,
+                                              ),
+                                              child: selected[i]
+                                                  ? Icon(
+                                                      Icons.check,
+                                                      size: 28,
+                                                      color: headerColor,
+                                                    )
+                                                  : null,
+                                            ),
+                                            const SizedBox(width: 16),
+                                            Expanded(
+                                              child: Text(
+                                                reasons[i],
+                                                style: const TextStyle(
+                                                  fontFamily: 'RobotoCondensed',
+                                                  fontSize: 18,
+                                                  fontWeight: FontWeight.w400,
+                                                  color: Colors.black,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  }),
+
+                                  const SizedBox(height: 24),
+
+                                  // Additional Comments Label
+                                  Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      'Additional Comments',
+                                      style: const TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w400,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+
+                                  // Text Field
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE8E8E8),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: TextField(
+                                      controller: commentController,
+                                      maxLines: 4,
+                                      style: const TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w400,
+                                        color: Colors.black,
+                                      ),
+                                      decoration: const InputDecoration(
+                                        contentPadding: EdgeInsets.all(16),
+                                        border: InputBorder.none,
+                                      ),
+                                    ),
+                                  ),
+
+                                  if (errorText != null) ...[
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      errorText!,
+                                      style: const TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontSize: 14,
+                                        color: Colors.red,
+                                      ),
+                                    ),
+                                  ],
+
+                                  const SizedBox(height: 24),
+
+                                  // Submit Button
+                                  Container(
+                                    width: 200,
+                                    height: 56,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(30),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.25),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 4),
+                                        ),
+                                      ],
+                                    ),
+                                    child: ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: headerColor,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(30),
+                                        ),
+                                        elevation: 0,
+                                      ),
+                                      onPressed: () {
+                                        final hasReason =
+                                            selected.contains(true);
+                                        final hasComment = commentController.text
+                                            .trim()
+                                            .isNotEmpty;
+
+                                        if (!hasReason && !hasComment) {
+                                          setStateDialog(() {
+                                            errorText =
+                                                'Please select a reason or add a comment.';
+                                          });
+                                          return;
+                                        }
+
+                                        Navigator.of(dialogContext).pop(true);
+                                      },
+                                      child: const Text(
+                                        'SUBMIT',
+                                        style: TextStyle(
+                                          fontFamily: 'RobotoCondensed',
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            );
+          },
+        ) ??
+        false;
+
+    return result;
+  }
+
+  Future<bool> _showUndoConfirmDialog({
+    required String title,
+    required String message,
+    required Color headerColor,
+  }) async {
+    final result =
+        await showDialog<bool>(
+          context: context,
+          barrierDismissible: true,
+          builder: (dialogContext) {
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(
                 horizontal: 24,
                 vertical: 24,
               ),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: StatefulBuilder(
-                builder: (context, setStateDialog) {
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // HEADER (Yellow/Green background with white text)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 16,
-                        ),
-                        decoration: BoxDecoration(
-                          color: headerColor,
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(20),
-                            topRight: Radius.circular(20),
-                          ),
-                        ),
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            // Close button (X) on top right
-                            Positioned(
-                              right: 0,
-                              top: 0,
-                              child: GestureDetector(
-                                onTap: () => Navigator.of(dialogContext).pop(false),
-                                child: Container(
-                                  width: 32,
-                                  height: 32,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.2),
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    Icons.close,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            // Header text
-                            Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              child: Text(
-                                headerText,
-                                style: const TextStyle(
-                                  fontFamily: 'Roboto',
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.w900,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      color: headerColor,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(20),
+                        topRight: Radius.circular(20),
                       ),
-
-                      // BODY (White background)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(24),
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.only(
-                            bottomLeft: Radius.circular(20),
-                            bottomRight: Radius.circular(20),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.undo, color: Colors.white),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
+                        GestureDetector(
+                          onTap: () => Navigator.of(dialogContext).pop(false),
+                          child: const Icon(Icons.close, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Column(
+                      children: [
+                        Text(
+                          message,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 16,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
                           children: [
-                            // Question
-                            Text(
-                              question,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                fontFamily: 'RobotoCondensed',
-                                fontSize: 22,
-                                fontWeight: FontWeight.w400,
-                                color: Colors.black,
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-
-                            // Reasons (Checkboxes)
-                            ...List.generate(reasons.length, (i) {
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 8.0,
-                                ),
-                                child: InkWell(
-                                  onTap: () {
-                                    setStateDialog(() {
-                                      selected[i] = !selected[i];
-                                    });
-                                  },
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        width: 40,
-                                        height: 40,
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                          border: Border.all(
-                                            color: Colors.black,
-                                            width: 2,
-                                          ),
-                                          color: selected[i]
-                                              ? headerColor.withOpacity(0.1)
-                                              : Colors.white,
-                                        ),
-                                        child: selected[i]
-                                            ? Icon(
-                                                Icons.check,
-                                                size: 28,
-                                                color: headerColor,
-                                              )
-                                            : null,
-                                      ),
-                                      const SizedBox(width: 16),
-                                      Expanded(
-                                        child: Text(
-                                          reasons[i],
-                                          style: const TextStyle(
-                                            fontFamily: 'RobotoCondensed',
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w400,
-                                            color: Colors.black,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: () =>
+                                    Navigator.of(dialogContext).pop(false),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
                                   ),
-                                ),
-                              );
-                            }),
-
-                            const SizedBox(height: 24),
-
-                            // Additional Comments Label
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                'Additional Comments',
-                                style: const TextStyle(
-                                  fontFamily: 'RobotoCondensed',
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w400,
-                                  color: Colors.black,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-
-                            // Text Field
-                            Container(
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFE8E8E8),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: TextField(
-                                controller: commentController,
-                                maxLines: 4,
-                                style: const TextStyle(
-                                  fontFamily: 'RobotoCondensed',
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w400,
-                                  color: Colors.black,
-                                ),
-                                decoration: const InputDecoration(
-                                  contentPadding: EdgeInsets.all(16),
-                                  border: InputBorder.none,
-                                ),
-                              ),
-                            ),
-
-                            if (errorText != null) ...[
-                              const SizedBox(height: 12),
-                              Text(
-                                errorText!,
-                                style: const TextStyle(
-                                  fontFamily: 'RobotoCondensed',
-                                  fontSize: 14,
-                                  color: Colors.red,
-                                ),
-                              ),
-                            ],
-
-                            const SizedBox(height: 24),
-
-                            // Submit Button
-                            Container(
-                              width: 200,
-                              height: 56,
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(30),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.25),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: headerColor,
+                                  side: BorderSide(color: headerColor),
                                   shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(30),
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
-                                  elevation: 0,
                                 ),
-                                onPressed: () {
-                                  final hasReason = selected.contains(true);
-                                  final hasComment = commentController.text
-                                      .trim()
-                                      .isNotEmpty;
-
-                                  if (!hasReason && !hasComment) {
-                                    setStateDialog(() {
-                                      errorText =
-                                          'Please select a reason or add a comment.';
-                                    });
-                                    return;
-                                  }
-
-                                  Navigator.of(dialogContext).pop(true);
-                                },
-                                child: const Text(
-                                  'SUBMIT',
+                                child: Text(
+                                  'CANCEL',
                                   style: TextStyle(
                                     fontFamily: 'RobotoCondensed',
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w500,
+                                    color: headerColor,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: () =>
+                                    Navigator.of(dialogContext).pop(true),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: headerColor,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'YES, UNDO',
+                                  style: TextStyle(
+                                    fontFamily: 'RobotoCondensed',
                                     color: Colors.white,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ),
                             ),
                           ],
                         ),
-                      ),
-                    ],
-                  );
-                },
+                      ],
+                    ),
+                  ),
+                ],
               ),
             );
           },
@@ -720,8 +869,12 @@ class _CommunityPageState extends State<CommunityPage> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
           ),
-          child: FractionallySizedBox(
-            widthFactor: 0.98,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 520,
+              minWidth: 300,
+              maxHeight: MediaQuery.of(context).size.height * 0.8,
+            ),
             child: SingleChildScrollView(
               child: GestureDetector(
                 onTap: () => FocusScope.of(context).unfocus(),
@@ -974,6 +1127,13 @@ class _CommunityPageState extends State<CommunityPage> {
 
     // Already green → quick unverify
     if (vote == 'green') {
+      final shouldUndo = await _showUndoConfirmDialog(
+        title: 'UNDO VERIFY',
+        message:
+            'You already verified this report. Do you want to undo your verification?',
+        headerColor: statusGreen,
+      );
+      if (!shouldUndo) return;
       setState(() {
         if (report['greenFlags'] > 0) report['greenFlags']--;
         report['userVote'] = 'none';
@@ -1020,6 +1180,13 @@ class _CommunityPageState extends State<CommunityPage> {
 
     // Already red → quick unflag
     if (vote == 'red') {
+      final shouldUndo = await _showUndoConfirmDialog(
+        title: 'UNDO REPORT',
+        message:
+            'You already reported this incident. Do you want to undo your report?',
+        headerColor: appBlue,
+      );
+      if (!shouldUndo) return;
       setState(() {
         if (report['redFlags'] > 0) report['redFlags']--;
         report['userVote'] = 'none';
@@ -1331,78 +1498,91 @@ class _CommunityPageState extends State<CommunityPage> {
   }
 
   void _showAnnouncementDetail(Map<String, dynamic> announcement) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Header
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: const BoxDecoration(
-                color: appBlue,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.campaign, color: Colors.white),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      announcement['title'] ?? 'Announcement',
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: const Icon(Icons.close, color: Colors.white),
-                  ),
-                ],
-              ),
+      showDialog(
+        context: context,
+        builder: (context) => Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 520,
+              minWidth: 300,
+              maxHeight: MediaQuery.of(context).size.height * 0.72,
             ),
-            // Content
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if ((announcement['imageUrl'] as String?)?.isNotEmpty == true)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        announcement['imageUrl'],
-                        height: 150,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: const BoxDecoration(
+                    color: appBlue,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.campaign, color: Colors.white),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          announcement['title'] ?? 'Announcement',
+                          style: const TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
                       ),
-                    ),
-                  if ((announcement['imageUrl'] as String?)?.isNotEmpty == true)
-                    const SizedBox(height: 12),
-                  Text(
-                    announcement['content'] ?? '',
-                    style: const TextStyle(
-                      fontFamily: 'RobotoCondensed',
-                      fontSize: 14,
-                      color: appBlack,
+                      GestureDetector(
+                        onTap: () => Navigator.pop(context),
+                        child: const Icon(Icons.close, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+                // Content
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if ((announcement['imageUrl'] as String?)?.isNotEmpty ==
+                            true)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.network(
+                              announcement['imageUrl'],
+                              height: 150,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) =>
+                                  const SizedBox.shrink(),
+                            ),
+                          ),
+                        if ((announcement['imageUrl'] as String?)?.isNotEmpty ==
+                            true)
+                          const SizedBox(height: 12),
+                        Text(
+                          announcement['content'] ?? '',
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 14,
+                            color: appBlack,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
-      ),
-    );
-  }
+      );
+    }
 
   // ───────────────── UI ─────────────────
 
