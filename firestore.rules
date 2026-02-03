@@ -15,7 +15,16 @@ service cloud.firestore {
 
     function isValidUserVotes() {
       return request.resource.data.keys().hasOnly(['votes']) &&
-          request.resource.data.votes is map;
+          request.resource.data.votes is map &&
+          request.resource.data.votes.values().hasOnly(['green', 'red', 'none']);
+    }
+
+    // Helper function to validate vote record data
+    function isValidVoteRecord() {
+      return request.resource.data.keys().hasOnly(['reportDocId', 'reportId', 'reportTitle', 'userPhone', 'voteType', 'timestamp']) &&
+          request.resource.data.voteType in ['green', 'red', 'none'] &&
+          request.resource.data.userPhone is string &&
+          request.resource.data.userPhone.matches('^[0-9]+$');  // Validate phone number format
     }
 
     // Admins collection - open read for admin login (no Firebase Auth)
@@ -77,16 +86,28 @@ service cloud.firestore {
 
     // User votes (verify/report selections per user)
     // Using phone number as document ID for easier tracking
-    match /userVotes/{docId} {
-      allow read: if true;  // Allow read even without auth for easier debugging
-      allow create, update: if true;  // Simplified for now
-      allow delete: if true;
+    match /userVotes/{phoneNumber} {
+      // Allow users to read their own votes
+      allow read: if request.auth != null;
+      
+      // Allow users to create/update only their own votes
+      // phoneNumber in path must match the sanitized phone number from their user data
+      allow create, update: if request.auth != null && 
+        isValidUserVotes() &&
+        phoneNumber.matches('^[0-9]+$');  // Ensure phone number format
+      
+      allow delete: if false;
     }
 
     // Vote records for tracking individual votes
-    match /voteRecords/{docId} {
-      allow read: if true;
-      allow create: if true;
+    match /voteRecords/{recordId} {
+      // Allow authenticated users to read vote records
+      allow read: if request.auth != null;
+      
+      // Allow creating vote records with validation
+      allow create: if request.auth != null && isValidVoteRecord();
+      
+      // Vote records are immutable once created
       allow update: if false;
       allow delete: if false;
     }

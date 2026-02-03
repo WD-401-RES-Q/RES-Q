@@ -1,3 +1,17 @@
+/// UserSession manages the current user's session data.
+///
+/// MIGRATION NOTE (2026-02-03):
+/// - Changed primary identifier from username to phone number
+/// - getUserId() now returns sanitized phone number (digits only)
+/// - Phone number extracted from 'contactNumber' or 'phoneNumber' fields
+/// - Falls back to Firebase Auth UID if no phone number available
+///
+/// Example userId values:
+/// - "639123456789" (phone number, preferred)
+/// - "firebase-uid-abc123" (fallback)
+///
+/// Legacy data may still reference 'username' field - update as needed.
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 

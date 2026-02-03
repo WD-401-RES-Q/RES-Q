@@ -7,8 +7,8 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:uuid/uuid.dart';
 import 'dart:async';
-import 'dart:math';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/location_service.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
@@ -313,10 +313,17 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       final reportId = _generateReportId();
       print('🆔 Generated Report ID: $reportId');
 
+      // Get user ID safely
+      final userId = UserSession.getUserId();
+      if (userId == null) {
+        throw Exception('User ID is required to submit a report');
+      }
+
       final docRef = await FirebaseFirestore.instance
           .collection('reports')
           .add({
             'reportId': reportId, // Custom readable report ID
+            'userId': userId, // User ID for tracking
             'name': _fullName ?? 'Unknown',
             'contactNumber': _contactNumber ?? 'Unknown',
             'incidentType': widget.incidentType,
@@ -478,9 +485,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection(
         'reports',
       );
+
+      // Primary: Check by contact number
       if (contactNumber != null && contactNumber.isNotEmpty) {
         query = query.where('contactNumber', isEqualTo: contactNumber);
       } else if (fallbackName != null && fallbackName.isNotEmpty) {
+        // Fallback: Check by name (less reliable)
         query = query.where('name', isEqualTo: fallbackName);
       }
 
@@ -1169,21 +1179,17 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   /// Generate a unique report ID for easier tracking
-  /// Format: RPT-YYYYMMDD-XXXXXX (e.g., RPT-20260203-A1B2C3)
+  /// Format: RPT-YYYYMMDD-UUID (e.g., RPT-20260203-A1B2C3D4)
+  /// Uses UUID v4 for cryptographically secure, collision-free IDs
   String _generateReportId() {
     final now = DateTime.now();
     final dateStr =
         '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
 
-    // Generate random alphanumeric string
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    final random = Random();
-    final randomStr = List.generate(
-      6,
-      (index) => chars[random.nextInt(chars.length)],
-    ).join();
+    // Use UUID for guaranteed uniqueness
+    final uuid = const Uuid().v4().substring(0, 8).toUpperCase();
 
-    return 'RPT-$dateStr-$randomStr';
+    return 'RPT-$dateStr-$uuid';
   }
 
   bool _isVehicularIncident() {
@@ -1750,8 +1756,10 @@ class _PinPickerPageState extends State<_PinPickerPage> {
   }
 
   void _confirmSelection() {
+    // Removed: User can report incidents they witnessed earlier
+    // Only validate that the INCIDENT location is within coverage
     if (_selected == null) {
-      _showPinPickerError('Tap on the map to pin a location');
+      _showPinPickerError('Please select a location for the incident');
       return;
     }
     if (!_isWithinAngeles(_selected!)) {
@@ -1760,75 +1768,7 @@ class _PinPickerPageState extends State<_PinPickerPage> {
       );
       return;
     }
-    // Check if the user's current location is within Angeles City
-    if (_currentLocation == null || !_isWithinAngeles(_currentLocation!)) {
-      _showUserLocationError();
-      return;
-    }
     Navigator.pop(context, _selected);
-  }
-
-  void _showUserLocationError() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: const Color(0xFFAC1B22),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.location_off, color: Colors.white),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Location Issue',
-                style: TextStyle(
-                  fontFamily: 'Roboto',
-                  fontWeight: FontWeight.w900,
-                  fontSize: 18,
-                  color: Color(0xFF111827),
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: const Text(
-          'You cannot submit a report because your current location is outside Angeles City. Please move within the Angeles City coverage area to submit a report.',
-          style: TextStyle(
-            fontFamily: 'RobotoCondensed',
-            fontWeight: FontWeight.w400,
-            fontSize: 14,
-            color: Color(0xFF4B5563),
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFAC1B22),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text(
-              'OK',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   void _showPinPickerError(String message) {
