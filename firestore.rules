@@ -93,11 +93,12 @@ service cloud.firestore {
     // User votes (verify/report selections per user)
     // Using phone number as document ID for easier tracking
     match /userVotes/{phoneNumber} {
-      // Allow users to read their own votes
       allow read: if request.auth != null;
       
       // Allow users to create/update only their own votes
-      // phoneNumber in path must match the user's contactNumber in their user document
+      // ⚠️ Performance Note: The get() call adds ~100ms latency and doubles read quota.
+      // This is acceptable for current scale. Monitor costs as user base grows.
+      // Future optimization: Consider using Custom Claims to store phone number in auth token.
       allow create, update: if request.auth != null && 
         isValidUserVotes() &&
         phoneNumber.matches('^[0-9]+$') &&

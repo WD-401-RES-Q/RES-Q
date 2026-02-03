@@ -15,7 +15,9 @@
 /// Legacy data may still reference 'username' field - update as needed.
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
+import '../utils/phone_utils.dart';
 
 class ActiveReport {
   ActiveReport({required this.reportId, required this.reportData});
@@ -49,10 +51,10 @@ class UserSession {
     final userData = data ?? currentUserData;
     if (userData == null) return null;
 
-    final phoneNumber = (userData['contactNumber'] ?? userData['phoneNumber'])
-        ?.toString()
-        .replaceAll(RegExp(r'[^0-9]'), '');
-    return (phoneNumber != null && phoneNumber.isNotEmpty) ? phoneNumber : null;
+    final phoneNumber = PhoneUtils.sanitize(
+      userData['contactNumber'] ?? userData['phoneNumber'],
+    );
+    return phoneNumber.isNotEmpty ? phoneNumber : null;
   }
 
   static void setUserId(String? userId) {
@@ -62,10 +64,25 @@ class UserSession {
 
   /// Get the current user's ID (phone number).
   /// Throws an exception if no phone number is available.
-  static String? getUserId() {
+  /// Note: This should never happen in production since registration requires phone numbers.
+  static String getUserId() {
     final phoneNumber = _extractPhoneNumber();
     if (phoneNumber == null || phoneNumber.isEmpty) {
-      throw Exception('Phone number is required. Please update your profile.');
+      // CRITICAL: This indicates a data inconsistency
+      final userId = FirebaseAuth.instance.currentUser?.uid;
+      debugPrint('🚨 CRITICAL: User $userId logged in without phone number!');
+
+      // Log to Crashlytics for monitoring
+      FirebaseCrashlytics.instance.recordError(
+        Exception('User logged in without phone number'),
+        StackTrace.current,
+        reason: 'User ID: $userId, UserData: ${currentUserData?.toString()}',
+        fatal: false,
+      );
+
+      throw Exception(
+        'Your account is missing a phone number. Please contact support or log out and register again.',
+      );
     }
     return phoneNumber;
   }

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
@@ -11,6 +12,7 @@ import 'package:uuid/uuid.dart';
 import 'dart:async';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/location_service.dart';
+import '../../../common/utils/phone_utils.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../home/pages/home_page.dart';
 import '../../emergency/pages/emergency_call_screen.dart';
@@ -322,16 +324,27 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       }
 
       // Validate userId matches contact number
-      final sanitizedContactNumber = _contactNumber?.replaceAll(
-        RegExp(r'\D'),
-        '',
-      );
-      if (sanitizedContactNumber == null || sanitizedContactNumber.isEmpty) {
+      final sanitizedContactNumber = PhoneUtils.sanitize(_contactNumber);
+      if (sanitizedContactNumber.isEmpty) {
         throw Exception('Contact number is required to submit a report.');
       }
       if (userId != sanitizedContactNumber) {
+        debugPrint(
+          '❌ Contact number mismatch: profile=$userId, form=$sanitizedContactNumber',
+        );
+
+        FirebaseAnalytics.instance.logEvent(
+          name: 'report_contact_mismatch',
+          parameters: {
+            'profile_phone_length': userId.length,
+            'form_phone_length': sanitizedContactNumber.length,
+          },
+        );
+
         throw Exception(
-          'Contact number mismatch. Your profile phone ($userId) does not match the form contact number ($sanitizedContactNumber).',
+          'The contact number you entered does not match your registered phone number. '
+          'You must use your own phone number ($userId) to ensure accountability. '
+          'If you need to update your registered number, please go to Settings.',
         );
       }
 
@@ -510,13 +523,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         query = query.where('name', isEqualTo: fallbackName);
       } else {
         // No valid identifier - return no results
-        query = query.where(
-          'contactNumber',
-          isEqualTo: '__INVALID_NO_IDENTIFIER__',
-        );
-        print(
+        debugPrint(
           '⚠️ Warning: No valid identifier (contactNumber or name) for duplicate check',
         );
+        // Use document ID query with impossible value (empty string is always invalid)
+        query = query.where(FieldPath.documentId, isEqualTo: '');
       }
 
       final snapshot = await query.get();
@@ -1785,6 +1796,9 @@ class _PinPickerPageState extends State<_PinPickerPage> {
   }
 
   void _confirmSelection() {
+    // Validate both incident location AND user's current location
+    // Incident location: Must be within Angeles City coverage
+    // User location: Must be within Angeles City (ensures firsthand reporting with captured media)
     if (_selected == null) {
       _showPinPickerError(
         'Please tap on the map to select the incident location',
@@ -1794,15 +1808,31 @@ class _PinPickerPageState extends State<_PinPickerPage> {
 
     // Check if the incident location is within Angeles City
     if (!_isWithinAngeles(_selected!)) {
+      FirebaseAnalytics.instance.logEvent(
+        name: 'report_incident_location_invalid',
+        parameters: {
+          'incident_lat': _selected!.latitude,
+          'incident_lng': _selected!.longitude,
+        },
+      );
       _showPinPickerError(
         'The incident location must be within Angeles City coverage area.',
       );
       return;
     }
 
-    // RESTORED: Check if the user's current location is within Angeles City
-    // This prevents users outside Angeles from submitting reports
+    // Check if the user's current location is within Angeles City
+    // Required to ensure users are physically present in coverage area
+    // to prevent fraud and ensure timely, firsthand reports with captured media
     if (_currentLocation == null || !_isWithinAngeles(_currentLocation!)) {
+      FirebaseAnalytics.instance.logEvent(
+        name: 'report_user_location_invalid',
+        parameters: {
+          'user_lat': _currentLocation?.latitude ?? 0,
+          'user_lng': _currentLocation?.longitude ?? 0,
+          'has_location': _currentLocation != null,
+        },
+      );
       _showUserLocationError();
       return;
     }
@@ -1843,7 +1873,12 @@ class _PinPickerPageState extends State<_PinPickerPage> {
           ],
         ),
         content: const Text(
-          'You cannot submit a report because your current location is outside Angeles City. Please move within the Angeles City coverage area to submit a report.',
+          'You cannot submit a report because your current location appears to be outside Angeles City. '
+          'To submit a report, you must be physically present within the Angeles City coverage area.\n\n'
+          'If you believe this is a GPS error, please:\n'
+          '• Ensure location services are enabled\n'
+          '• Move to an open area for better GPS signal\n'
+          '• Wait a moment for GPS to stabilize',
           style: TextStyle(
             fontFamily: 'RobotoCondensed',
             fontWeight: FontWeight.w400,
