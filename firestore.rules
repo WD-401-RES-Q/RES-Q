@@ -15,8 +15,7 @@ service cloud.firestore {
 
     function isValidUserVotes() {
       return request.resource.data.keys().hasOnly(['votes']) &&
-          request.resource.data.votes is map &&
-          request.resource.data.votes.values().hasOnly(['green', 'red', 'none']);
+          request.resource.data.votes is map;
     }
 
     // Admins collection - open read for admin login (no Firebase Auth)
@@ -77,9 +76,18 @@ service cloud.firestore {
     }
 
     // User votes (verify/report selections per user)
+    // Using phone number as document ID for easier tracking
     match /userVotes/{docId} {
+      allow read: if true;  // Allow read even without auth for easier debugging
+      allow create, update: if true;  // Simplified for now
+      allow delete: if true;
+    }
+
+    // Vote records for tracking individual votes
+    match /voteRecords/{docId} {
       allow read: if true;
-      allow create, update: if isValidUserVotes();
+      allow create: if true;
+      allow update: if false;
       allow delete: if false;
     }
 

@@ -1,3 +1,6 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+
 class ActiveReport {
   ActiveReport({required this.reportId, required this.reportData});
 
@@ -7,33 +10,39 @@ class ActiveReport {
 
 class UserSession {
   static Map<String, dynamic>? currentUserData;
-  static String? currentUsername;
   static String? _userId;
   static final List<ActiveReport> _activeReports = [];
 
   static void setUserData(Map<String, dynamic> data) {
     currentUserData = data;
-    currentUsername = data['username'] as String?;
-    // Try to get userId from various possible fields
-    _userId = data['id'] as String? ??
-              data['uid'] as String? ??
-              data['userId'] as String? ??
-              data['docId'] as String? ??
-              data['contactNumber'] as String? ??
-              currentUsername;
+    // Extract phone number from user data and use it as the primary identifier
+    // This makes it easier to track users in Firestore
+    // Note: Firestore uses 'contactNumber' as the primary field
+    final phoneNumber = (data['contactNumber'] ?? data['phoneNumber'])
+        ?.toString()
+        .replaceAll(RegExp(r'[^0-9]'), '');
+    if (phoneNumber != null && phoneNumber.isNotEmpty) {
+      _userId = phoneNumber;
+      debugPrint('📱 UserSession: Set userId from phone number: $_userId');
+    } else {
+      // Fallback to Firebase Auth uid if no phone number
+      _userId = FirebaseAuth.instance.currentUser?.uid;
+      debugPrint('🔐 UserSession: Set userId from Firebase Auth: $_userId');
+    }
   }
 
   static void setUserId(String? userId) {
     _userId = userId;
+    debugPrint('🆔 UserSession: Manually set userId to: $_userId');
   }
 
   static String? getUserId() {
-    return _userId ?? currentUsername;
+    // Return the stored userId (phone number), don't fall back to Firebase Auth
+    return _userId;
   }
 
   static void clear() {
     currentUserData = null;
-    currentUsername = null;
     _userId = null;
     _activeReports.clear();
   }

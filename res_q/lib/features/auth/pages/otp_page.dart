@@ -145,7 +145,6 @@ class _OTPPageState extends State<OTPPage> {
         // Store newly verified users in a pending collection for admin review
         await _firestore.collection('pending_users').doc(user.uid).set({
           'fullName': _userData!['fullName'],
-          'username': _userData!['username'],
           'email': _userData!['email'],
           'password': _userData!['password'],
           'contactNumber': _userData!['contactNumber'],

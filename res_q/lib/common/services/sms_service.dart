@@ -18,7 +18,7 @@ class SmsService {
   /// It sends an SMS to the user's registered phone number.
   static Future<void> sendAccountApprovedSms(
     String phoneNumber,
-    String username,
+    String displayName,
   ) async {
     // TODO: Replace with your SMS provider credentials
     // Example using Semaphore API (Philippines)
@@ -28,7 +28,7 @@ class SmsService {
     const String senderId = 'RESQ'; // Your sender name
 
     final message =
-        'Hi $username! Your RES-Q account has been approved by our admin. '
+        'Hi $displayName! Your RES-Q account has been approved by our admin. '
         'You can now create your PIN and login to the app. '
         'Click "Account Approved? Create PIN here" on the login page to get started.';
 
@@ -51,7 +51,7 @@ class SmsService {
         // Log the SMS in Firestore for tracking
         await _firestore.collection('sms_logs').add({
           'phoneNumber': phoneNumber,
-          'username': username,
+          'displayName': displayName,
           'message': message,
           'status': 'sent',
           'sentAt': FieldValue.serverTimestamp(),
@@ -62,7 +62,7 @@ class SmsService {
         // Log failed attempt
         await _firestore.collection('sms_logs').add({
           'phoneNumber': phoneNumber,
-          'username': username,
+          'displayName': displayName,
           'message': message,
           'status': 'failed',
           'error': response.body,
@@ -75,7 +75,7 @@ class SmsService {
       // Log error
       await _firestore.collection('sms_logs').add({
         'phoneNumber': phoneNumber,
-        'username': username,
+        'displayName': displayName,
         'message': message,
         'status': 'error',
         'error': e.toString(),
@@ -87,7 +87,7 @@ class SmsService {
   /// Alternative implementation using Twilio (international)
   static Future<void> sendAccountApprovedSmsTwilio(
     String phoneNumber,
-    String username,
+    String displayName,
   ) async {
     // TODO: Replace with your Twilio credentials
     const String accountSid = 'YOUR_TWILIO_ACCOUNT_SID';
@@ -95,7 +95,7 @@ class SmsService {
     const String fromNumber = 'YOUR_TWILIO_PHONE_NUMBER';
 
     final message =
-        'Hi $username! Your RES-Q account has been approved. '
+        'Hi $displayName! Your RES-Q account has been approved. '
         'Create your PIN now to login.';
 
     try {
@@ -141,7 +141,10 @@ class SmsService {
 
       final userData = pendingDoc.data()!;
       final phoneNumber = userData['contactNumber'] as String;
-      final username = userData['username'] as String;
+      final displayName =
+          (userData['fullName'] as String?) ??
+          (userData['contactNumber'] as String?) ??
+          'User';
 
       // Move to approved_users
       userData['accountStatus'] = 'approved';
@@ -156,9 +159,9 @@ class SmsService {
       await _firestore.collection('pending_users').doc(userId).delete();
 
       // Send SMS notification
-      await sendAccountApprovedSms(phoneNumber, username);
+      await sendAccountApprovedSms(phoneNumber, displayName);
 
-      print('✅ User $username approved and notified via SMS');
+      print('✅ User $displayName approved and notified via SMS');
     } catch (e) {
       print('❌ Error approving user: $e');
       rethrow;
