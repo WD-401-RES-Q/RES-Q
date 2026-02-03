@@ -2136,8 +2136,8 @@ class _ProfilePageState extends State<ProfilePage>
                           });
 
                           final userData = UserSession.currentUserData ?? {};
-                          final username =
-                              userData['username']?.toString() ?? 'Unknown';
+                          final displayName =
+                              userData['fullName']?.toString() ?? 'User';
                           final email = userData['email']?.toString() ?? '';
 
                           final Uri emailUri = Uri(
@@ -2148,7 +2148,7 @@ class _ProfilePageState extends State<ProfilePage>
                               'body=Problem Type: $problemType\n\n'
                               'Description:\n$description\n\n'
                               '---\n'
-                              'Reported by: $username\n'
+                              'Reported by: $displayName\n'
                               'User email: $email',
                             ),
                           );
@@ -2308,8 +2308,10 @@ class _ProfilePageState extends State<ProfilePage>
                           });
 
                           final userData = UserSession.currentUserData ?? {};
-                          final username =
-                              userData['username']?.toString() ?? 'Unknown';
+                          final displayName =
+                              userData['fullName']?.toString() ??
+                              userData['contactNumber']?.toString() ??
+                              'User';
                           final email = userData['email']?.toString() ?? '';
 
                           final ratingStars = '★' * feedbackRating +
@@ -2323,7 +2325,7 @@ class _ProfilePageState extends State<ProfilePage>
                               'body=Rating: $ratingStars ($feedbackRating/5)\n\n'
                               'Feedback:\n$feedback\n\n'
                               '---\n'
-                              'From: $username\n'
+                              'From: $displayName\n'
                               'User email: $email',
                             ),
                           );
@@ -2472,8 +2474,8 @@ class _ProfilePageState extends State<ProfilePage>
     super.build(context);
     final profileName =
         (UserSession.currentUserData?['fullName'] ??
-                UserSession.currentUserData?['username'] ??
-                '')
+                UserSession.currentUserData?['contactNumber'] ??
+                'User')
             .toString()
             .trim();
     final profileInitial =

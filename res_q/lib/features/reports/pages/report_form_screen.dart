@@ -4,12 +4,15 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:uuid/uuid.dart';
 import 'dart:async';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/location_service.dart';
+import '../../../common/utils/phone_utils.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../home/pages/home_page.dart';
 import '../../emergency/pages/emergency_call_screen.dart';
@@ -29,7 +32,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   final TextEditingController _informationController = TextEditingController();
   final TextEditingController _plateNumberController = TextEditingController();
   final TextEditingController _barangayController = TextEditingController();
-  final TextEditingController _otherIncidentController = TextEditingController();
+  final TextEditingController _otherIncidentController =
+      TextEditingController();
   String? _fullName;
   String? _contactNumber;
   late final String _reportDate;
@@ -237,7 +241,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     if (_isOthersIncident()) {
       final otherIncident = _otherIncidentController.text.trim();
       if (otherIncident.isEmpty) {
-        setState(() => _otherIncidentError = 'Please specify the incident type');
+        setState(
+          () => _otherIncidentError = 'Please specify the incident type',
+        );
         return;
       }
     }
@@ -304,15 +310,51 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       }
 
       print('💾 Saving to Firestore...');
-      final reporterUsername =
-          UserSession.currentUserData?['username'] as String?;
+
+      // Generate a unique report ID for easier tracking
+      final reportId = _generateReportId();
+      print('🆔 Generated Report ID: $reportId');
+
+      // Get user ID safely
+      final userId = UserSession.getUserId();
+      if (userId == null || userId.isEmpty) {
+        throw Exception(
+          'Phone number is required to submit a report. Please update your profile.',
+        );
+      }
+
+      // Validate userId matches contact number
+      final sanitizedContactNumber = PhoneUtils.sanitize(_contactNumber);
+      if (sanitizedContactNumber.isEmpty) {
+        throw Exception('Contact number is required to submit a report.');
+      }
+      if (userId != sanitizedContactNumber) {
+        debugPrint(
+          '❌ Contact number mismatch: profile=$userId, form=$sanitizedContactNumber',
+        );
+
+        FirebaseAnalytics.instance.logEvent(
+          name: 'report_contact_mismatch',
+          parameters: {
+            'profile_phone_length': userId.length,
+            'form_phone_length': sanitizedContactNumber.length,
+          },
+        );
+
+        throw Exception(
+          'The contact number you entered does not match your registered phone number. '
+          'You must use your own phone number ($userId) to ensure accountability. '
+          'If you need to update your registered number, please go to Settings.',
+        );
+      }
+
       final docRef = await FirebaseFirestore.instance
           .collection('reports')
           .add({
+            'reportId': reportId, // Custom readable report ID
+            'userId': userId, // User ID for tracking
             'name': _fullName ?? 'Unknown',
             'contactNumber': _contactNumber ?? 'Unknown',
-            if (reporterUsername != null && reporterUsername.isNotEmpty)
-              'reporterUsername': reporterUsername,
             'incidentType': widget.incidentType,
             'details': _informationController.text.trim(),
             if (_isVehicularIncident()) ...{
@@ -333,10 +375,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 : 'pin',
             'mediaUrl': mediaUrl,
             'mediaType': mediaType,
-            'location': GeoPoint(
-              location.latitude,
-              location.longitude,
-            ),
+            'location': GeoPoint(location.latitude, location.longitude),
             'status': 'Pending',
             'greenFlags': 0,
             'redFlags': 0,
@@ -384,8 +423,6 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 final reportData = {
                   'name': _fullName ?? 'Unknown',
                   'contactNumber': _contactNumber ?? 'Unknown',
-                  if (reporterUsername != null && reporterUsername.isNotEmpty)
-                    'reporterUsername': reporterUsername,
                   'incidentType': widget.incidentType,
                   'details': _informationController.text.trim(),
                   if (_isVehicularIncident()) ...{
@@ -404,8 +441,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   'reportedAt': now,
                   'locationSource':
                       _locationMode == LocationSelectionMode.current
-                          ? 'current'
-                          : 'pin',
+                      ? 'current'
+                      : 'pin',
                   'locationLat': location.latitude,
                   'locationLng': location.longitude,
                 };
@@ -463,31 +500,34 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       return true;
     }
 
-    final reporterUsername =
-        UserSession.currentUserData?['username'] as String?;
     final contactNumber =
         _contactNumber ??
         (UserSession.currentUserData?['contactNumber'] as String?);
     final fallbackName =
-        _fullName ??
-        (UserSession.currentUserData?['fullName'] as String?) ??
-        (UserSession.currentUserData?['username'] as String?);
+        _fullName ?? (UserSession.currentUserData?['fullName'] as String?);
 
-    if (reporterUsername == null &&
-        contactNumber == null &&
-        fallbackName == null) {
+    if (contactNumber == null && fallbackName == null) {
       return false;
     }
 
     try {
-      Query<Map<String, dynamic>> query =
-          FirebaseFirestore.instance.collection('reports');
-      if (reporterUsername != null && reporterUsername.isNotEmpty) {
-        query = query.where('reporterUsername', isEqualTo: reporterUsername);
-      } else if (contactNumber != null && contactNumber.isNotEmpty) {
+      Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection(
+        'reports',
+      );
+
+      // Primary: Check by contact number
+      if (contactNumber != null && contactNumber.isNotEmpty) {
         query = query.where('contactNumber', isEqualTo: contactNumber);
       } else if (fallbackName != null && fallbackName.isNotEmpty) {
+        // Fallback: Check by name (less reliable)
         query = query.where('name', isEqualTo: fallbackName);
+      } else {
+        // No valid identifier - return no results
+        debugPrint(
+          '⚠️ Warning: No valid identifier (contactNumber or name) for duplicate check',
+        );
+        // Use document ID query with impossible value (empty string is always invalid)
+        query = query.where(FieldPath.documentId, isEqualTo: '');
       }
 
       final snapshot = await query.get();
@@ -585,9 +625,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         }
         final point = LatLng(position.latitude, position.longitude);
         if (!_isWithinAngeles(point)) {
-          _showLocationError(
-            'Location must be inside Angeles City coverage',
-          );
+          _showLocationError('Location must be inside Angeles City coverage');
           return null;
         }
         _selectedLocation = point;
@@ -614,11 +652,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   bool _isWithinAngeles(LatLng point) {
     const center = LatLng(15.1450, 120.5887);
     const radiusMeters = 6000.0;
-    final distance = const Distance().as(
-      LengthUnit.Meter,
-      center,
-      point,
-    );
+    final distance = const Distance().as(LengthUnit.Meter, center, point);
     return distance <= radiusMeters;
   }
 
@@ -669,11 +703,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   Future<void> _openPinPicker() async {
-    final picked = await Navigator.of(context).push<LatLng>(
-      MaterialPageRoute(
-        builder: (_) => const _PinPickerPage(),
-      ),
-    );
+    final picked = await Navigator.of(
+      context,
+    ).push<LatLng>(MaterialPageRoute(builder: (_) => const _PinPickerPage()));
     if (picked == null) return;
     setState(() {
       _selectedLocation = picked;
@@ -729,411 +761,412 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
               child: Column(
-              children: [
-                // Back button + logo row
-                Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new,
-                        color: Color(0xFFAC1B22),
+                children: [
+                  // Back button + logo row
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new,
+                          color: Color(0xFFAC1B22),
+                        ),
                       ),
-                    ),
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: () => Navigator.pop(context),
-                        child: SizedBox(
-                          height: 50,
-                          child: Align(
-                            alignment: Alignment.center,
-                            child: SvgPicture.asset(
-                              "assets/icons/RES-Q_LOGO.svg",
-                              fit: BoxFit.contain,
-                              errorBuilder: (context, error, stackTrace) =>
-                                  const Icon(
-                                    Icons.image_not_supported,
-                                    size: 30,
-                                    color: Colors.blue,
-                                  ),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => Navigator.pop(context),
+                          child: SizedBox(
+                            height: 50,
+                            child: Align(
+                              alignment: Alignment.center,
+                              child: SvgPicture.asset(
+                                "assets/icons/RES-Q_LOGO.svg",
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const Icon(
+                                      Icons.image_not_supported,
+                                      size: 30,
+                                      color: Colors.blue,
+                                    ),
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 48),
-                  ],
-                ),
-
-                const SizedBox(height: 32),
-
-                // Incident label (HEADING - Roboto Black)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    widget.incidentType,
-                    style: const TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFFAC1B22),
-                    ),
+                      const SizedBox(width: 48),
+                    ],
                   ),
-                ),
 
-                const SizedBox(height: 12),
+                  const SizedBox(height: 32),
 
-                // Reporter info card
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.black, width: 2),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _infoRow('Name', _fullName ?? 'Not available'),
-                      const SizedBox(height: 8),
-                      _infoRow(
-                        'Contact Number',
-                        _contactNumber ?? 'Not available',
+                  // Incident label (HEADING - Roboto Black)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      widget.incidentType,
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFFAC1B22),
                       ),
-                      const SizedBox(height: 8),
-                      _infoRow('Date', _reportDate),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                if (_isVehicularIncident())
-                  _buildVehicleDetailsRow(),
-
-                if (_isVehicularIncident()) const SizedBox(height: 16),
-
-                if (_isFireOrFloodIncident()) _buildBarangayField(),
-
-                if (_isFireOrFloodIncident()) const SizedBox(height: 16),
-
-                if (_isOthersIncident()) _buildOtherIncidentField(),
-
-                if (_isOthersIncident()) const SizedBox(height: 16),
-
-                // Information TextArea
-                Container(
-                  height: 190,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.black, width: 2),
-                  ),
-                  child: TextField(
-                    controller: _informationController,
-                    maxLines: null,
-                    expands: true,
-                    maxLength: 256,
-                    maxLengthEnforcement: MaxLengthEnforcement.enforced,
-                    inputFormatters: [
-                      LengthLimitingTextInputFormatter(256),
-                    ],
-                    textAlignVertical: TextAlignVertical.top,
-                    style: const TextStyle(
-                      fontFamily: 'RobotoCondensed',
-                      fontSize: 14,
-                      fontWeight: FontWeight.w400,
-                      color: Colors.black,
                     ),
-                    decoration: const InputDecoration(
-                      hintText:
-                          "Please tell us more about the incident...(Optional)",
-                      hintStyle: TextStyle(
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // Reporter info card
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.black, width: 2),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _infoRow('Name', _fullName ?? 'Not available'),
+                        const SizedBox(height: 8),
+                        _infoRow(
+                          'Contact Number',
+                          _contactNumber ?? 'Not available',
+                        ),
+                        const SizedBox(height: 8),
+                        _infoRow('Date', _reportDate),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  if (_isVehicularIncident()) _buildVehicleDetailsRow(),
+
+                  if (_isVehicularIncident()) const SizedBox(height: 16),
+
+                  if (_isFireOrFloodIncident()) _buildBarangayField(),
+
+                  if (_isFireOrFloodIncident()) const SizedBox(height: 16),
+
+                  if (_isOthersIncident()) _buildOtherIncidentField(),
+
+                  if (_isOthersIncident()) const SizedBox(height: 16),
+
+                  // Information TextArea
+                  Container(
+                    height: 190,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.black, width: 2),
+                    ),
+                    child: TextField(
+                      controller: _informationController,
+                      maxLines: null,
+                      expands: true,
+                      maxLength: 256,
+                      maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                      inputFormatters: [LengthLimitingTextInputFormatter(256)],
+                      textAlignVertical: TextAlignVertical.top,
+                      style: const TextStyle(
                         fontFamily: 'RobotoCondensed',
-                        fontSize: 16,
+                        fontSize: 14,
                         fontWeight: FontWeight.w400,
                         color: Colors.black,
                       ),
-                      contentPadding: EdgeInsets.all(16),
-                      border: InputBorder.none,
-                      counterStyle: TextStyle(
-                        fontFamily: 'RobotoCondensed',
-                        fontSize: 11,
-                        color: Color(0xFF4B5563),
+                      decoration: const InputDecoration(
+                        hintText:
+                            "Please tell us more about the incident...(Optional)",
+                        hintStyle: TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 16,
+                          fontWeight: FontWeight.w400,
+                          color: Colors.black,
+                        ),
+                        contentPadding: EdgeInsets.all(16),
+                        border: InputBorder.none,
+                        counterStyle: TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 11,
+                          color: Color(0xFF4B5563),
+                        ),
                       ),
                     ),
                   ),
-                ),
 
-                const SizedBox(height: 16),
+                  const SizedBox(height: 16),
 
-                // Capture Photo/Video Row (Required)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          flex: 3,
-                          child: Container(
-                            height: 64,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: _mediaError != null ? Colors.red : Colors.black,
-                                width: 2,
+                  // Capture Photo/Video Row (Required)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: Container(
+                              height: 64,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: _mediaError != null
+                                      ? Colors.red
+                                      : Colors.black,
+                                  width: 2,
+                                ),
                               ),
-                            ),
-                            child: Center(
-                              child: Text(
-                                _capturedMedia == null
-                                    ? "CAPTURE PHOTO/VIDEO *"
-                                    : "✓ Media captured",
-                                style: TextStyle(
-                                  fontFamily: 'RobotoCondensed',
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w400,
-                                  color: _capturedMedia == null
-                                      ? (_mediaError != null ? Colors.red : Colors.black)
-                                      : const Color(0xFF22C55E),
+                              child: Center(
+                                child: Text(
+                                  _capturedMedia == null
+                                      ? "CAPTURE PHOTO/VIDEO *"
+                                      : "✓ Media captured",
+                                  style: TextStyle(
+                                    fontFamily: 'RobotoCondensed',
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w400,
+                                    color: _capturedMedia == null
+                                        ? (_mediaError != null
+                                              ? Colors.red
+                                              : Colors.black)
+                                        : const Color(0xFF22C55E),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          flex: 1,
-                          child: GestureDetector(
-                            onTap: _showMediaOptions,
-                            child: Container(
-                              height: 64,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFAC1B22),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Icon(
-                                Icons.camera_alt,
-                                color: Colors.white,
-                                size: 32,
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 1,
+                            child: GestureDetector(
+                              onTap: _showMediaOptions,
+                              child: Container(
+                                height: 64,
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFAC1B22),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Icon(
+                                  Icons.camera_alt,
+                                  color: Colors.white,
+                                  size: 32,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    if (_mediaError != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Text(
-                          _mediaError!,
-                          style: const TextStyle(
-                            fontFamily: 'RobotoCondensed',
-                            fontSize: 12,
-                            color: Colors.red,
-                          ),
-                        ),
+                        ],
                       ),
-                  ],
-                ),
-
-                const SizedBox(height: 18),
-
-                // Location selection
-                Column(
-                  children: [
-                    const Text(
-                      'Choose Report Location',
-                      style: TextStyle(
-                        fontFamily: 'RobotoCondensed',
-                        fontSize: 13,
-                        fontWeight: FontWeight.w400,
-                        color: Colors.black,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _buildLocationOption(
-                          label: 'CURRENT LOCATION',
-                          isSelected:
-                              _locationMode == LocationSelectionMode.current,
-                          onTap: () {
-                            setState(() {
-                              _locationMode = LocationSelectionMode.current;
-                            });
-                          },
-                        ),
-                        const SizedBox(width: 12),
-                        _buildLocationOption(
-                          label: 'PIN LOCATION',
-                          isSelected:
-                              _locationMode == LocationSelectionMode.pin,
-                          onTap: () {
-                            setState(() {
-                              _locationMode = LocationSelectionMode.pin;
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    if (_locationMode == LocationSelectionMode.pin)
-                      Container(
-                        width: 220,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(30),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.4),
-                              blurRadius: 4,
-                              offset: const Offset(0, 7),
-                            ),
-                          ],
-                        ),
-                        child: ElevatedButton.icon(
-                          onPressed: _openPinPicker,
-                          icon: const Icon(
-                            Icons.location_on,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                          label: Text(
-                            _selectedLocation == null
-                                ? 'PIN ON MAP'
-                                : 'UPDATE PIN',
+                      if (_mediaError != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            _mediaError!,
                             style: const TextStyle(
                               fontFamily: 'RobotoCondensed',
-                              fontWeight: FontWeight.w500,
-                              fontSize: 15,
-                              color: Colors.white,
-                            ),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFAC1B22),
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(30),
+                              fontSize: 12,
+                              color: Colors.red,
                             ),
                           ),
                         ),
-                      ),
-                    if (_locationMode == LocationSelectionMode.pin &&
-                        _selectedLocation != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          'Pinned: ${_selectedLocation!.latitude.toStringAsFixed(5)}, '
-                          '${_selectedLocation!.longitude.toStringAsFixed(5)}',
-                          style: const TextStyle(
-                            fontFamily: 'RobotoCondensed',
-                            fontSize: 11,
-                            color: Color(0xFF4B5563),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-
-                const SizedBox(height: 14),
-
-                // Confirm Button - Rounded corners, drop shadow
-                Container(
-                  width: 220,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(30),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.4),
-                        blurRadius: 4,
-                        offset: const Offset(0, 7),
-                      ),
                     ],
                   ),
-                  child: ElevatedButton(
-                    onPressed: _locationLoading ? null : _confirmReport,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFFFC806),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
+
+                  const SizedBox(height: 18),
+
+                  // Location selection
+                  Column(
+                    children: [
+                      const Text(
+                        'Choose Report Location',
+                        style: TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w400,
+                          color: Colors.black,
+                        ),
                       ),
-                      elevation: 0,
-                    ),
-                    child: _submitting
-                        ? const SizedBox(
-                            height: 22,
-                            width: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 3,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                Colors.white,
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _buildLocationOption(
+                            label: 'CURRENT LOCATION',
+                            isSelected:
+                                _locationMode == LocationSelectionMode.current,
+                            onTap: () {
+                              setState(() {
+                                _locationMode = LocationSelectionMode.current;
+                              });
+                            },
+                          ),
+                          const SizedBox(width: 12),
+                          _buildLocationOption(
+                            label: 'PIN LOCATION',
+                            isSelected:
+                                _locationMode == LocationSelectionMode.pin,
+                            onTap: () {
+                              setState(() {
+                                _locationMode = LocationSelectionMode.pin;
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (_locationMode == LocationSelectionMode.pin)
+                        Container(
+                          width: 220,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(30),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.4),
+                                blurRadius: 4,
+                                offset: const Offset(0, 7),
+                              ),
+                            ],
+                          ),
+                          child: ElevatedButton.icon(
+                            onPressed: _openPinPicker,
+                            icon: const Icon(
+                              Icons.location_on,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                            label: Text(
+                              _selectedLocation == null
+                                  ? 'PIN ON MAP'
+                                  : 'UPDATE PIN',
+                              style: const TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontWeight: FontWeight.w500,
+                                fontSize: 15,
+                                color: Colors.white,
                               ),
                             ),
-                          )
-                        : const Text(
-                            "CONFIRM",
-                            style: TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 18,
-                              fontWeight: FontWeight.w500,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFAC1B22),
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(30),
+                              ),
                             ),
                           ),
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // Emergency Call Button - Circular with yellow border and drop shadow
-                Container(
-                  width: 110,
-                  height: 110,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.4),
-                        blurRadius: 4,
-                        offset: const Offset(0, 7),
-                      ),
+                        ),
+                      if (_locationMode == LocationSelectionMode.pin &&
+                          _selectedLocation != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            'Pinned: ${_selectedLocation!.latitude.toStringAsFixed(5)}, '
+                            '${_selectedLocation!.longitude.toStringAsFixed(5)}',
+                            style: const TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 11,
+                              color: Color(0xFF4B5563),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
-                  child: ElevatedButton(
-                    onPressed: () {
-                      print("Emergency call button pressed");
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const EmergencyCallScreen(),
+
+                  const SizedBox(height: 14),
+
+                  // Confirm Button - Rounded corners, drop shadow
+                  Container(
+                    width: 220,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(30),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.4),
+                          blurRadius: 4,
+                          offset: const Offset(0, 7),
                         ),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFAC1B22),
-                      shape: const CircleBorder(
-                        side: BorderSide(color: Color(0xFFFFC806), width: 6),
-                      ),
-                      elevation: 0,
-                      padding: EdgeInsets.zero,
+                      ],
                     ),
-                    child: const Icon(
-                      Icons.phone,
-                      color: Colors.white,
-                      size: 60,
+                    child: ElevatedButton(
+                      onPressed: _locationLoading ? null : _confirmReport,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFFFC806),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: _submitting
+                          ? const SizedBox(
+                              height: 22,
+                              width: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 3,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
+                              ),
+                            )
+                          : const Text(
+                              "CONFIRM",
+                              style: TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontSize: 18,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                     ),
                   ),
-                ),
 
-                const SizedBox(height: 24),
-              ],
+                  const SizedBox(height: 20),
+
+                  // Emergency Call Button - Circular with yellow border and drop shadow
+                  Container(
+                    width: 110,
+                    height: 110,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.4),
+                          blurRadius: 4,
+                          offset: const Offset(0, 7),
+                        ),
+                      ],
+                    ),
+                    child: ElevatedButton(
+                      onPressed: () {
+                        print("Emergency call button pressed");
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const EmergencyCallScreen(),
+                          ),
+                        );
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFAC1B22),
+                        shape: const CircleBorder(
+                          side: BorderSide(color: Color(0xFFFFC806), width: 6),
+                        ),
+                        elevation: 0,
+                        padding: EdgeInsets.zero,
+                      ),
+                      child: const Icon(
+                        Icons.phone,
+                        color: Colors.white,
+                        size: 60,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+                ],
+              ),
             ),
-          ),
           ),
         ),
       ),
@@ -1145,9 +1178,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           });
           // Navigate back to MainPage with selected tab
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => MainPage(initialIndex: index),
-            ),
+            MaterialPageRoute(builder: (_) => MainPage(initialIndex: index)),
           );
         },
       ),
@@ -1181,6 +1212,24 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         ),
       ],
     );
+  }
+
+  /// Generate a unique report ID for easier tracking
+  /// Format: RPT-YYYYMMDD-UUID (e.g., RPT-20260203-A1B2C3D4E5F6)
+  /// Uses UUID v4 for cryptographically secure, collision-free IDs
+  String _generateReportId() {
+    final now = DateTime.now();
+    final dateStr =
+        '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+
+    // Use UUID for guaranteed uniqueness (16 chars for better collision resistance)
+    final uuid = const Uuid()
+        .v4()
+        .replaceAll('-', '')
+        .substring(0, 16)
+        .toUpperCase();
+
+    return 'RPT-$dateStr-$uuid';
   }
 
   bool _isVehicularIncident() {
@@ -1507,39 +1556,35 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         onSelected: (selection) {
           _barangayController.text = selection;
         },
-        fieldViewBuilder: (
-          context,
-          textEditingController,
-          focusNode,
-          onFieldSubmitted,
-        ) {
-          return TextField(
-            controller: textEditingController,
-            focusNode: focusNode,
-            textCapitalization: TextCapitalization.words,
-            onChanged: (value) => _barangayController.text = value,
-            style: const TextStyle(
-              fontFamily: 'RobotoCondensed',
-              fontSize: 12,
-              fontWeight: FontWeight.w400,
-              color: Colors.black,
-            ),
-            decoration: const InputDecoration(
-              hintText: 'Enter barangay',
-              hintStyle: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontSize: 12,
-                fontWeight: FontWeight.w400,
-                color: Colors.black54,
-              ),
-              border: InputBorder.none,
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 12,
-              ),
-            ),
-          );
-        },
+        fieldViewBuilder:
+            (context, textEditingController, focusNode, onFieldSubmitted) {
+              return TextField(
+                controller: textEditingController,
+                focusNode: focusNode,
+                textCapitalization: TextCapitalization.words,
+                onChanged: (value) => _barangayController.text = value,
+                style: const TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                  color: Colors.black,
+                ),
+                decoration: const InputDecoration(
+                  hintText: 'Enter barangay',
+                  hintStyle: TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black54,
+                  ),
+                  border: InputBorder.none,
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
+                ),
+              );
+            },
         optionsViewBuilder: (context, onSelected, options) {
           return Align(
             alignment: Alignment.topLeft,
@@ -1694,7 +1739,10 @@ class _PinPickerPageState extends State<_PinPickerPage> {
                 color: const Color(0xFFAC1B22),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(Icons.warning_amber_rounded, color: Colors.white),
+              child: const Icon(
+                Icons.warning_amber_rounded,
+                color: Colors.white,
+              ),
             ),
             const SizedBox(width: 12),
             const Expanded(
@@ -1743,24 +1791,122 @@ class _PinPickerPageState extends State<_PinPickerPage> {
   }
 
   bool _isWithinAngeles(LatLng point) {
-    final distance = const Distance().as(
-      LengthUnit.Meter,
-      _center,
-      point,
-    );
+    final distance = const Distance().as(LengthUnit.Meter, _center, point);
     return distance <= _radiusMeters;
   }
 
   void _confirmSelection() {
+    // Validate both incident location AND user's current location
+    // Incident location: Must be within Angeles City coverage
+    // User location: Must be within Angeles City (ensures firsthand reporting with captured media)
     if (_selected == null) {
-      _showPinPickerError('Tap on the map to pin a location');
+      _showPinPickerError(
+        'Please tap on the map to select the incident location',
+      );
       return;
     }
+
+    // Check if the incident location is within Angeles City
     if (!_isWithinAngeles(_selected!)) {
-      _showPinPickerError('Pinned location must be inside Angeles City coverage');
+      FirebaseAnalytics.instance.logEvent(
+        name: 'report_incident_location_invalid',
+        parameters: {
+          'incident_lat': _selected!.latitude,
+          'incident_lng': _selected!.longitude,
+        },
+      );
+      _showPinPickerError(
+        'The incident location must be within Angeles City coverage area.',
+      );
       return;
     }
+
+    // Check if the user's current location is within Angeles City
+    // Required to ensure users are physically present in coverage area
+    // to prevent fraud and ensure timely, firsthand reports with captured media
+    if (_currentLocation == null || !_isWithinAngeles(_currentLocation!)) {
+      FirebaseAnalytics.instance.logEvent(
+        name: 'report_user_location_invalid',
+        parameters: {
+          'user_lat': _currentLocation?.latitude ?? 0,
+          'user_lng': _currentLocation?.longitude ?? 0,
+          'has_location': _currentLocation != null,
+        },
+      );
+      _showUserLocationError();
+      return;
+    }
+
     Navigator.pop(context, _selected);
+  }
+
+  // RESTORED: Show error when user is outside Angeles City
+  void _showUserLocationError() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: const Color(0xFFAC1B22),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.location_off, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Location Issue',
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  color: Color(0xFF111827),
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'You cannot submit a report because your current location appears to be outside Angeles City. '
+          'To submit a report, you must be physically present within the Angeles City coverage area.\n\n'
+          'If you believe this is a GPS error, please:\n'
+          '• Ensure location services are enabled\n'
+          '• Move to an open area for better GPS signal\n'
+          '• Wait a moment for GPS to stabilize',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF4B5563),
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFAC1B22),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'OK',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showPinPickerError(String message) {
