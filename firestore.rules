@@ -16,7 +16,13 @@ service cloud.firestore {
     function isValidUserVotes() {
       return request.resource.data.keys().hasOnly(['votes']) &&
           request.resource.data.votes is map &&
+          request.resource.data.votes.size() > 0 && // Prevent empty votes
           request.resource.data.votes.values().hasOnly(['green', 'red', 'none']);
+    }
+
+    // Helper function to check if string is a phone number (digits only)
+    function isPhoneNumber(str) {
+      return str.matches('^[0-9]+$');
     }
 
     // Helper function to validate vote record data
@@ -91,10 +97,12 @@ service cloud.firestore {
       allow read: if request.auth != null;
       
       // Allow users to create/update only their own votes
-      // phoneNumber in path must match the sanitized phone number from their user data
+      // phoneNumber in path must match the user's contactNumber in their user document
       allow create, update: if request.auth != null && 
         isValidUserVotes() &&
-        phoneNumber.matches('^[0-9]+$');  // Ensure phone number format
+        phoneNumber.matches('^[0-9]+$') &&
+        // Verify the authenticated user owns this phone number
+        phoneNumber == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.contactNumber;
       
       allow delete: if false;
     }

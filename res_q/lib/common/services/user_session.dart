@@ -4,11 +4,13 @@
 /// - Changed primary identifier from username to phone number
 /// - getUserId() now returns sanitized phone number (digits only)
 /// - Phone number extracted from 'contactNumber' or 'phoneNumber' fields
-/// - Falls back to Firebase Auth UID if no phone number available
+/// - ⚠️ IMPORTANT: All users MUST have a phone number for voting and reporting
 ///
 /// Example userId values:
-/// - "639123456789" (phone number, preferred)
-/// - "firebase-uid-abc123" (fallback)
+/// - "639123456789" (phone number, REQUIRED)
+///
+/// Note: Users without phone numbers cannot vote or submit reports due to
+/// Firestore security rules requiring phone number verification.
 ///
 /// Legacy data may still reference 'username' field - update as needed.
 
@@ -32,17 +34,25 @@ class UserSession {
     // Extract phone number from user data and use it as the primary identifier
     // This makes it easier to track users in Firestore
     // Note: Firestore uses 'contactNumber' as the primary field
-    final phoneNumber = (data['contactNumber'] ?? data['phoneNumber'])
-        ?.toString()
-        .replaceAll(RegExp(r'[^0-9]'), '');
+    final phoneNumber = _extractPhoneNumber(data);
     if (phoneNumber != null && phoneNumber.isNotEmpty) {
       _userId = phoneNumber;
       debugPrint('📱 UserSession: Set userId from phone number: $_userId');
     } else {
-      // Fallback to Firebase Auth uid if no phone number
-      _userId = FirebaseAuth.instance.currentUser?.uid;
-      debugPrint('🔐 UserSession: Set userId from Firebase Auth: $_userId');
+      _userId = null;
+      debugPrint('⚠️ UserSession: No phone number found in user data');
     }
+  }
+
+  /// Extract and sanitize phone number from user data
+  static String? _extractPhoneNumber([Map<String, dynamic>? data]) {
+    final userData = data ?? currentUserData;
+    if (userData == null) return null;
+
+    final phoneNumber = (userData['contactNumber'] ?? userData['phoneNumber'])
+        ?.toString()
+        .replaceAll(RegExp(r'[^0-9]'), '');
+    return (phoneNumber != null && phoneNumber.isNotEmpty) ? phoneNumber : null;
   }
 
   static void setUserId(String? userId) {
@@ -50,9 +60,14 @@ class UserSession {
     debugPrint('🆔 UserSession: Manually set userId to: $_userId');
   }
 
+  /// Get the current user's ID (phone number).
+  /// Throws an exception if no phone number is available.
   static String? getUserId() {
-    // Return the stored userId (phone number), don't fall back to Firebase Auth
-    return _userId;
+    final phoneNumber = _extractPhoneNumber();
+    if (phoneNumber == null || phoneNumber.isEmpty) {
+      throw Exception('Phone number is required. Please update your profile.');
+    }
+    return phoneNumber;
   }
 
   static void clear() {

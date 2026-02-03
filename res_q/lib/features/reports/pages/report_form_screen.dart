@@ -315,8 +315,24 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
       // Get user ID safely
       final userId = UserSession.getUserId();
-      if (userId == null) {
-        throw Exception('User ID is required to submit a report');
+      if (userId == null || userId.isEmpty) {
+        throw Exception(
+          'Phone number is required to submit a report. Please update your profile.',
+        );
+      }
+
+      // Validate userId matches contact number
+      final sanitizedContactNumber = _contactNumber?.replaceAll(
+        RegExp(r'\D'),
+        '',
+      );
+      if (sanitizedContactNumber == null || sanitizedContactNumber.isEmpty) {
+        throw Exception('Contact number is required to submit a report.');
+      }
+      if (userId != sanitizedContactNumber) {
+        throw Exception(
+          'Contact number mismatch. Your profile phone ($userId) does not match the form contact number ($sanitizedContactNumber).',
+        );
       }
 
       final docRef = await FirebaseFirestore.instance
@@ -492,6 +508,15 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       } else if (fallbackName != null && fallbackName.isNotEmpty) {
         // Fallback: Check by name (less reliable)
         query = query.where('name', isEqualTo: fallbackName);
+      } else {
+        // No valid identifier - return no results
+        query = query.where(
+          'contactNumber',
+          isEqualTo: '__INVALID_NO_IDENTIFIER__',
+        );
+        print(
+          '⚠️ Warning: No valid identifier (contactNumber or name) for duplicate check',
+        );
       }
 
       final snapshot = await query.get();
@@ -1179,15 +1204,19 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   /// Generate a unique report ID for easier tracking
-  /// Format: RPT-YYYYMMDD-UUID (e.g., RPT-20260203-A1B2C3D4)
+  /// Format: RPT-YYYYMMDD-UUID (e.g., RPT-20260203-A1B2C3D4E5F6)
   /// Uses UUID v4 for cryptographically secure, collision-free IDs
   String _generateReportId() {
     final now = DateTime.now();
     final dateStr =
         '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
 
-    // Use UUID for guaranteed uniqueness
-    final uuid = const Uuid().v4().substring(0, 8).toUpperCase();
+    // Use UUID for guaranteed uniqueness (16 chars for better collision resistance)
+    final uuid = const Uuid()
+        .v4()
+        .replaceAll('-', '')
+        .substring(0, 16)
+        .toUpperCase();
 
     return 'RPT-$dateStr-$uuid';
   }
@@ -1756,19 +1785,93 @@ class _PinPickerPageState extends State<_PinPickerPage> {
   }
 
   void _confirmSelection() {
-    // Removed: User can report incidents they witnessed earlier
-    // Only validate that the INCIDENT location is within coverage
     if (_selected == null) {
-      _showPinPickerError('Please select a location for the incident');
-      return;
-    }
-    if (!_isWithinAngeles(_selected!)) {
       _showPinPickerError(
-        'Pinned location must be inside Angeles City coverage',
+        'Please tap on the map to select the incident location',
       );
       return;
     }
+
+    // Check if the incident location is within Angeles City
+    if (!_isWithinAngeles(_selected!)) {
+      _showPinPickerError(
+        'The incident location must be within Angeles City coverage area.',
+      );
+      return;
+    }
+
+    // RESTORED: Check if the user's current location is within Angeles City
+    // This prevents users outside Angeles from submitting reports
+    if (_currentLocation == null || !_isWithinAngeles(_currentLocation!)) {
+      _showUserLocationError();
+      return;
+    }
+
     Navigator.pop(context, _selected);
+  }
+
+  // RESTORED: Show error when user is outside Angeles City
+  void _showUserLocationError() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: const Color(0xFFAC1B22),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.location_off, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Location Issue',
+                style: TextStyle(
+                  fontFamily: 'Roboto',
+                  fontWeight: FontWeight.w900,
+                  fontSize: 18,
+                  color: Color(0xFF111827),
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'You cannot submit a report because your current location is outside Angeles City. Please move within the Angeles City coverage area to submit a report.',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF4B5563),
+          ),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFAC1B22),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'OK',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showPinPickerError(String message) {
