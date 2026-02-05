@@ -1,9 +1,12 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
@@ -19,11 +22,17 @@ class MapPage extends StatefulWidget {
   State<MapPage> createState() => _MapPageState();
 }
 
-class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
+class _MapPageState extends State<MapPage> with TickerProviderStateMixin, WidgetsBindingObserver {
   final MapController _mapController = MapController();
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
   late final AnimationController _pinBounceController;
   WeatherState _weatherState = WeatherState.none;
+
+  // Weather cache (shared across instances, 15 min TTL)
+  static _WeatherData? _cachedWeatherData;
+  static DateTime? _weatherCacheTime;
+  static Future<_WeatherData>? _weatherRequestInFlight;
+  static const Duration _weatherCacheDuration = Duration(minutes: 15);
   bool _showWeatherCard = false;
   bool _isWeatherLoading = false;
   String? _weatherError;
@@ -42,6 +51,15 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   final Map<String, Timer> _resolvedRemovalTimers = {};
   List<Map<String, dynamic>> _resolvedReports = [];
   QuerySnapshot<Map<String, dynamic>>? _latestReportSnapshot;
+  static const int _reportFetchLimit = 100;
+  bool _hasShownReportLimitNotice = false;
+  bool _hasShownIndexWarning = false;
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> _allReports = [];
+  DocumentSnapshot<Map<String, dynamic>>? _lastAllReportDoc;
+  bool _isAllReportsLoading = false;
+  bool _hasMoreAllReports = true;
+  String? _allReportsError;
+  static const int _allReportsPageSize = 50;
 
   bool _showEarthquake = true;
   bool _showFlood = true;
@@ -68,6 +86,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
     _pinBounceController = AnimationController(
@@ -78,13 +97,27 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Pause animation when app is in background to save CPU
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _pinBounceController.stop();
+    } else if (state == AppLifecycleState.resumed) {
+      if (!_pinBounceController.isAnimating) {
+        _pinBounceController.repeat(reverse: true);
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _reportsSubscription?.cancel();
     _trackingTimer?.cancel();
     for (final timer in _resolvedRemovalTimers.values) {
       timer.cancel();
     }
     _pinBounceController.dispose();
+    _weatherCardOffset.dispose();
     super.dispose();
   }
 
@@ -232,11 +265,33 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: mediaType == 'photo'
-                          ? Image.network(
-                              mediaUrl,
+                          ? CachedNetworkImage(
+                              imageUrl: mediaUrl,
                               height: 200,
                               width: double.infinity,
                               fit: BoxFit.cover,
+                              placeholder: (context, url) => Container(
+                                height: 200,
+                                color: const Color(0xFFF3F4F6),
+                                child: const Center(
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              ),
+                              errorWidget: (context, url, error) {
+                                debugPrint(
+                                  'Failed to load image: $url, error: $error',
+                                );
+                                return Container(
+                                  height: 200,
+                                  color: const Color(0xFFF3F4F6),
+                                  child: const Center(
+                                    child: Icon(
+                                      Icons.error_outline,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                );
+                              },
                             )
                           : Container(
                               height: 200,
@@ -363,7 +418,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       // Zoom to fit route
       _zoomToRoute();
     } catch (e) {
-      print('Error calculating route: $e');
+      debugPrint('Error calculating route: $e');
       _routeInstructions = 'Failed to calculate route';
     } finally {
       setState(() {
@@ -544,6 +599,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       _isWeatherLoading = true;
       _weatherError = null;
     });
+    _weatherCardOffset.value = Offset.zero;
     try {
       final data = await _fetchWeatherForAngeles();
       if (!mounted) return;
@@ -638,12 +694,84 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     _reportsSubscription = FirebaseFirestore.instance
         .collection('reports')
         .where('location', isNotEqualTo: null)
+        .orderBy('location')
+        .orderBy('reportedAt', descending: true)
+        .limit(_reportFetchLimit) // Limit most recent reports for performance
         .snapshots()
         .listen((snapshot) {
       _applyReportSnapshot(snapshot);
     }, onError: (error) {
-      print('❌ Failed to subscribe to reports: $error');
+      debugPrint('❌ Failed to subscribe to reports: $error');
+      if (!_hasShownIndexWarning &&
+          error is FirebaseException &&
+          error.code == 'failed-precondition') {
+        _hasShownIndexWarning = true;
+        if (kDebugMode) {
+          debugPrint(
+            'Firestore index required for reports query. Check logs for the index link.',
+          );
+        }
+      }
     });
+  }
+
+  Marker? _createIncidentMarker({
+    required String reportId,
+    required Map<String, dynamic> data,
+    bool animate = true,
+  }) {
+    final location = data['location'] as GeoPoint?;
+    if (location == null) {
+      return null;
+    }
+    final incidentType = data['incidentType'] as String? ?? 'Unknown';
+    if (!_shouldShowIncidentType(incidentType)) {
+      return null;
+    }
+    final statusLower = (data['status'] as String? ?? '').toLowerCase();
+    final isResolved =
+        statusLower == 'resolved' || statusLower == 'incident resolved';
+    final isFlagged =
+        statusLower == 'flagged' || statusLower == 'unverified';
+    final isInactive = isResolved || isFlagged;
+
+    final markerSize = isInactive ? 56.0 : 72.0;
+    final badge = _buildStatusBadge(statusLower, markerSize);
+    final baseContent = GestureDetector(
+      onTap: () => _showIncidentInfo(data),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Image.asset(
+            _getMarkerAssetForIncidentType(incidentType),
+            width: markerSize,
+            height: markerSize,
+            fit: BoxFit.contain,
+          ),
+          if (badge != null)
+            Positioned(
+              right: -2,
+              top: -2,
+              child: badge,
+            ),
+        ],
+      ),
+    );
+    final markerContent =
+        animate ? _buildBouncyPin(child: baseContent) : baseContent;
+
+    return Marker(
+      key: ValueKey('incident-$reportId'),
+      point: LatLng(location.latitude, location.longitude),
+      width: markerSize,
+      height: markerSize,
+      child: isInactive
+          ? Opacity(
+              opacity: 0.45,
+              child: IgnorePointer(ignoring: true, child: markerContent),
+            )
+          : markerContent,
+    );
   }
 
   void _applyReportSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
@@ -676,50 +804,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         } else {
           _cancelResolvedRemoval(reportId);
         }
-        final point = LatLng(location.latitude, location.longitude);
-        if (!shouldShowType) {
-          continue;
+        final marker = _createIncidentMarker(
+          reportId: reportId,
+          data: data,
+          animate: true,
+        );
+        if (marker != null) {
+          _incidentMarkers.add(marker);
         }
-
-        final markerSize = isInactive ? 56.0 : 72.0;
-        final badge = _buildStatusBadge(status, markerSize);
-        final markerContent = _buildBouncyPin(
-          child: GestureDetector(
-            onTap: () => _showIncidentInfo(data),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Image.asset(
-                  _getMarkerAssetForIncidentType(incidentType),
-                  width: markerSize,
-                  height: markerSize,
-                  fit: BoxFit.contain,
-                ),
-                if (badge != null)
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: badge,
-                  ),
-              ],
-            ),
-          ),
-        );
-
-        _incidentMarkers.add(
-          Marker(
-            key: ValueKey('incident-$reportId'),
-            point: point,
-            width: markerSize,
-            height: markerSize,
-            child: isInactive
-                ? Opacity(
-                    opacity: 0.45,
-                    child: IgnorePointer(ignoring: true, child: markerContent),
-                  )
-                : markerContent,
-          ),
-        );
       }
     }
 
@@ -728,7 +820,279 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
         _resolvedReports = resolvedReports;
       });
     }
-    print('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+    debugPrint('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+    if (!_hasShownReportLimitNotice &&
+        snapshot.docs.length >= _reportFetchLimit) {
+      _hasShownReportLimitNotice = true;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Showing latest $_reportFetchLimit reports. Older reports are not displayed.',
+            ),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadMoreAllReports({bool reset = false}) async {
+    if (_isAllReportsLoading) {
+      return;
+    }
+    if (!reset && !_hasMoreAllReports) {
+      return;
+    }
+
+    if (reset) {
+      _allReports.clear();
+      _lastAllReportDoc = null;
+      _hasMoreAllReports = true;
+      _allReportsError = null;
+    }
+
+    setState(() {
+      _isAllReportsLoading = true;
+      if (reset) {
+        _allReportsError = null;
+      }
+    });
+
+    try {
+      Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+          .collection('reports')
+          .orderBy('reportedAt', descending: true)
+          .limit(_allReportsPageSize);
+
+      if (_lastAllReportDoc != null) {
+        query = query.startAfterDocument(_lastAllReportDoc!);
+      }
+
+      final snapshot = await query.get();
+      if (snapshot.docs.isEmpty) {
+        _hasMoreAllReports = false;
+      } else {
+        _lastAllReportDoc = snapshot.docs.last;
+        _allReports.addAll(snapshot.docs);
+        if (snapshot.docs.length < _allReportsPageSize) {
+          _hasMoreAllReports = false;
+        }
+      }
+
+    } catch (e) {
+      _allReportsError = 'Failed to load reports';
+      debugPrint('❌ Failed to load reports: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAllReportsLoading = false;
+        });
+      }
+    }
+  }
+
+  void _openAllReportsSheet() {
+    if (_allReports.isEmpty && !_isAllReportsLoading) {
+      _loadMoreAllReports();
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.85,
+          minChildSize: 0.4,
+          maxChildSize: 0.95,
+          expand: false,
+          builder: (context, scrollController) {
+            Widget body;
+            if (_allReports.isEmpty) {
+              if (_isAllReportsLoading) {
+                body = const Center(
+                  child: CircularProgressIndicator(),
+                );
+              } else if (_allReportsError != null) {
+                body = Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _allReportsError ?? 'Failed to load reports',
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton(
+                        onPressed: () => _loadMoreAllReports(reset: true),
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                );
+              } else {
+                body = const Center(
+                  child: Text('No reports available.'),
+                );
+              }
+            } else {
+              body = NotificationListener<ScrollNotification>(
+                onNotification: (notification) {
+                  if (notification.metrics.axis == Axis.vertical &&
+                      notification.metrics.pixels >=
+                          notification.metrics.maxScrollExtent - 200) {
+                    _loadMoreAllReports();
+                  }
+                  return false;
+                },
+                child: ListView.separated(
+                  controller: scrollController,
+                  itemCount: _allReports.length +
+                      (_isAllReportsLoading || _hasMoreAllReports ? 1 : 0),
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    if (index >= _allReports.length) {
+                      if (_isAllReportsLoading) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Center(
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        );
+                      }
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 12),
+                        child: Center(
+                          child: Text(
+                            'Scroll to load more',
+                            style: TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 12,
+                              color: Color(0xFF6B7280),
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                    final doc = _allReports[index];
+                    final data = doc.data();
+                    final incidentType =
+                        data['incidentType'] as String? ?? 'Incident';
+                    final status = _normalizeStatusLabel(
+                      data['status'] as String? ?? 'Unverified',
+                    );
+                    final reportedAt = _parseReportedAt(data);
+                    final reportedLabel = reportedAt != null
+                        ? _formatResolvedTimestamp(reportedAt)
+                        : 'Unknown time';
+                    final reporter = data['name'] as String? ?? 'Unknown';
+                    final location = data['location'] as GeoPoint?;
+
+                    return ListTile(
+                      title: Text(
+                        incidentType,
+                        style: const TextStyle(
+                          fontFamily: 'Roboto',
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      subtitle: Text(
+                        '$status • $reportedLabel\nReported by $reporter',
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                        ),
+                      ),
+                      isThreeLine: true,
+                      trailing: IconButton(
+                        icon: const Icon(Icons.place_outlined),
+                        onPressed: location == null
+                            ? null
+                            : () {
+                                Navigator.pop(context);
+                                _focusReportOnMap(data);
+                              },
+                      ),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _showIncidentInfo(data);
+                      },
+                    );
+                  },
+                ),
+              );
+            }
+
+            return SafeArea(
+              child: Column(
+                children: [
+                  const SizedBox(height: 8),
+                  Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.list_alt, color: Color(0xFFAC1B22)),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'All Reports',
+                          style: TextStyle(
+                            fontFamily: 'Roboto',
+                            fontWeight: FontWeight.w900,
+                            fontSize: 16,
+                            color: Color(0xFF111827),
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          tooltip: 'Refresh',
+                          onPressed: () => _loadMoreAllReports(reset: true),
+                          icon: const Icon(Icons.refresh),
+                        ),
+                        IconButton(
+                          tooltip: 'Close',
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Expanded(child: body),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _focusReportOnMap(Map<String, dynamic> data) {
+    final location = data['location'] as GeoPoint?;
+    if (location == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Report has no location data.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    _mapController.move(
+      LatLng(location.latitude, location.longitude),
+      16.0,
+    );
+    _showIncidentInfo(data);
   }
 
   bool _shouldShowIncidentType(String incidentType) {
@@ -1007,6 +1371,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     );
   }
 
+  // Track weather card drag offset for swipe-to-dismiss
+  final ValueNotifier<Offset> _weatherCardOffset = ValueNotifier(Offset.zero);
+
   Widget _buildWeatherCard() {
     if (!_showWeatherCard) {
       return const SizedBox.shrink();
@@ -1015,28 +1382,72 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       top: 76,
       left: 16,
       right: 16,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.7),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: Colors.white.withOpacity(0.35),
+      child: GestureDetector(
+        onPanUpdate: (details) {
+          _weatherCardOffset.value =
+              _weatherCardOffset.value + details.delta;
+        },
+        onPanEnd: (details) {
+          final currentOffset = _weatherCardOffset.value;
+          // Dismiss if dragged far enough horizontally or upward
+          final horizontalThreshold = 80.0;
+          final verticalThreshold = -50.0; // Negative because up is negative Y
+
+          if (currentOffset.dx.abs() > horizontalThreshold ||
+              currentOffset.dy < verticalThreshold) {
+            setState(() {
+              _showWeatherCard = false;
+            });
+            _weatherCardOffset.value = Offset.zero;
+          } else {
+            // Snap back if not dismissed
+            _weatherCardOffset.value = Offset.zero;
+          }
+        },
+        child: ValueListenableBuilder<Offset>(
+          valueListenable: _weatherCardOffset,
+          builder: (context, offset, child) {
+            return AnimatedContainer(
+              duration: offset == Offset.zero
+                  ? const Duration(milliseconds: 200)
+                  : Duration.zero,
+              transform: Matrix4.translationValues(
+                offset.dx,
+                offset.dy.clamp(-100.0, 20.0), // Limit vertical drag
+                0,
               ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.12),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
+              child: Opacity(
+                opacity: (1 - (offset.distance / 150)).clamp(0.3, 1.0),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.7),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.35),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.12),
+                            blurRadius: 12,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: _buildWeatherCardContent(),
+                    ),
+                  ),
                 ),
-              ],
-            ),
-            child: _buildWeatherCardContent(),
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -1152,7 +1563,43 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     );
   }
 
+  @visibleForTesting
+  static void resetWeatherCacheForTesting() {
+    _cachedWeatherData = null;
+    _weatherCacheTime = null;
+    _weatherRequestInFlight = null;
+  }
+
   Future<_WeatherData> _fetchWeatherForAngeles() async {
+    // Return cached data if still valid
+    if (_cachedWeatherData != null && _weatherCacheTime != null) {
+      final elapsed = DateTime.now().difference(_weatherCacheTime!);
+      if (elapsed < _weatherCacheDuration) {
+        return _cachedWeatherData!;
+      }
+    }
+
+    if (_weatherRequestInFlight != null) {
+      return _weatherRequestInFlight!;
+    }
+
+    final request = _requestWeatherFromApi();
+    _weatherRequestInFlight = request;
+    try {
+      final weatherData = await request;
+      _cachedWeatherData = weatherData;
+      _weatherCacheTime = DateTime.now();
+      return weatherData;
+    } catch (_) {
+      _cachedWeatherData = null;
+      _weatherCacheTime = null;
+      rethrow;
+    } finally {
+      _weatherRequestInFlight = null;
+    }
+  }
+
+  Future<_WeatherData> _requestWeatherFromApi() async {
     const lat = 15.1450;
     const lon = 120.5887;
     final uri = Uri.parse(
@@ -1178,6 +1625,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
     final code = (daily['weathercode'] as List<dynamic>).first as num;
     final state = _mapWeatherState(code.toInt());
     final description = _mapWeatherDescription(code.toInt());
+
     return _WeatherData(
       temperature: temperature,
       max: max.toDouble(),
@@ -1238,10 +1686,13 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
       final snapshot = await FirebaseFirestore.instance
           .collection('reports')
           .where('location', isNotEqualTo: null)
+          .orderBy('location')
+          .orderBy('reportedAt', descending: true)
+          .limit(_reportFetchLimit)
           .get();
       _applyReportSnapshot(snapshot);
     } catch (e) {
-      print('❌ Failed to load reports: $e');
+      debugPrint('❌ Failed to load reports: $e');
     }
   }
 
@@ -1623,6 +2074,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                 _buildWeatherButton(),
                 const SizedBox(height: 12),
                 FloatingActionButton.small(
+                  heroTag: 'all_reports',
+                  backgroundColor: Colors.white,
+                  foregroundColor: const Color(0xFFAC1B22),
+                  onPressed: _openAllReportsSheet,
+                  child: const Icon(Icons.list_alt),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton.small(
                   heroTag: 'resolved_reports',
                   backgroundColor: Colors.white,
                   foregroundColor: const Color(0xFFAC1B22),
@@ -1816,7 +2275,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: AppTheme.appBlue.withOpacity(0.15),
+                    color: AppTheme.appRed.withOpacity(0.15),
                   ),
                   boxShadow: [
                     BoxShadow(
@@ -1844,7 +2303,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                     Checkbox(
                       value: value,
                       onChanged: onChanged,
-                      activeColor: AppTheme.appBlue,
+                      activeColor: AppTheme.appRed,
                       checkColor: Colors.white,
                     ),
                   ],
@@ -1873,7 +2332,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: AppTheme.appBlue,
+                            color: AppTheme.appRed,
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: const Icon(
@@ -1941,7 +2400,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                           child: TextButton(
                             onPressed: () => Navigator.pop(context),
                             style: TextButton.styleFrom(
-                              foregroundColor: AppTheme.appBlue,
+                              foregroundColor: AppTheme.appRed,
                             ),
                             child: const Text('Cancel'),
                           ),
@@ -1967,7 +2426,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin {
                               }
                             },
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: AppTheme.appBlue,
+                              backgroundColor: AppTheme.appRed,
                               foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
@@ -2016,3 +2475,4 @@ class _WeatherData {
   final WeatherState state;
   final String description;
 }
+

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'firebase_options.dart';
 import 'features/home/pages/home_page.dart';
 import 'features/loading/pages/loading_screen.dart';
@@ -11,10 +12,16 @@ import 'features/auth/pages/forgot_password_page.dart';
 import 'features/auth/pages/otp_page.dart';
 import 'features/auth/pages/pin_creation_page.dart';
 import 'features/auth/pages/approved_pin_creation_page.dart';
+// services
+import 'common/services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // Initialize notification service for background messages
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
   runApp(const MyApp());
 }
 

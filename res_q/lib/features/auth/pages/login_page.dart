@@ -18,7 +18,8 @@ class LoginPage extends StatefulWidget {
   State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMixin {
+class _LoginPageState extends State<LoginPage>
+    with SingleTickerProviderStateMixin {
   // Brand colors
   static const appBlue = Color(0xFFAC1B22);
   static const appRed = Color(0xFFFFC806);
@@ -69,7 +70,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   Future<void> _checkBiometrics() async {
     try {
       final canAuthenticateWithBiometrics = await _localAuth.canCheckBiometrics;
-      final canAuthenticate = canAuthenticateWithBiometrics || await _localAuth.isDeviceSupported();
+      final canAuthenticate =
+          canAuthenticateWithBiometrics || await _localAuth.isDeviceSupported();
       final availableBiometrics = await _localAuth.getAvailableBiometrics();
 
       if (mounted) {
@@ -97,7 +99,9 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     // Check if biometrics is enabled for this phone number
     final phone = '+63$phoneInput';
     if (!_biometricsEnabled || _biometricsPhone != phone) {
-      _showError('Biometric login not enabled for this account. Please use PIN or enable biometrics in settings.');
+      _showError(
+        'Biometric login not enabled for this account. Please use PIN or enable biometrics in settings.',
+      );
       return;
     }
 
@@ -162,7 +166,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         return;
       }
 
-      final userData = userQuery.docs.first.data();
+      final userDoc = userQuery.docs.first;
+      final userData = {...userDoc.data(), 'docId': userDoc.id};
       final accountStatus = userData['accountStatus'] as String?;
 
       if (accountStatus != 'approved') {
@@ -174,22 +179,48 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       // Sign in to Firebase Auth anonymously
       try {
         final userCredential = await FirebaseAuth.instance.signInAnonymously();
-        debugPrint('✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}');
+        debugPrint(
+          '✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}',
+        );
       } catch (authError) {
         debugPrint('⚠️ Firebase Anonymous Sign-In failed: $authError');
       }
 
       // Login successful
       UserSession.setUserData(userData);
+
+      // Use phone number as user ID for easier tracking
+      // Note: Firestore uses 'contactNumber' as the field name
+      final phoneNumber =
+          (userData['contactNumber'] ?? userData['phoneNumber'])
+              ?.toString()
+              .replaceAll(RegExp(r'[^0-9]'), '') ??
+          '';
+      if (phoneNumber.isNotEmpty) {
+        UserSession.setUserId(phoneNumber);
+        debugPrint('✅ UserSession userId set to phone number: $phoneNumber');
+      } else {
+        debugPrint('⚠️ No phone number found in userData');
+        debugPrint('   Available fields: ${userData.keys.toList()}');
+      }
+      _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const MainPage()),
-        );
+        Navigator.of(
+          context,
+        ).pushReplacement(MaterialPageRoute(builder: (_) => const MainPage()));
       }
     } catch (e) {
       setState(() => _loading = false);
       _showError('Error: $e');
+    }
+  }
+
+  void _finishAutofillContext() {
+    try {
+      TextInput.finishAutofillContext();
+    } catch (e) {
+      debugPrint('Failed to finish autofill: $e');
     }
   }
 
@@ -237,7 +268,9 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       final prefs = await SharedPreferences.getInstance();
       _biometricsEnabled = prefs.getBool('biometrics_enabled') ?? false;
       _biometricsPhone = prefs.getString('biometrics_phone');
-      debugPrint('📱 Biometrics enabled: $_biometricsEnabled, phone: $_biometricsPhone');
+      debugPrint(
+        '📱 Biometrics enabled: $_biometricsEnabled, phone: $_biometricsPhone',
+      );
     } catch (e) {
       debugPrint('Error loading saved data: $e');
     }
@@ -381,7 +414,8 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         return;
       }
 
-      final userData = userQuery.docs.first.data();
+      final userDoc = userQuery.docs.first;
+      final userData = {...userDoc.data(), 'docId': userDoc.id};
       final accountStatus = userData['accountStatus'] as String?;
 
       if (accountStatus != 'approved') {
@@ -393,18 +427,36 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       // Sign in to Firebase Auth anonymously
       try {
         final userCredential = await FirebaseAuth.instance.signInAnonymously();
-        debugPrint('✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}');
+        debugPrint(
+          '✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}',
+        );
       } catch (authError) {
         debugPrint('⚠️ Firebase Anonymous Sign-In failed: $authError');
       }
 
       // Login successful
       UserSession.setUserData(userData);
+
+      // Use phone number as user ID for easier tracking
+      // Note: Firestore uses 'contactNumber' as the field name
+      final phoneNumber =
+          (userData['contactNumber'] ?? userData['phoneNumber'])
+              ?.toString()
+              .replaceAll(RegExp(r'[^0-9]'), '') ??
+          '';
+      if (phoneNumber.isNotEmpty) {
+        UserSession.setUserId(phoneNumber);
+        debugPrint('✅ UserSession userId set to phone number: $phoneNumber');
+      } else {
+        debugPrint('⚠️ No phone number found in userData');
+        debugPrint('   Available fields: ${userData.keys.toList()}');
+      }
+      _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const MainPage()),
-        );
+        Navigator.of(
+          context,
+        ).pushReplacement(MaterialPageRoute(builder: (_) => const MainPage()));
       }
     } catch (e) {
       setState(() => _loading = false);
@@ -435,7 +487,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       final seedUsers = [
         {
-          'username': 'semiadmin1',
           'fullName': 'Semi Admin One',
           'password': 'semi1234',
           'role': 'semi-admin',
@@ -443,7 +494,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
           'pin': '1111',
         },
         {
-          'username': 'semiadmin2',
           'fullName': 'Semi Admin Two',
           'password': 'semi1234',
           'role': 'semi-admin',
@@ -451,7 +501,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
           'pin': '2222',
         },
         {
-          'username': 'semiadmin3',
           'fullName': 'Semi Admin Three',
           'password': 'semi1234',
           'role': 'semi-admin',
@@ -459,7 +508,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
           'pin': '3333',
         },
         {
-          'username': 'semiadmin4',
           'fullName': 'Semi Admin Four',
           'password': 'semi1234',
           'role': 'semi-admin',
@@ -467,7 +515,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
           'pin': '4444',
         },
         {
-          'username': 'semiadmin5',
           'fullName': 'Semi Admin Five',
           'password': 'semi1234',
           'role': 'semi-admin',
@@ -480,7 +527,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       for (final user in seedUsers) {
         final ref = _firestore
             .collection('semi_admins')
-            .doc(user['username'] as String);
+            .doc(user['contactNumber'] as String);
         batch.set(ref, user);
       }
       await batch.commit();
@@ -515,10 +562,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
               const SizedBox(height: 12),
               Text(
                 'Your account is currently pending admin approval. Please wait up to 48 hours for an administrator to review and approve your account.',
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: appBlack,
-                ),
+                style: const TextStyle(fontSize: 14, color: appBlack),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
@@ -626,305 +670,344 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
             Expanded(
               child: Center(
                 child: SingleChildScrollView(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 360),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 16,
-                      ),
-                      child: Form(
-                        key: _formKey,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            // Phone Number Field with +63 prefix
-                            Text(
-                              'PHONE NUMBER',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w900,
-                                color: appBlack,
-                                fontFamily: 'Roboto',
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Container(
-                              height: 56,
-                              decoration: BoxDecoration(
-                                color: appOffWhite,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: Colors.black,
-                                  width: 2,
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  // Phone icon
-                                  const Padding(
-                                    padding: EdgeInsets.only(left: 12),
-                                    child: Icon(
-                                      Icons.phone_outlined,
-                                      color: Colors.black,
-                                    ),
-                                  ),
-                                  // +63 prefix
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                                    child: Text(
-                                      '+63',
-                                      style: TextStyle(
-                                        fontFamily: 'RobotoCondensed',
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 14,
-                                        color: appBlack,
-                                      ),
-                                    ),
-                                  ),
-                                  // Divider
-                                  Container(
-                                    width: 1.5,
-                                    height: 28,
-                                    color: Colors.black,
-                                  ),
-                                  // Phone input field
-                                  Expanded(
-                                    child: TextFormField(
-                                      controller: _phoneCtl,
-                                      keyboardType: TextInputType.phone,
-                                      inputFormatters: [
-                                        FilteringTextInputFormatter.digitsOnly,
-                                        LengthLimitingTextInputFormatter(10),
-                                        TextInputFormatter.withFunction((oldValue, newValue) {
-                                          return TextEditingValue(
-                                            text: _formatPhoneNumber(newValue.text),
-                                            selection: TextSelection.collapsed(
-                                              offset: _formatPhoneNumber(newValue.text).length,
-                                            ),
-                                          );
-                                        }),
-                                      ],
-                                      style: const TextStyle(
-                                        fontFamily: 'RobotoCondensed',
-                                        fontWeight: FontWeight.w400,
-                                        fontSize: 14,
-                                        color: appBlack,
-                                      ),
-                                      decoration: InputDecoration(
-                                        hintText: '912-345-6789',
-                                        hintStyle: TextStyle(
-                                          fontFamily: 'RobotoCondensed',
-                                          fontWeight: FontWeight.w400,
-                                          fontSize: 14,
-                                          color: appBlack.withOpacity(0.5),
-                                        ),
-                                        border: InputBorder.none,
-                                        contentPadding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 16,
-                                        ),
-                                      ),
-                                      onChanged: (_) {
-                                        if (_showPhoneError) {
-                                          setState(() => _showPhoneError = false);
-                                        }
-                                      },
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            // Show phone error message below phone input, outside the box
-                            if (_showPhoneError) ...[
-                              const SizedBox(height: 6),
-                              Padding(
-                                padding: const EdgeInsets.only(left: 4),
-                                child: Text(
-                                  _phoneErrorMessage,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: Colors.red,
-                                  ),
-                                ),
-                              ),
-                            ],
-                            const SizedBox(height: 20),
-
-                            Text(
-                              'ENTER YOUR PIN',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w900,
-                                color: appBlack,
-                                fontFamily: 'Roboto',
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 16),
-
-                            // PIN Display (dots) with shake animation
-                            AnimatedBuilder(
-                              animation: _shakeAnimation,
-                              builder: (context, child) {
-                                final offset = _shakeAnimation.value *
-                                    10 *
-                                    (1 - _shakeAnimation.value) *
-                                    ((_shakeController.value * 8).floor() % 2 == 0 ? 1 : -1);
-                                return Transform.translate(
-                                  offset: Offset(offset, 0),
-                                  child: child,
-                                );
-                              },
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: List.generate(4, (index) {
-                                  final hasValue = _pinCtl.text.length > index;
-                                  return Container(
-                                    margin: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                    ),
-                                    width: 16,
-                                    height: 16,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: hasValue
-                                          ? (_showPinError ? Colors.red : appBlue)
-                                          : Colors.transparent,
-                                      border: Border.all(
-                                        color: _showPinError ? Colors.red : appBlack,
-                                        width: 2,
-                                      ),
-                                    ),
-                                  );
-                                }),
-                              ),
-                            ),
-
-                            // Error text below PIN
-                            if (_showPinError) ...[
-                              const SizedBox(height: 12),
-                              Text(
-                                _pinErrorMessage,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.red,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ],
-                            const SizedBox(height: 24),
-
-                            // Numpad with biometrics (always show biometrics button)
-                            PinNumpad(
-                              enabled: !_loading,
-                              onKeyTap: _handlePinKey,
-                              actionBackgroundColor: appOffWhite,
-                              textColor: appBlack,
-                              showBiometrics: true,
-                              onBiometricsTap: _authenticateWithBiometrics,
-                            ),
-
-                            const SizedBox(height: 20),
-
-                            // Success message for PIN creation
-                            if (_showPinSuccess) ...[
-                              Container(
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF00A458),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.check_circle,
-                                      color: Colors.white,
-                                      size: 20,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        'Pin is good to go! Enter the pin in the pin section.',
-                                        style: const TextStyle(
-                                          fontSize: 13,
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w500,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                            ],
-
-                            Align(
-                              alignment: Alignment.center,
-                              child: TextButton(
-                                onPressed: () => Navigator.pushNamed(
-                                  context,
-                                  '/approved-pin-creation',
-                                ),
-                                style: TextButton.styleFrom(
-                                  padding: EdgeInsets.zero,
-                                  minimumSize: const Size(0, 0),
-                                ),
-                                child: Text(
-                                  'Forgot PIN?',
+                  child: GestureDetector(
+                    onTap: () => FocusScope.of(context).unfocus(),
+                    behavior: HitTestBehavior.opaque,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 360),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 16,
+                        ),
+                        child: AutofillGroup(
+                          child: Form(
+                            key: _formKey,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                // Phone Number Field with +63 prefix
+                                Text(
+                                  'PHONE NUMBER',
                                   style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                    color: appBlue,
-                                    fontFamily: 'RobotoCondensed',
-                                    decoration: TextDecoration.underline,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w900,
+                                    color: appBlack,
+                                    fontFamily: 'Roboto',
                                   ),
                                 ),
-                              ),
-                            ),
-
-                            const SizedBox(height: 10),
-
-                            // Register link
-                            Align(
-                              alignment: Alignment.center,
-                              child: TextButton(
-                                onPressed: () =>
-                                    Navigator.pushNamed(context, '/register'),
-                                style: TextButton.styleFrom(
-                                  padding: EdgeInsets.zero,
-                                  minimumSize: const Size(0, 0),
-                                ),
-                                child: RichText(
-                                  text: TextSpan(
+                                const SizedBox(height: 4),
+                                Container(
+                                  height: 56,
+                                  decoration: BoxDecoration(
+                                    color: appOffWhite,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: Colors.black,
+                                      width: 2,
+                                    ),
+                                  ),
+                                  child: Row(
                                     children: [
-                                      TextSpan(
-                                        text: 'No Account yet? ',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w400,
-                                          color: appBlack,
-                                          fontFamily: 'RobotoCondensed',
+                                      // Phone icon
+                                      const Padding(
+                                        padding: EdgeInsets.only(left: 12),
+                                        child: Icon(
+                                          Icons.phone_outlined,
+                                          color: Colors.black,
                                         ),
                                       ),
-                                      TextSpan(
-                                        text: 'Register Now!',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w700,
-                                          color: appBlue,
-                                          fontFamily: 'RobotoCondensed',
-                                          decoration: TextDecoration.underline,
+                                      // +63 prefix
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                        ),
+                                        child: Text(
+                                          '+63',
+                                          style: TextStyle(
+                                            fontFamily: 'RobotoCondensed',
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 14,
+                                            color: appBlack,
+                                          ),
+                                        ),
+                                      ),
+                                      // Divider
+                                      Container(
+                                        width: 1.5,
+                                        height: 28,
+                                        color: Colors.black,
+                                      ),
+                                      // Phone input field
+                                      Expanded(
+                                        child: TextFormField(
+                                          controller: _phoneCtl,
+                                          keyboardType: TextInputType.phone,
+                                          autofillHints: const [
+                                            AutofillHints.telephoneNumber,
+                                          ],
+                                          inputFormatters: [
+                                            FilteringTextInputFormatter
+                                                .digitsOnly,
+                                            LengthLimitingTextInputFormatter(
+                                              10,
+                                            ),
+                                            TextInputFormatter.withFunction((
+                                              oldValue,
+                                              newValue,
+                                            ) {
+                                              return TextEditingValue(
+                                                text: _formatPhoneNumber(
+                                                  newValue.text,
+                                                ),
+                                                selection:
+                                                    TextSelection.collapsed(
+                                                      offset:
+                                                          _formatPhoneNumber(
+                                                            newValue.text,
+                                                          ).length,
+                                                    ),
+                                              );
+                                            }),
+                                          ],
+                                          style: const TextStyle(
+                                            fontFamily: 'RobotoCondensed',
+                                            fontWeight: FontWeight.w400,
+                                            fontSize: 14,
+                                            color: appBlack,
+                                          ),
+                                          decoration: InputDecoration(
+                                            hintText: '912-345-6789',
+                                            hintStyle: TextStyle(
+                                              fontFamily: 'RobotoCondensed',
+                                              fontWeight: FontWeight.w400,
+                                              fontSize: 14,
+                                              color: appBlack.withOpacity(0.5),
+                                            ),
+                                            border: InputBorder.none,
+                                            contentPadding:
+                                                const EdgeInsets.symmetric(
+                                                  horizontal: 12,
+                                                  vertical: 16,
+                                                ),
+                                          ),
+                                          onChanged: (_) {
+                                            if (_showPhoneError) {
+                                              setState(
+                                                () => _showPhoneError = false,
+                                              );
+                                            }
+                                          },
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                              ),
+                                // Show phone error message below phone input, outside the box
+                                if (_showPhoneError) ...[
+                                  const SizedBox(height: 6),
+                                  Padding(
+                                    padding: const EdgeInsets.only(left: 4),
+                                    child: Text(
+                                      _phoneErrorMessage,
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.red,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 20),
+
+                                Text(
+                                  'ENTER YOUR PIN',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w900,
+                                    color: appBlack,
+                                    fontFamily: 'Roboto',
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 16),
+
+                                // PIN Display (dots) with shake animation
+                                AnimatedBuilder(
+                                  animation: _shakeAnimation,
+                                  builder: (context, child) {
+                                    final offset =
+                                        _shakeAnimation.value *
+                                        10 *
+                                        (1 - _shakeAnimation.value) *
+                                        ((_shakeController.value * 8).floor() %
+                                                    2 ==
+                                                0
+                                            ? 1
+                                            : -1);
+                                    return Transform.translate(
+                                      offset: Offset(offset, 0),
+                                      child: child,
+                                    );
+                                  },
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: List.generate(4, (index) {
+                                      final hasValue =
+                                          _pinCtl.text.length > index;
+                                      return Container(
+                                        margin: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                        ),
+                                        width: 16,
+                                        height: 16,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: hasValue
+                                              ? (_showPinError
+                                                    ? Colors.red
+                                                    : appBlue)
+                                              : Colors.transparent,
+                                          border: Border.all(
+                                            color: _showPinError
+                                                ? Colors.red
+                                                : appBlack,
+                                            width: 2,
+                                          ),
+                                        ),
+                                      );
+                                    }),
+                                  ),
+                                ),
+
+                                // Error text below PIN
+                                if (_showPinError) ...[
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    _pinErrorMessage,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.red,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                                const SizedBox(height: 24),
+
+                                // Numpad with biometrics (always show biometrics button)
+                                PinNumpad(
+                                  enabled: !_loading,
+                                  onKeyTap: _handlePinKey,
+                                  actionBackgroundColor: appOffWhite,
+                                  textColor: appBlack,
+                                  showBiometrics: true,
+                                  onBiometricsTap: _authenticateWithBiometrics,
+                                ),
+
+                                const SizedBox(height: 20),
+
+                                // Success message for PIN creation
+                                if (_showPinSuccess) ...[
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF00A458),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.check_circle,
+                                          color: Colors.white,
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            'Pin is good to go! Enter the pin in the pin section.',
+                                            style: const TextStyle(
+                                              fontSize: 13,
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                ],
+
+                                Align(
+                                  alignment: Alignment.center,
+                                  child: TextButton(
+                                    onPressed: () => Navigator.pushNamed(
+                                      context,
+                                      '/approved-pin-creation',
+                                    ),
+                                    style: TextButton.styleFrom(
+                                      padding: EdgeInsets.zero,
+                                      minimumSize: const Size(0, 0),
+                                    ),
+                                    child: Text(
+                                      'Forgot PIN?',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                        color: appBlue,
+                                        fontFamily: 'RobotoCondensed',
+                                        decoration: TextDecoration.underline,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+
+                                const SizedBox(height: 10),
+
+                                // Register link
+                                Align(
+                                  alignment: Alignment.center,
+                                  child: TextButton(
+                                    onPressed: () => Navigator.pushNamed(
+                                      context,
+                                      '/register',
+                                    ),
+                                    style: TextButton.styleFrom(
+                                      padding: EdgeInsets.zero,
+                                      minimumSize: const Size(0, 0),
+                                    ),
+                                    child: RichText(
+                                      text: TextSpan(
+                                        children: [
+                                          TextSpan(
+                                            text: 'No Account yet? ',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w400,
+                                              color: appBlack,
+                                              fontFamily: 'RobotoCondensed',
+                                            ),
+                                          ),
+                                          TextSpan(
+                                            text: 'Register Now!',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w700,
+                                              color: appBlue,
+                                              fontFamily: 'RobotoCondensed',
+                                              decoration:
+                                                  TextDecoration.underline,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ],
+                          ),
                         ),
                       ),
                     ),

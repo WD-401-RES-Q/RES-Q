@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
@@ -1275,10 +1275,13 @@ class _AdminMapPageState extends State<AdminMapPage>
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 560),
                 child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                  child: GestureDetector(
+                    onTap: () => FocusScope.of(context).unfocus(),
+                    behavior: HitTestBehavior.opaque,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                       Row(
                         children: [
                       Container(
@@ -1622,6 +1625,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                     ],
                   ),
                     ],
+                  ),
                   ),
                 ),
               ),
@@ -2083,7 +2087,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(
-                    color: AppTheme.appBlue.withOpacity(0.15),
+                    color: AppTheme.appRed.withOpacity(0.15),
                   ),
                   boxShadow: [
                     BoxShadow(
@@ -2111,7 +2115,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                     Checkbox(
                       value: value,
                       onChanged: onChanged,
-                      activeColor: AppTheme.appBlue,
+                      activeColor: AppTheme.appRed,
                       checkColor: Colors.white,
                     ),
                   ],
@@ -2140,7 +2144,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                           width: 36,
                           height: 36,
                           decoration: BoxDecoration(
-                            color: AppTheme.appBlue,
+                            color: AppTheme.appRed,
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: const Icon(
@@ -2206,7 +2210,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                           child: TextButton(
                             onPressed: () => Navigator.pop(context),
                             style: TextButton.styleFrom(
-                              foregroundColor: AppTheme.appBlue,
+                              foregroundColor: AppTheme.appRed,
                             ),
                             child: const Text('Cancel'),
                           ),
@@ -2232,7 +2236,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                               }
                             },
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: AppTheme.appBlue,
+                              backgroundColor: AppTheme.appRed,
                               foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
@@ -2676,3 +2680,4 @@ class _WeatherData {
   final WeatherState state;
   final String description;
 }
+

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
 class ReportCard extends StatelessWidget {
@@ -84,7 +84,7 @@ class ReportCard extends StatelessWidget {
                   const SizedBox(width: 12),
                   _Badge(
                     icon: Icons.cancel,
-                    color: AppColors.appRed,
+                    color: AppColors.appOffYellow,
                     label: '$redFlags',
                   ),
                   const SizedBox(width: 12),
@@ -92,7 +92,7 @@ class ReportCard extends StatelessWidget {
                     onTap: onCommentsTap,
                     child: _Badge(
                       icon: Icons.comment,
-                      color: AppColors.appBlue,
+                      color: AppColors.appRed,
                       label: '$comments',
                     ),
                   ),
@@ -160,7 +160,7 @@ class CommentCard extends StatelessWidget {
                 const SizedBox(width: 12),
                 _Badge(
                   icon: Icons.cancel,
-                  color: AppColors.appRed,
+                  color: AppColors.appOffYellow,
                   label: '$redFlags',
                   onTap: onDownvote,
                 ),
@@ -212,3 +212,5 @@ class _Badge extends StatelessWidget {
     );
   }
 }
+
+

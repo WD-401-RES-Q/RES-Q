@@ -1,9 +1,11 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
@@ -51,10 +53,16 @@ class _WeatherData {
 }
 
 class _ReportMapPageState extends State<ReportMapPage>
-    with AutomaticKeepAliveClientMixin, TickerProviderStateMixin {
+    with AutomaticKeepAliveClientMixin, TickerProviderStateMixin, WidgetsBindingObserver {
   final MapController _mapController = MapController();
   late final AnimationController _pinBounceController;
   WeatherState _weatherState = WeatherState.none;
+
+  // Weather cache (shared across instances, 15 min TTL)
+  static _WeatherData? _cachedWeatherData;
+  static DateTime? _weatherCacheTime;
+  static Future<_WeatherData>? _weatherRequestInFlight;
+  static const Duration _weatherCacheDuration = Duration(minutes: 15);
   bool _showWeatherCard = false;
   bool _isWeatherLoading = false;
   String? _weatherError;
@@ -90,6 +98,7 @@ class _ReportMapPageState extends State<ReportMapPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _userLocation = _initialCenter;
     _pinBounceController = AnimationController(
       vsync: this,
@@ -122,11 +131,24 @@ class _ReportMapPageState extends State<ReportMapPage>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pinBounceController.dispose();
     _reportSubscription?.cancel();
     _commentsSubscription?.cancel();
     _routeDebounce?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Pause animation when app is in background to save CPU
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _pinBounceController.stop();
+    } else if (state == AppLifecycleState.resumed) {
+      if (!_pinBounceController.isAnimating) {
+        _pinBounceController.repeat(reverse: true);
+      }
+    }
   }
 
   Future<void> _showLocationSharingModal() async {
@@ -136,7 +158,7 @@ class _ReportMapPageState extends State<ReportMapPage>
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            const Icon(Icons.location_on, color: AppColors.appBlue, size: 28),
+            const Icon(Icons.location_on, color: AppColors.appRed, size: 28),
             const SizedBox(width: 12),
             Text('Share Location', style: AppText.subheading),
           ],
@@ -197,7 +219,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         // Center map on user location
         _mapController.move(userLatLng, 16.0);
 
-        print('✅ Location shared: ${position.latitude}, ${position.longitude}');
+        debugPrint('✅ Location shared: ${position.latitude}, ${position.longitude}');
 
         // Show report details card
         Future.delayed(const Duration(milliseconds: 500), () {
@@ -209,7 +231,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         });
       }
     } catch (e) {
-      print('❌ Failed to share location: $e');
+      debugPrint('❌ Failed to share location: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1131,10 +1153,10 @@ class _ReportMapPageState extends State<ReportMapPage>
     return GestureDetector(
       onTap: _toggleWeatherCard,
       child: Container(
-        width: 56,
-        height: 56,
+        width: 40,
+        height: 40,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -1160,6 +1182,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         child: Icon(
           _weatherIcon(_weatherData?.state ?? WeatherState.cloudy),
           color: Colors.white,
+          size: 20,
         ),
       ),
     );
@@ -1310,7 +1333,43 @@ class _ReportMapPageState extends State<ReportMapPage>
     );
   }
 
+  @visibleForTesting
+  static void resetWeatherCacheForTesting() {
+    _cachedWeatherData = null;
+    _weatherCacheTime = null;
+    _weatherRequestInFlight = null;
+  }
+
   Future<_WeatherData> _fetchWeatherForAngeles() async {
+    // Return cached data if still valid
+    if (_cachedWeatherData != null && _weatherCacheTime != null) {
+      final elapsed = DateTime.now().difference(_weatherCacheTime!);
+      if (elapsed < _weatherCacheDuration) {
+        return _cachedWeatherData!;
+      }
+    }
+
+    if (_weatherRequestInFlight != null) {
+      return _weatherRequestInFlight!;
+    }
+
+    final request = _requestWeatherFromApi();
+    _weatherRequestInFlight = request;
+    try {
+      final weatherData = await request;
+      _cachedWeatherData = weatherData;
+      _weatherCacheTime = DateTime.now();
+      return weatherData;
+    } catch (_) {
+      _cachedWeatherData = null;
+      _weatherCacheTime = null;
+      rethrow;
+    } finally {
+      _weatherRequestInFlight = null;
+    }
+  }
+
+  Future<_WeatherData> _requestWeatherFromApi() async {
     const lat = 15.1450;
     const lon = 120.5887;
     final uri = Uri.parse(
@@ -1336,6 +1395,7 @@ class _ReportMapPageState extends State<ReportMapPage>
     final code = (daily['weathercode'] as List<dynamic>).first as num;
     final state = _mapWeatherState(code.toInt());
     final description = _mapWeatherDescription(code.toInt());
+
     return _WeatherData(
       temperature: temperature,
       max: max.toDouble(),
@@ -1483,28 +1543,30 @@ class _ReportMapPageState extends State<ReportMapPage>
                       (widget.reportData['mediaUrl'] as String).isNotEmpty)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        reportData['mediaUrl'],
+                      child: CachedNetworkImage(
+                        imageUrl: reportData['mediaUrl'],
                         height: 200,
                         width: double.infinity,
                         fit: BoxFit.cover,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
+                        placeholder: (context, url) => Container(
+                          height: 200,
+                          color: Colors.grey[300],
+                          child: const Center(
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                        errorWidget: (context, url, error) {
+                          debugPrint(
+                            'Failed to load image: $url, error: $error',
+                          );
                           return Container(
                             height: 200,
                             color: Colors.grey[300],
                             child: const Center(
-                              child: CircularProgressIndicator(),
+                              child: Icon(Icons.image_not_supported),
                             ),
                           );
                         },
-                        errorBuilder: (context, error, stackTrace) => Container(
-                          height: 200,
-                          color: Colors.grey[300],
-                          child: const Center(
-                            child: Icon(Icons.image_not_supported),
-                          ),
-                        ),
                       ),
                     ),
                   if (widget.reportData['mediaUrl'] != null &&
@@ -1893,9 +1955,9 @@ class _ReportMapPageState extends State<ReportMapPage>
       case 'PENDING':
         return const Color(0xFF2563EB);
       case 'RESPONDING':
-        return AppColors.appRed;
+        return AppColors.appOffYellow;
       case 'ON SCENE':
-        return AppColors.appBlue;
+        return AppColors.appRed;
       case 'FLAGGED':
         return const Color(0xFFDC2626);
       case 'RESOLVED':
@@ -2095,25 +2157,14 @@ class _ReportMapPageState extends State<ReportMapPage>
                           ),
                         ],
                       ),
-                      Row(
-                        children: [
-                          if (UserSession.activeReports.length > 1)
-                            IconButton(
-                              icon: const Icon(
-                                Icons.swap_horiz,
-                                color: Colors.white,
-                              ),
-                              onPressed: _showReportSwitcher,
-                            ),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.my_location,
-                              color: Colors.white,
-                            ),
-                            onPressed: _goToCurrentLocation,
+                      if (UserSession.activeReports.length > 1)
+                        IconButton(
+                          icon: const Icon(
+                            Icons.swap_horiz,
+                            color: Colors.white,
                           ),
-                        ],
-                      ),
+                          onPressed: _showReportSwitcher,
+                        ),
                     ],
                   ),
                 ),
@@ -2139,30 +2190,6 @@ class _ReportMapPageState extends State<ReportMapPage>
               ),
             ),
           ),
-
-          // Draggable report card that sits on the nav bar
-          if (_showReportCard)
-            Positioned.fill(
-              child: DraggableScrollableSheet(
-                maxChildSize: 0.92,
-                initialChildSize: 0.5,
-                minChildSize: 0.15,
-                snap: true,
-                snapSizes: const [0.15, 0.5, 0.92],
-                expand: false,
-                builder: (context, scrollController) =>
-                    _buildReportSheet(scrollController),
-              ),
-            ),
-
-          // Local peek card (comes from map page only)
-          if (!_showReportCard)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 76, // sits just above the bottom nav bar
-              child: SafeArea(top: false, child: _buildPeekCard()),
-            ),
 
           // Success card
           if (_showSuccessCard)
@@ -2223,25 +2250,84 @@ class _ReportMapPageState extends State<ReportMapPage>
               ),
             ),
 
+          _buildWeatherCard(),
+
+          // Floating buttons - positioned before the sheet so they get covered when dragged up
           Positioned(
-            bottom: 96,
-            right: 16,
+            bottom: MediaQuery.of(context).size.height * 0.18 + 16,
+            left: 16,
             child: Column(
               children: [
                 _buildWeatherButton(),
                 const SizedBox(height: 12),
-                FloatingActionButton(
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFFAC1B22),
-                  elevation: 4,
+                FloatingActionButton.small(
+                  heroTag: 'report_location',
+                  backgroundColor: const Color(0xFFAC1B22),
                   onPressed: _goToCurrentLocation,
-                  child: const Icon(Icons.my_location),
+                  child: const Icon(Icons.my_location, color: Colors.white),
                 ),
               ],
             ),
           ),
 
-          _buildWeatherCard(),
+          // Zoom controls on the right
+          Positioned(
+            bottom: MediaQuery.of(context).size.height * 0.18 + 16,
+            right: 16,
+            child: Column(
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'report_zoom_in',
+                  backgroundColor: Colors.white,
+                  onPressed: () {
+                    final currentZoom = _mapController.camera.zoom;
+                    _mapController.move(
+                      _mapController.camera.center,
+                      currentZoom + 1,
+                    );
+                  },
+                  child: const Icon(Icons.add, color: Color(0xFF004FC6)),
+                ),
+                const SizedBox(height: 8),
+                FloatingActionButton.small(
+                  heroTag: 'report_zoom_out',
+                  backgroundColor: Colors.white,
+                  onPressed: () {
+                    final currentZoom = _mapController.camera.zoom;
+                    _mapController.move(
+                      _mapController.camera.center,
+                      currentZoom - 1,
+                    );
+                  },
+                  child: const Icon(Icons.remove, color: Color(0xFF004FC6)),
+                ),
+              ],
+            ),
+          ),
+
+          // Draggable report card that sits on the nav bar - positioned after buttons so it covers them
+          if (_showReportCard)
+            Positioned.fill(
+              child: DraggableScrollableSheet(
+                maxChildSize: 0.92,
+                initialChildSize: 0.5,
+                minChildSize: 0.15,
+                snap: true,
+                snapSizes: const [0.15, 0.5, 0.92],
+                expand: false,
+                builder: (context, scrollController) =>
+                    _buildReportSheet(scrollController),
+              ),
+            ),
+
+          // Local peek card (comes from map page only)
+          if (!_showReportCard)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: 76, // sits just above the bottom nav bar
+              child: SafeArea(top: false, child: _buildPeekCard()),
+            ),
         ],
       ),
       bottomNavigationBar: widget.showBottomNav
@@ -2277,3 +2363,5 @@ class _RouteResult {
   final double distanceMeters;
   final double durationSeconds;
 }
+
+

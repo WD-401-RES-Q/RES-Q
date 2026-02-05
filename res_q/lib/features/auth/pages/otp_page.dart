@@ -145,7 +145,6 @@ class _OTPPageState extends State<OTPPage> {
         // Store newly verified users in a pending collection for admin review
         await _firestore.collection('pending_users').doc(user.uid).set({
           'fullName': _userData!['fullName'],
-          'username': _userData!['username'],
           'email': _userData!['email'],
           'password': _userData!['password'],
           'contactNumber': _userData!['contactNumber'],
@@ -285,9 +284,12 @@ class _OTPPageState extends State<OTPPage> {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 360),
-              child: Padding(
+            child: GestureDetector(
+              onTap: () => FocusScope.of(context).unfocus(),
+              behavior: HitTestBehavior.opaque,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 360),
+                child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 24,
                   vertical: 16,
@@ -439,6 +441,7 @@ class _OTPPageState extends State<OTPPage> {
                   ],
                 ),
               ),
+            ),
             ),
           ),
         ),
