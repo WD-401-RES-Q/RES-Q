@@ -138,7 +138,12 @@ class _LoginPageState extends State<LoginPage>
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin biometric login successful!');
-        _finishAutofillContext(); // Trigger "Save to Google" prompt
+        // Set user session data for semi-admin
+        final semiAdminData = semiAdminQuery.docs.first.data();
+        UserSession.setUserData({
+          ...semiAdminData,
+          'id': semiAdminQuery.docs.first.id,
+        });
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -380,7 +385,12 @@ class _LoginPageState extends State<LoginPage>
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin login successful via PIN!');
-        _finishAutofillContext(); // Trigger "Save to Google" prompt
+        // Set user session data for semi-admin
+        final semiAdminData = semiAdminQuery.docs.first.data();
+        UserSession.setUserData({
+          ...semiAdminData,
+          'id': semiAdminQuery.docs.first.id,
+        });
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(

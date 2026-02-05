@@ -29,6 +29,7 @@ export class AnnouncementsComponent implements OnInit {
   isPublishing = false;
   posts: AdminAnnouncement[] = [];
   showSuccessModal = false;
+  expandedImageUrl = '';
 
   selectedImageFile: File | null = null;
   selectedImagePreview = '';
@@ -130,9 +131,12 @@ export class AnnouncementsComponent implements OnInit {
     const file = input.files?.[0];
     if (!file) return;
     this.selectedImageFile = file;
+    this.imageUrl = file.name;
     const reader = new FileReader();
     reader.onload = () => {
-      this.selectedImagePreview = reader.result as string;
+      this.updateUi(() => {
+        this.selectedImagePreview = reader.result as string;
+      });
     };
     reader.readAsDataURL(file);
   }
@@ -140,6 +144,16 @@ export class AnnouncementsComponent implements OnInit {
   clearSelectedImage(): void {
     this.selectedImageFile = null;
     this.selectedImagePreview = '';
+    this.imageUrl = '';
+  }
+
+  openImagePreview(url: string): void {
+    if (!url) return;
+    this.expandedImageUrl = url;
+  }
+
+  closeImagePreview(): void {
+    this.expandedImageUrl = '';
   }
 
   closeSuccessModal(): void {

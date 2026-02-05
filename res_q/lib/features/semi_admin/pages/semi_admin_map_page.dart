@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/services/location_service.dart';
+import '../../../common/services/user_session.dart';
 
 enum WeatherState { none, sunny, cloudy, rainy }
 
@@ -948,6 +949,9 @@ class _AdminMapPageState extends State<AdminMapPage>
       if (status.toLowerCase() == 'flagged' ||
           status.toLowerCase() == 'unverified') {
         print('  → Handling FLAGGED');
+        final responderName = UserSession.currentUserData?['fullName'] as String? ??
+            UserSession.currentUserData?['username'] as String? ??
+            'Semi-Admin';
         await FirebaseFirestore.instance
             .collection('reports')
             .doc(reportId)
@@ -955,6 +959,7 @@ class _AdminMapPageState extends State<AdminMapPage>
           'status': 'FLAGGED',
           'responderStatus': 'FLAGGED',
           'flaggedAt': Timestamp.now(),
+          'flaggedBy': responderName,
           'resolvedAt': FieldValue.delete(),
         });
         print('  ✓ FLAGGED written to Firestore');
@@ -967,11 +972,15 @@ class _AdminMapPageState extends State<AdminMapPage>
       if (status.toLowerCase() == 'responding') {
         print('  → Handling RESPONDING');
         print('  Writing: respondingAt + responderStatus only, NOT changing status field');
+        final responderName = UserSession.currentUserData?['fullName'] as String? ??
+            UserSession.currentUserData?['username'] as String? ??
+            'Semi-Admin';
         await FirebaseFirestore.instance
             .collection('reports')
             .doc(reportId)
             .update({
           'respondingAt': Timestamp.now(),
+          'respondingBy': responderName,
           'responderStatus': 'RESPONDING',
         });
         print('  ✓ RESPONDING written to Firestore (status field NOT changed)');
@@ -981,11 +990,15 @@ class _AdminMapPageState extends State<AdminMapPage>
       if (status.toLowerCase() == 'on scene') {
         print('  → Handling ON SCENE');
         print('  Writing: arrivedAt + responderStatus only, NOT changing status field');
+        final responderName = UserSession.currentUserData?['fullName'] as String? ??
+            UserSession.currentUserData?['username'] as String? ??
+            'Semi-Admin';
         await FirebaseFirestore.instance
             .collection('reports')
             .doc(reportId)
             .update({
           'arrivedAt': Timestamp.now(),
+          'arrivedBy': responderName,
           'responderStatus': 'ON SCENE',
         });
         print('  ✓ ON SCENE written to Firestore (status field NOT changed)');
@@ -1017,6 +1030,9 @@ class _AdminMapPageState extends State<AdminMapPage>
 
   Future<void> _markIncidentResolved(String reportId) async {
     final resolvedTime = DateTime.now();
+    final responderName = UserSession.currentUserData?['fullName'] as String? ??
+        UserSession.currentUserData?['username'] as String? ??
+        'Semi-Admin';
     try {
       await FirebaseFirestore.instance
           .collection('reports')
@@ -1025,6 +1041,7 @@ class _AdminMapPageState extends State<AdminMapPage>
         'status': 'RESOLVED',
         'responderStatus': 'RESOLVED',
         'resolvedAt': Timestamp.fromDate(resolvedTime),
+        'resolvedBy': responderName,
         'flaggedAt': FieldValue.delete(),
       });
       _cancelResolvedRemoval(reportId);
