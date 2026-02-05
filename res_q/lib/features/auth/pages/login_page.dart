@@ -134,6 +134,12 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin biometric login successful!');
+        // Set user session data for semi-admin
+        final semiAdminData = semiAdminQuery.docs.first.data();
+        UserSession.setUserData({
+          ...semiAdminData,
+          'id': semiAdminQuery.docs.first.id,
+        });
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -346,6 +352,12 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin login successful via PIN!');
+        // Set user session data for semi-admin
+        final semiAdminData = semiAdminQuery.docs.first.data();
+        UserSession.setUserData({
+          ...semiAdminData,
+          'id': semiAdminQuery.docs.first.id,
+        });
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(

@@ -27,7 +27,7 @@
           <input
             type="text"
             [(ngModel)]="imageUrl"
-            placeholder="Paste image URL for notification cover"
+            placeholder="Choose image"
           />
           <button type="button" class="btn btn-upload" (click)="fileInput.click()">
             Choose Photo
@@ -41,7 +41,12 @@
           />
         </div>
         <div class="image-preview" *ngIf="selectedImagePreview">
-          <img [src]="selectedImagePreview" alt="Selected announcement image" />
+          <img
+            class="clickable-image"
+            [src]="selectedImagePreview"
+            alt="Selected announcement image"
+            (click)="openImagePreview(selectedImagePreview)"
+          />
           <button type="button" class="btn btn-clear" (click)="clearSelectedImage()">Remove</button>
         </div>
       </div>
@@ -65,7 +70,12 @@
       <div class="notif-list" *ngIf="posts.length > 0">
         <article class="notif-item" *ngFor="let post of posts" [class.no-image]="!post.imageUrl">
           <div class="notif-image" *ngIf="post.imageUrl">
-            <img [src]="getPreviewImage(post)" alt="Notification image" />
+            <img
+              class="clickable-image"
+              [src]="getPreviewImage(post)"
+              alt="Notification image"
+              (click)="openImagePreview(getPreviewImage(post))"
+            />
           </div>
           <div class="notif-header">
             <span class="badge" [class.important]="post.priority === 'Important'" [class.critical]="post.priority === 'Critical'">{{ post.priority }}</span>
@@ -78,6 +88,13 @@
     </div>
   </div>
 </section>
+
+<div class="image-modal" *ngIf="expandedImageUrl" (click)="closeImagePreview()">
+  <div class="image-modal-content" (click)="$event.stopPropagation()">
+    <button class="image-modal-close" type="button" (click)="closeImagePreview()">&times;</button>
+    <img [src]="expandedImageUrl" alt="Expanded announcement image" />
+  </div>
+</div>
 
 <div class="modal-overlay" *ngIf="showSuccessModal" (click)="closeSuccessModal()">
   <div class="modal-content" (click)="$event.stopPropagation()">
