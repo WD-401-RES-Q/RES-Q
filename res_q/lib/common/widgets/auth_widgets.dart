@@ -9,6 +9,7 @@ import 'package:image_cropper/image_cropper.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:ui' as ui;
 import '../theme/app_theme.dart';
+import 'app_snackbar.dart';
 
 /// Phone number formatter for contact number inputs
 class PhoneNumberFormatter extends TextInputFormatter {
@@ -43,10 +44,7 @@ class ResqLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SvgPicture.asset(
-      'assets/icons/RES-Q_LOGO.svg',
-      height: fontSize,
-    );
+    return SvgPicture.asset('assets/icons/RES-Q_LOGO.svg', height: fontSize);
   }
 }
 
@@ -240,7 +238,9 @@ class IdPhotoUploadWidget extends StatelessWidget {
                 child: Container(
                   height: 64,
                   decoration: BoxDecoration(
-                    color: uploadingPhoto ? Colors.grey[400] : AppTheme.appOffYellow,
+                    color: uploadingPhoto
+                        ? Colors.grey[400]
+                        : AppTheme.appOffYellow,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Center(
@@ -360,7 +360,8 @@ class DateOfBirthInput extends StatelessWidget {
         final yearError = yearValidator?.call(yearController.text);
         final monthValid =
             monthError == null && monthController.text.trim().isNotEmpty;
-        final dayValid = dayError == null && dayController.text.trim().isNotEmpty;
+        final dayValid =
+            dayError == null && dayController.text.trim().isNotEmpty;
         final yearValid =
             yearError == null && yearController.text.trim().isNotEmpty;
 
@@ -382,6 +383,7 @@ class DateOfBirthInput extends StatelessWidget {
                   child: TextFormField(
                     controller: monthController,
                     keyboardType: TextInputType.number,
+                    autofillHints: const [AutofillHints.birthdayMonth],
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
                       LengthLimitingTextInputFormatter(2),
@@ -404,6 +406,7 @@ class DateOfBirthInput extends StatelessWidget {
                   child: TextFormField(
                     controller: dayController,
                     keyboardType: TextInputType.number,
+                    autofillHints: const [AutofillHints.birthdayDay],
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
                       LengthLimitingTextInputFormatter(2),
@@ -426,6 +429,7 @@ class DateOfBirthInput extends StatelessWidget {
                   child: TextFormField(
                     controller: yearController,
                     keyboardType: TextInputType.number,
+                    autofillHints: const [AutofillHints.birthdayYear],
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
                       LengthLimitingTextInputFormatter(4),
@@ -622,10 +626,7 @@ class PhoneInputField extends StatelessWidget {
               decoration: BoxDecoration(
                 color: AppTheme.appOffWhite,
                 borderRadius: BorderRadius.circular(fieldRadius),
-                border: Border.all(
-                  color: borderColor,
-                  width: 1.5,
-                ),
+                border: Border.all(color: borderColor, width: 1.5),
               ),
               child: Row(
                 children: [
@@ -640,11 +641,7 @@ class PhoneInputField extends StatelessWidget {
                       ),
                     ),
                   ),
-                  Container(
-                    width: 1.5,
-                    height: 24,
-                    color: borderColor,
-                  ),
+                  Container(width: 1.5, height: 24, color: borderColor),
                   Expanded(
                     child: TextFormField(
                       controller: controller,
@@ -662,7 +659,7 @@ class PhoneInputField extends StatelessWidget {
                         fontWeight: FontWeight.w500,
                       ),
                       decoration: InputDecoration(
-                    hintText: 'e.g. 912-345-6789',
+                        hintText: 'e.g. 912-345-6789',
                         hintStyle: TextStyle(
                           fontSize: 12,
                           color: AppTheme.appBlack.withOpacity(0.5),
@@ -894,11 +891,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Row(
                           children: [
-                            Icon(
-                              iconData,
-                              color: AppTheme.appRed,
-                              size: 20,
-                            ),
+                            Icon(iconData, color: AppTheme.appRed, size: 20),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
@@ -997,8 +990,6 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     return path;
   }
 
-
-
   Future<String?> _cropImage(String path) async {
     if (kIsWeb) return path;
     try {
@@ -1034,8 +1025,6 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
       return null;
     }
   }
-
-
 
   Future<bool> _showIdUploadDisclaimer() async {
     final confirmed = await showDialog<bool>(
@@ -1223,7 +1212,6 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     );
   }
 
-
   /// Read image aspect ratio (width / height)
   Future<double?> _getImageAspectRatio(String imagePath) async {
     try {
@@ -1253,7 +1241,6 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
       return null;
     }
   }
-
 
   /// Pick and validate image for front of ID
   Future<void> _pickAndValidateFrontImage() async {
@@ -1320,15 +1307,11 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
       widget.onUploadComplete(_frontIdUrl, null);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Front of ID uploaded successfully',
-              style: const TextStyle(fontSize: 12),
-            ),
-            backgroundColor: const Color(0xFF00A458),
-            duration: const Duration(seconds: 2),
-          ),
+        AppSnackBar.show(
+          context,
+          'Front of ID uploaded successfully',
+          type: AppSnackBarType.success,
+          duration: const Duration(seconds: 2),
         );
       }
     } catch (e) {
@@ -1365,7 +1348,9 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     final snapshot = await uploadTask.timeout(
       const Duration(seconds: 30),
       onTimeout: () {
-        throw Exception('Upload timed out. Please check your internet connection.');
+        throw Exception(
+          'Upload timed out. Please check your internet connection.',
+        );
       },
     );
 
@@ -1382,7 +1367,8 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     required String? error,
     required VoidCallback onUpload,
   }) {
-    final bool hasImage = bytes != null || localPath != null || uploadedUrl != null;
+    final bool hasImage =
+        bytes != null || localPath != null || uploadedUrl != null;
     final bool hasError = error != null;
     final Color borderColor = hasError ? Colors.red : Colors.black;
     const double boxHeight = 72;
@@ -1413,7 +1399,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
               child: CircularProgressIndicator(
                 value: loadingProgress.expectedTotalBytes != null
                     ? loadingProgress.cumulativeBytesLoaded /
-                        loadingProgress.expectedTotalBytes!
+                          loadingProgress.expectedTotalBytes!
                     : null,
               ),
             );
@@ -1448,12 +1434,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
               ),
             ),
             if (hasError || hasImage) const SizedBox(width: 6),
-            if (hasError)
-              const Icon(
-                Icons.cancel,
-                color: Colors.red,
-                size: 16,
-              ),
+            if (hasError) const Icon(Icons.cancel, color: Colors.red, size: 16),
             if (!hasError && hasImage)
               const Icon(
                 Icons.check_circle,
@@ -1476,8 +1457,8 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                   final double previewHeight = aspectRatio == null
                       ? boxHeight
                       : (constraints.maxWidth / aspectRatio!)
-                          .clamp(boxHeight, maxPreviewHeight)
-                          .toDouble();
+                            .clamp(boxHeight, maxPreviewHeight)
+                            .toDouble();
                   return GestureDetector(
                     onTap: isUploading ? null : onUpload,
                     child: Container(
@@ -1515,7 +1496,9 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                 child: Container(
                   height: boxHeight,
                   decoration: BoxDecoration(
-                    color: isUploading ? Colors.grey[400] : AppTheme.appOffYellow,
+                    color: isUploading
+                        ? Colors.grey[400]
+                        : AppTheme.appOffYellow,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Center(
@@ -1555,7 +1538,6 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
       ],
     );
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -1642,9 +1624,7 @@ class TermsAndConditionsDialog {
               backgroundColor: AppTheme.appOffWhite,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
-                side: BorderSide(
-                  color: AppTheme.appBlack.withOpacity(0.12),
-                ),
+                side: BorderSide(color: AppTheme.appBlack.withOpacity(0.12)),
               ),
               insetPadding: const EdgeInsets.symmetric(
                 horizontal: 16,
@@ -1664,10 +1644,7 @@ class TermsAndConditionsDialog {
                         const Spacer(),
                         IconButton(
                           onPressed: () => Navigator.pop(context),
-                          icon: const Icon(
-                            Icons.close,
-                            color: AppTheme.appRed,
-                          ),
+                          icon: const Icon(Icons.close, color: AppTheme.appRed),
                         ),
                       ],
                     ),
@@ -1755,8 +1732,8 @@ class TermsAndConditionsDialog {
                                   : null,
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: AppTheme.appOffYellow,
-                                disabledBackgroundColor:
-                                    AppTheme.appBlack.withOpacity(0.15),
+                                disabledBackgroundColor: AppTheme.appBlack
+                                    .withOpacity(0.15),
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
@@ -1921,5 +1898,3 @@ By clicking "I AGREE," you acknowledge that:
 - You understand your responsibilities in accurate disaster reporting''';
   }
 }
-
-

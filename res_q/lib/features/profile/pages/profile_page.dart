@@ -58,7 +58,8 @@ class _ProfilePageState extends State<ProfilePage>
   @override
   bool get wantKeepAlive => true;
   static const String _ratingStarAsset = 'assets/icons/rating-star.png';
-  static const String _ratingEmptyCircleAsset = 'assets/icons/rating-empty-circle.png';
+  static const String _ratingEmptyCircleAsset =
+      'assets/icons/rating-empty-circle.png';
 
   String _getModalContent(String title) {
     if (title == 'Terms of Service') {
@@ -92,7 +93,10 @@ class _ProfilePageState extends State<ProfilePage>
               ),
               clipBehavior: Clip.antiAlias,
               child: Container(
-                constraints: const BoxConstraints(maxHeight: 600, maxWidth: 500),
+                constraints: const BoxConstraints(
+                  maxHeight: 600,
+                  maxWidth: 500,
+                ),
                 padding: const EdgeInsets.all(24),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -160,8 +164,10 @@ class _ProfilePageState extends State<ProfilePage>
                         content,
                         feedbackRating,
                         selectedProblemType,
-                        (rating) => setDialogState(() => feedbackRating = rating),
-                        (value) => setDialogState(() => selectedProblemType = value),
+                        (rating) =>
+                            setDialogState(() => feedbackRating = rating),
+                        (value) =>
+                            setDialogState(() => selectedProblemType = value),
                         setDialogState,
                       ),
                     ),
@@ -402,7 +408,10 @@ class _ProfilePageState extends State<ProfilePage>
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFFAC1B22),
             ),
-            child: const Text('Open Settings', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Open Settings',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -507,10 +516,7 @@ class _ProfilePageState extends State<ProfilePage>
           aspectRatioPickerButtonHidden: true,
         ),
         if (kIsWeb)
-          WebUiSettings(
-            context: context,
-            presentStyle: WebPresentStyle.dialog,
-          ),
+          WebUiSettings(context: context, presentStyle: WebPresentStyle.dialog),
       ];
 
       final cropped = await ImageCropper().cropImage(
@@ -550,7 +556,8 @@ class _ProfilePageState extends State<ProfilePage>
 
   /// Upload profile photo to Firebase Storage and save URL to Firestore
   Future<void> _uploadProfilePhotoToFirebase(String filePath) async {
-    final contactNumber = UserSession.currentUserData?['contactNumber'] as String?;
+    final contactNumber =
+        UserSession.currentUserData?['contactNumber'] as String?;
     if (contactNumber == null) {
       debugPrint('❌ Cannot upload profile photo: No contact number found');
       return;
@@ -659,10 +666,7 @@ class _ProfilePageState extends State<ProfilePage>
                 height: 70,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  border: Border.all(
-                    color: const Color(0xFFAC1B22),
-                    width: 3,
-                  ),
+                  border: Border.all(color: const Color(0xFFAC1B22), width: 3),
                 ),
                 child: const Icon(
                   Icons.camera_alt,
@@ -693,7 +697,10 @@ class _ProfilePageState extends State<ProfilePage>
                           _captureProfilePhoto();
                         },
                         style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0xFFAC1B22), width: 2),
+                          side: const BorderSide(
+                            color: Color(0xFFAC1B22),
+                            width: 2,
+                          ),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(22),
                           ),
@@ -769,10 +776,7 @@ class _ProfilePageState extends State<ProfilePage>
           onProblemTypeChanged,
         );
       case 'Write a feedback':
-        return _buildFeedbackContent(
-          feedbackRating,
-          onRatingChanged,
-        );
+        return _buildFeedbackContent(feedbackRating, onRatingChanged);
       default:
         return Container(
           width: double.infinity,
@@ -870,7 +874,11 @@ class _ProfilePageState extends State<ProfilePage>
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.error_outline, color: Colors.red[700], size: 18),
+                      Icon(
+                        Icons.error_outline,
+                        color: Colors.red[700],
+                        size: 18,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
@@ -899,16 +907,21 @@ class _ProfilePageState extends State<ProfilePage>
                         child: OutlinedButton(
                           onPressed: () {
                             // Reset to original values
-                            fullNameCtl.text = userData['fullName']?.toString() ?? '';
+                            fullNameCtl.text =
+                                userData['fullName']?.toString() ?? '';
                             emailCtl.text = userData['email']?.toString() ?? '';
-                            addressCtl.text = userData['address']?.toString() ?? '';
+                            addressCtl.text =
+                                userData['address']?.toString() ?? '';
                             setModalState(() {
                               isEditing = false;
                               errorMessage = null;
                             });
                           },
                           style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFFAC1B22), width: 2),
+                            side: const BorderSide(
+                              color: Color(0xFFAC1B22),
+                              width: 2,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
@@ -943,16 +956,19 @@ class _ProfilePageState extends State<ProfilePage>
 
                                   if (newFullName.isEmpty) {
                                     setModalState(
-                                      () => errorMessage = 'Full name is required',
+                                      () => errorMessage =
+                                          'Full name is required',
                                     );
                                     return;
                                   }
 
                                   if (newEmail.isNotEmpty &&
-                                      !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-                                          .hasMatch(newEmail)) {
+                                      !RegExp(
+                                        r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                                      ).hasMatch(newEmail)) {
                                     setModalState(
-                                      () => errorMessage = 'Invalid email address',
+                                      () => errorMessage =
+                                          'Invalid email address',
                                     );
                                     return;
                                   }
@@ -960,7 +976,8 @@ class _ProfilePageState extends State<ProfilePage>
                                   // Check if we have a valid document ID
                                   if (docId.isEmpty) {
                                     setModalState(() {
-                                      errorMessage = 'User session error. Please log out and log in again.';
+                                      errorMessage =
+                                          'User session error. Please log out and log in again.';
                                     });
                                     return;
                                   }
@@ -976,16 +993,20 @@ class _ProfilePageState extends State<ProfilePage>
                                         .collection('approved_users')
                                         .doc(docId)
                                         .set({
-                                      'fullName': newFullName,
-                                      'email': newEmail.isEmpty ? null : newEmail,
-                                      'address': newAddress,
-                                      'updatedAt': FieldValue.serverTimestamp(),
-                                    }, SetOptions(merge: true));
+                                          'fullName': newFullName,
+                                          'email': newEmail.isEmpty
+                                              ? null
+                                              : newEmail,
+                                          'address': newAddress,
+                                          'updatedAt':
+                                              FieldValue.serverTimestamp(),
+                                        }, SetOptions(merge: true));
 
                                     // Update local session
                                     UserSession.currentUserData?['fullName'] =
                                         newFullName;
-                                    UserSession.currentUserData?['email'] = newEmail;
+                                    UserSession.currentUserData?['email'] =
+                                        newEmail;
                                     UserSession.currentUserData?['address'] =
                                         newAddress;
 
@@ -1005,15 +1026,20 @@ class _ProfilePageState extends State<ProfilePage>
                                       setState(() {});
                                     }
                                   } on FirebaseException catch (e) {
-                                    debugPrint('Firebase error updating profile: ${e.code} - ${e.message}');
+                                    debugPrint(
+                                      'Firebase error updating profile: ${e.code} - ${e.message}',
+                                    );
                                     setModalState(() {
                                       isSaving = false;
                                       if (e.code == 'permission-denied') {
-                                        errorMessage = 'Permission denied. Please check your account.';
+                                        errorMessage =
+                                            'Permission denied. Please check your account.';
                                       } else if (e.code == 'unavailable') {
-                                        errorMessage = 'Network error. Please check your connection.';
+                                        errorMessage =
+                                            'Network error. Please check your connection.';
                                       } else {
-                                        errorMessage = 'Failed to save: ${e.message}';
+                                        errorMessage =
+                                            'Failed to save: ${e.message}';
                                       }
                                     });
                                   } catch (e) {
@@ -1027,8 +1053,9 @@ class _ProfilePageState extends State<ProfilePage>
                                 }
                               },
                         style: ElevatedButton.styleFrom(
-                          backgroundColor:
-                              isEditing ? const Color(0xFF22C55E) : const Color(0xFFAC1B22),
+                          backgroundColor: isEditing
+                              ? const Color(0xFF22C55E)
+                              : const Color(0xFFAC1B22),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -1120,8 +1147,10 @@ class _ProfilePageState extends State<ProfilePage>
               borderRadius: BorderRadius.circular(12),
               borderSide: const BorderSide(color: Color(0xFFAC1B22), width: 2),
             ),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 12,
+            ),
           ),
         ),
       ],
@@ -1163,10 +1192,7 @@ class _ProfilePageState extends State<ProfilePage>
                   Expanded(
                     child: Text(
                       value.isNotEmpty ? value : 'Not provided',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[600],
-                      ),
+                      style: TextStyle(fontSize: 14, color: Colors.grey[600]),
                     ),
                   ),
                 ],
@@ -1224,7 +1250,9 @@ class _ProfilePageState extends State<ProfilePage>
                             Container(
                               padding: const EdgeInsets.all(10),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFAC1B22).withValues(alpha: 0.1),
+                                color: const Color(
+                                  0xFFAC1B22,
+                                ).withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: const Icon(
@@ -1303,7 +1331,9 @@ class _ProfilePageState extends State<ProfilePage>
                             Container(
                               padding: const EdgeInsets.all(10),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFAC1B22).withValues(alpha: 0.1),
+                                color: const Color(
+                                  0xFFAC1B22,
+                                ).withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: const Icon(
@@ -1377,7 +1407,11 @@ class _ProfilePageState extends State<ProfilePage>
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.info_outline, color: Colors.blue[700], size: 20),
+                        Icon(
+                          Icons.info_outline,
+                          color: Colors.blue[700],
+                          size: 20,
+                        ),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
@@ -1415,10 +1449,33 @@ class _ProfilePageState extends State<ProfilePage>
 
   Future<bool> _getBiometricsEnabled() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final contactNumber = UserSession.currentUserData?['contactNumber'] as String?;
+      final contactNumber =
+          UserSession.currentUserData?['contactNumber'] as String?;
       if (contactNumber == null) return false;
-      return prefs.getBool('biometrics_enabled_$contactNumber') ?? false;
+
+      final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+
+      // First check Firestore for persistent preference
+      final doc = await FirebaseFirestore.instance
+          .collection('userPreferences')
+          .doc(cleanPhone)
+          .get();
+
+      if (doc.exists) {
+        final firestoreEnabled =
+            doc.data()?['biometricsEnabled'] as bool? ?? false;
+        if (firestoreEnabled) {
+          // Sync to local SharedPreferences
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('biometrics_enabled', true);
+          await prefs.setString('biometrics_phone', cleanPhone);
+          return true;
+        }
+      }
+
+      // Fall back to SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('biometrics_enabled') ?? false;
     } catch (e) {
       debugPrint('Error getting biometrics setting: $e');
       return false;
@@ -1427,19 +1484,42 @@ class _ProfilePageState extends State<ProfilePage>
 
   Future<void> _setBiometricsEnabled(bool enabled) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final contactNumber = UserSession.currentUserData?['contactNumber'] as String?;
+      final contactNumber =
+          UserSession.currentUserData?['contactNumber'] as String?;
       if (contactNumber == null) return;
-      await prefs.setBool('biometrics_enabled_$contactNumber', enabled);
+
+      final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+
+      // Save to SharedPreferences for local/quick access
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('biometrics_enabled', enabled);
+      await prefs.setString('biometrics_phone', cleanPhone);
+
+      // Save to Firestore for persistence across devices (like votes)
+      await FirebaseFirestore.instance
+          .collection('userPreferences')
+          .doc(cleanPhone)
+          .set({
+            'biometricsEnabled': enabled,
+            'biometricsUpdatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+
+      debugPrint('✅ Biometrics preference saved: $enabled for $cleanPhone');
     } catch (e) {
       debugPrint('Error setting biometrics: $e');
     }
   }
 
   void _showChangePinDialog(String docId, String contactNumber) {
-    final currentPinControllers = List.generate(6, (_) => TextEditingController());
+    final currentPinControllers = List.generate(
+      6,
+      (_) => TextEditingController(),
+    );
     final newPinControllers = List.generate(6, (_) => TextEditingController());
-    final confirmPinControllers = List.generate(6, (_) => TextEditingController());
+    final confirmPinControllers = List.generate(
+      6,
+      (_) => TextEditingController(),
+    );
     final currentPinFocusNodes = List.generate(6, (_) => FocusNode());
     final newPinFocusNodes = List.generate(6, (_) => FocusNode());
     final confirmPinFocusNodes = List.generate(6, (_) => FocusNode());
@@ -1597,10 +1677,7 @@ class _ProfilePageState extends State<ProfilePage>
                     // Subtitle
                     Text(
                       getSubtitle(),
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.grey[600],
-                      ),
+                      style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                       textAlign: TextAlign.center,
                     ),
 
@@ -1631,11 +1708,15 @@ class _ProfilePageState extends State<ProfilePage>
                               fillColor: Colors.white,
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(color: Colors.grey[300]!),
+                                borderSide: BorderSide(
+                                  color: Colors.grey[300]!,
+                                ),
                               ),
                               enabledBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(color: Colors.grey[300]!),
+                                borderSide: BorderSide(
+                                  color: Colors.grey[300]!,
+                                ),
                               ),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
@@ -1663,10 +1744,7 @@ class _ProfilePageState extends State<ProfilePage>
                       const SizedBox(height: 12),
                       Text(
                         errorMessage!,
-                        style: const TextStyle(
-                          color: Colors.red,
-                          fontSize: 13,
-                        ),
+                        style: const TextStyle(color: Colors.red, fontSize: 13),
                         textAlign: TextAlign.center,
                       ),
                     ],
@@ -1706,8 +1784,10 @@ class _ProfilePageState extends State<ProfilePage>
                                     .join();
 
                                 if (pin.length != 6) {
-                                  setDialogState(() =>
-                                      errorMessage = 'Please enter all 6 digits');
+                                  setDialogState(
+                                    () => errorMessage =
+                                        'Please enter all 6 digits',
+                                  );
                                   return;
                                 }
 
@@ -1715,9 +1795,13 @@ class _ProfilePageState extends State<ProfilePage>
                                   // Verify current PIN
                                   setDialogState(() => isLoading = true);
                                   try {
-                                    final query = await FirebaseFirestore.instance
+                                    final query = await FirebaseFirestore
+                                        .instance
                                         .collection('approved_users')
-                                        .where('contactNumber', isEqualTo: contactNumber)
+                                        .where(
+                                          'contactNumber',
+                                          isEqualTo: contactNumber,
+                                        )
                                         .where('pin', isEqualTo: pin)
                                         .limit(1)
                                         .get();
@@ -1745,14 +1829,17 @@ class _ProfilePageState extends State<ProfilePage>
                                     debugPrint('Error verifying PIN: $e');
                                     setDialogState(() {
                                       isLoading = false;
-                                      errorMessage = 'Error verifying PIN. Try again.';
+                                      errorMessage =
+                                          'Error verifying PIN. Try again.';
                                     });
                                   }
                                 } else if (step == 2) {
                                   // Check new PIN is different from current
                                   if (pin == currentPinEntered) {
-                                    setDialogState(() => errorMessage =
-                                        'New PIN must be different from current PIN');
+                                    setDialogState(
+                                      () => errorMessage =
+                                          'New PIN must be different from current PIN',
+                                    );
                                     return;
                                   }
                                   newPinEntered = pin;
@@ -1783,7 +1870,8 @@ class _ProfilePageState extends State<ProfilePage>
                                         .update({'pin': newPinEntered});
 
                                     // Update local session
-                                    UserSession.currentUserData?['pin'] = newPinEntered;
+                                    UserSession.currentUserData?['pin'] =
+                                        newPinEntered;
 
                                     // Close dialog
                                     if (mounted) {
@@ -1799,7 +1887,8 @@ class _ProfilePageState extends State<ProfilePage>
                                     debugPrint('Error updating PIN: $e');
                                     setDialogState(() {
                                       isLoading = false;
-                                      errorMessage = 'Failed to update PIN. Try again.';
+                                      errorMessage =
+                                          'Failed to update PIN. Try again.';
                                     });
                                   }
                                 }
@@ -1907,18 +1996,12 @@ class _ProfilePageState extends State<ProfilePage>
               children: [
                 Text(
                   title,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
-                  ),
+                  style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                 ),
               ],
             ),
@@ -2024,10 +2107,7 @@ class _ProfilePageState extends State<ProfilePage>
                   const SizedBox(height: 4),
                   Text(
                     subtitle,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey[600],
-                    ),
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
                   ),
                 ],
               ),
@@ -2093,7 +2173,10 @@ class _ProfilePageState extends State<ProfilePage>
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFAC1B22), width: 2),
+                    borderSide: const BorderSide(
+                      color: Color(0xFFAC1B22),
+                      width: 2,
+                    ),
                   ),
                   contentPadding: const EdgeInsets.all(12),
                 ),
@@ -2119,14 +2202,18 @@ class _ProfilePageState extends State<ProfilePage>
                           final description = descriptionCtl.text.trim();
 
                           if (problemType == null) {
-                            setModalState(() =>
-                                errorMessage = 'Please select a problem type');
+                            setModalState(
+                              () =>
+                                  errorMessage = 'Please select a problem type',
+                            );
                             return;
                           }
 
                           if (description.isEmpty) {
-                            setModalState(() =>
-                                errorMessage = 'Please describe the problem');
+                            setModalState(
+                              () =>
+                                  errorMessage = 'Please describe the problem',
+                            );
                             return;
                           }
 
@@ -2272,7 +2359,10 @@ class _ProfilePageState extends State<ProfilePage>
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFAC1B22), width: 2),
+                    borderSide: const BorderSide(
+                      color: Color(0xFFAC1B22),
+                      width: 2,
+                    ),
                   ),
                   contentPadding: const EdgeInsets.all(12),
                 ),
@@ -2297,8 +2387,9 @@ class _ProfilePageState extends State<ProfilePage>
                           final feedback = feedbackCtl.text.trim();
 
                           if (feedback.isEmpty) {
-                            setModalState(() =>
-                                errorMessage = 'Please write your feedback');
+                            setModalState(
+                              () => errorMessage = 'Please write your feedback',
+                            );
                             return;
                           }
 
@@ -2314,8 +2405,8 @@ class _ProfilePageState extends State<ProfilePage>
                               'User';
                           final email = userData['email']?.toString() ?? '';
 
-                          final ratingStars = '★' * feedbackRating +
-                              '☆' * (5 - feedbackRating);
+                          final ratingStars =
+                              '★' * feedbackRating + '☆' * (5 - feedbackRating);
 
                           final Uri emailUri = Uri(
                             scheme: 'mailto',
@@ -2435,25 +2526,22 @@ class _ProfilePageState extends State<ProfilePage>
             letterSpacing: 0.2,
             fontFamily: 'RobotoCondensed',
           ),
-          items: [
-            'App Crashes',
-            'Feature Not Working',
-            'Login Issues',
-            'Other',
-          ].map((String value) {
-            return DropdownMenuItem<String>(
-              value: value,
-              child: Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF3A2A2A),
-                  fontFamily: 'RobotoCondensed',
-                ),
-              ),
-            );
-          }).toList(),
+          items: ['App Crashes', 'Feature Not Working', 'Login Issues', 'Other']
+              .map((String value) {
+                return DropdownMenuItem<String>(
+                  value: value,
+                  child: Text(
+                    value,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF3A2A2A),
+                      fontFamily: 'RobotoCondensed',
+                    ),
+                  ),
+                );
+              })
+              .toList(),
           onChanged: onProblemTypeChanged,
         ),
       ),
@@ -2462,11 +2550,7 @@ class _ProfilePageState extends State<ProfilePage>
 
   Widget _buildRatingIcon(bool isSelected) {
     final assetPath = isSelected ? _ratingStarAsset : _ratingEmptyCircleAsset;
-    return SizedBox(
-      width: 36,
-      height: 36,
-      child: Image.asset(assetPath),
-    );
+    return SizedBox(width: 36, height: 36, child: Image.asset(assetPath));
   }
 
   @override
@@ -2478,9 +2562,13 @@ class _ProfilePageState extends State<ProfilePage>
                 'User')
             .toString()
             .trim();
-    final profileInitial =
-        profileName.isNotEmpty ? profileName[0].toUpperCase() : '?';
-    final hasProfilePhoto = _profilePhotoBytes != null || _profilePhoto != null || _profilePhotoUrl != null;
+    final profileInitial = profileName.isNotEmpty
+        ? profileName[0].toUpperCase()
+        : '?';
+    final hasProfilePhoto =
+        _profilePhotoBytes != null ||
+        _profilePhoto != null ||
+        _profilePhotoUrl != null;
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: SafeArea(
@@ -2491,280 +2579,282 @@ class _ProfilePageState extends State<ProfilePage>
             behavior: HitTestBehavior.opaque,
             child: Column(
               children: [
-              // ───────── TOP BAR ─────────
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16.0,
-                  vertical: 8,
-                ),
-                child: Row(
-                  children: [
-                    const SizedBox(width: 48),
-                    Expanded(
-                      child: Center(
-                        child: RichText(
-                          textAlign: TextAlign.center,
-                          text: TextSpan(
-                            style: TextStyle(
-                              fontSize: 45,
-                              fontWeight: FontWeight.w900,
-                              fontFamily: 'Roboto',
-                            ),
-                            children: const [
-                              TextSpan(
-                                text: 'PR',
-                                style: TextStyle(color: Color(0xFFAC1B22)),
+                // ───────── TOP BAR ─────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 48),
+                      Expanded(
+                        child: Center(
+                          child: RichText(
+                            textAlign: TextAlign.center,
+                            text: TextSpan(
+                              style: TextStyle(
+                                fontSize: 45,
+                                fontWeight: FontWeight.w900,
+                                fontFamily: 'Roboto',
                               ),
-                              TextSpan(
-                                text: 'O',
-                                style: TextStyle(color: Color(0xFFFFC806)),
-                              ),
-                              TextSpan(
-                                text: 'FILE',
-                                style: TextStyle(color: Color(0xFFAC1B22)),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 48),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 12),
-
-              // ───────── PROFILE AVATAR ─────────
-              Stack(
-                alignment: Alignment.center,
-                children: [
-                  // Show loading indicator while uploading
-                  if (_isUploadingPhoto)
-                    const SizedBox(
-                      width: 110,
-                      height: 110,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 3,
-                        color: Color(0xFFAC1B22),
-                      ),
-                    ),
-                  CircleAvatar(
-                    radius: 55,
-                    backgroundColor: const Color(0xFFAC1B22),
-                    backgroundImage: _profilePhotoBytes != null
-                        ? MemoryImage(_profilePhotoBytes!)
-                        : (_profilePhoto != null
-                            ? FileImage(File(_profilePhoto!.path))
-                            : (_profilePhotoUrl != null
-                                ? CachedNetworkImageProvider(_profilePhotoUrl!)
-                                : null)),
-                    child: hasProfilePhoto
-                        ? null
-                        : Text(
-                            profileInitial,
-                            style: const TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 32,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
+                              children: const [
+                                TextSpan(
+                                  text: 'PR',
+                                  style: TextStyle(color: Color(0xFFAC1B22)),
+                                ),
+                                TextSpan(
+                                  text: 'O',
+                                  style: TextStyle(color: Color(0xFFFFC806)),
+                                ),
+                                TextSpan(
+                                  text: 'FILE',
+                                  style: TextStyle(color: Color(0xFFAC1B22)),
+                                ),
+                              ],
                             ),
                           ),
-                  ),
-                  Positioned(
-                    bottom: 2,
-                    right: 2,
-                    child: GestureDetector(
-                      onTap: _showProfilePhotoOptions,
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: Color(0xFFAC1B22),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2),
-                        ),
-                        child: const Icon(
-                          Icons.camera_alt,
-                          size: 16,
-                          color: Colors.white,
                         ),
                       ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 24),
-
-              // ───────── FLOATING PROFILE CARD ─────────
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.12),
-                        blurRadius: 12,
-                        spreadRadius: 1,
-                        offset: const Offset(0, 6),
-                      ),
+                      const SizedBox(width: 48),
                     ],
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 18.0,
-                      vertical: 20,
+                ),
+
+                const SizedBox(height: 12),
+
+                // ───────── PROFILE AVATAR ─────────
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Show loading indicator while uploading
+                    if (_isUploadingPhoto)
+                      const SizedBox(
+                        width: 110,
+                        height: 110,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 3,
+                          color: Color(0xFFAC1B22),
+                        ),
+                      ),
+                    CircleAvatar(
+                      radius: 55,
+                      backgroundColor: const Color(0xFFAC1B22),
+                      backgroundImage: _profilePhotoBytes != null
+                          ? MemoryImage(_profilePhotoBytes!)
+                          : (_profilePhoto != null
+                                ? FileImage(File(_profilePhoto!.path))
+                                : (_profilePhotoUrl != null
+                                      ? CachedNetworkImageProvider(
+                                          _profilePhotoUrl!,
+                                        )
+                                      : null)),
+                      child: hasProfilePhoto
+                          ? null
+                          : Text(
+                              profileInitial,
+                              style: const TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontSize: 32,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Settings Section
-                        Text(
-                          'Settings',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                            fontFamily: 'Roboto',
+                    Positioned(
+                      bottom: 2,
+                      right: 2,
+                      child: GestureDetector(
+                        onTap: _showProfilePhotoOptions,
+                        child: Container(
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: Color(0xFFAC1B22),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          child: const Icon(
+                            Icons.camera_alt,
+                            size: 16,
+                            color: Colors.white,
                           ),
                         ),
-                        const SizedBox(height: 10),
-                        _ProfileItem(
-                          icon: Icons.person_outline,
-                          label: 'Personal Information',
-                          onTap: () => _showModal(
-                            context,
-                            Icons.person_outline,
-                            'Personal Information',
-                          ),
-                        ),
-                        _ProfileItem(
-                          icon: Icons.shield_outlined,
-                          label: 'Account Security',
-                          onTap: () => _showModal(
-                            context,
-                            Icons.shield_outlined,
-                            'Account Security',
-                          ),
-                        ),
-                        _ProfileItem(
-                          icon: Icons.notifications_none,
-                          label: 'Notifications',
-                          onTap: () => _showModal(
-                            context,
-                            Icons.notifications_none,
-                            'Notifications',
-                          ),
-                        ),
+                      ),
+                    ),
+                  ],
+                ),
 
-                        const SizedBox(height: 20),
+                const SizedBox(height: 24),
 
-                        // Support
-                        Text(
-                          'Support',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                            fontFamily: 'Roboto',
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        _ProfileItem(
-                          icon: Icons.support_agent_outlined,
-                          label: 'Help Center',
-                          onTap: () => _showModal(
-                            context,
-                            Icons.support_agent_outlined,
-                            'Help Center',
-                          ),
-                        ),
-                        _ProfileItem(
-                          icon: Icons.phone_in_talk_outlined,
-                          label: 'Report a Problem',
-                          onTap: () => _showModal(
-                            context,
-                            Icons.phone_in_talk_outlined,
-                            'Report a Problem',
-                          ),
-                        ),
-                        _ProfileItem(
-                          icon: Icons.rate_review_outlined,
-                          label: 'Write a feedback',
-                          onTap: () => _showModal(
-                            context,
-                            Icons.rate_review_outlined,
-                            'Write a feedback',
-                          ),
-                        ),
-
-                        const SizedBox(height: 20),
-
-                        // Legal
-                        Text(
-                          'Legal',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                            fontFamily: 'Roboto',
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        _ProfileItem(
-                          icon: Icons.description_outlined,
-                          label: 'Terms of Service',
-                          onTap: () => _showModal(
-                            context,
-                            Icons.description_outlined,
-                            'Terms of Service',
-                          ),
-                        ),
-                        _ProfileItem(
-                          icon: Icons.privacy_tip_outlined,
-                          label: 'Privacy Policy',
-                          onTap: () => _showModal(
-                            context,
-                            Icons.privacy_tip_outlined,
-                            'Privacy Policy',
-                          ),
-                        ),
-                        _ProfileItem(
-                          icon: Icons.article_outlined,
-                          label: 'Source Licenses',
-                          onTap: () => _showModal(
-                            context,
-                            Icons.article_outlined,
-                            'Source Licenses',
-                          ),
-                        ),
-
-                        const SizedBox(height: 20),
-
-                        // Logout
-                        Text(
-                          'Account',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                            fontFamily: 'Roboto',
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        _ProfileItem(
-                          icon: Icons.logout,
-                          label: 'Log out',
-                          onTap: _showLogoutConfirm,
+                // ───────── FLOATING PROFILE CARD ─────────
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.12),
+                          blurRadius: 12,
+                          spreadRadius: 1,
+                          offset: const Offset(0, 6),
                         ),
                       ],
                     ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18.0,
+                        vertical: 20,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Settings Section
+                          Text(
+                            'Settings',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              fontFamily: 'Roboto',
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _ProfileItem(
+                            icon: Icons.person_outline,
+                            label: 'Personal Information',
+                            onTap: () => _showModal(
+                              context,
+                              Icons.person_outline,
+                              'Personal Information',
+                            ),
+                          ),
+                          _ProfileItem(
+                            icon: Icons.shield_outlined,
+                            label: 'Account Security',
+                            onTap: () => _showModal(
+                              context,
+                              Icons.shield_outlined,
+                              'Account Security',
+                            ),
+                          ),
+                          _ProfileItem(
+                            icon: Icons.notifications_none,
+                            label: 'Notifications',
+                            onTap: () => _showModal(
+                              context,
+                              Icons.notifications_none,
+                              'Notifications',
+                            ),
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          // Support
+                          Text(
+                            'Support',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              fontFamily: 'Roboto',
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _ProfileItem(
+                            icon: Icons.support_agent_outlined,
+                            label: 'Help Center',
+                            onTap: () => _showModal(
+                              context,
+                              Icons.support_agent_outlined,
+                              'Help Center',
+                            ),
+                          ),
+                          _ProfileItem(
+                            icon: Icons.phone_in_talk_outlined,
+                            label: 'Report a Problem',
+                            onTap: () => _showModal(
+                              context,
+                              Icons.phone_in_talk_outlined,
+                              'Report a Problem',
+                            ),
+                          ),
+                          _ProfileItem(
+                            icon: Icons.rate_review_outlined,
+                            label: 'Write a feedback',
+                            onTap: () => _showModal(
+                              context,
+                              Icons.rate_review_outlined,
+                              'Write a feedback',
+                            ),
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          // Legal
+                          Text(
+                            'Legal',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              fontFamily: 'Roboto',
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _ProfileItem(
+                            icon: Icons.description_outlined,
+                            label: 'Terms of Service',
+                            onTap: () => _showModal(
+                              context,
+                              Icons.description_outlined,
+                              'Terms of Service',
+                            ),
+                          ),
+                          _ProfileItem(
+                            icon: Icons.privacy_tip_outlined,
+                            label: 'Privacy Policy',
+                            onTap: () => _showModal(
+                              context,
+                              Icons.privacy_tip_outlined,
+                              'Privacy Policy',
+                            ),
+                          ),
+                          _ProfileItem(
+                            icon: Icons.article_outlined,
+                            label: 'Source Licenses',
+                            onTap: () => _showModal(
+                              context,
+                              Icons.article_outlined,
+                              'Source Licenses',
+                            ),
+                          ),
+
+                          const SizedBox(height: 20),
+
+                          // Logout
+                          Text(
+                            'Account',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              fontFamily: 'Roboto',
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _ProfileItem(
+                            icon: Icons.logout,
+                            label: 'Log out',
+                            onTap: _showLogoutConfirm,
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-              ),
 
-              const SizedBox(height: 40),
-            ],
-          ),
+                const SizedBox(height: 40),
+              ],
+            ),
           ),
         ),
       ),

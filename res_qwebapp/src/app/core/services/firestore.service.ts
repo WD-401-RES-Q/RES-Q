@@ -15,8 +15,10 @@ import {
   onSnapshot,
   Unsubscribe
 } from 'firebase/firestore';
-import { db } from '../config/firebase.config';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../config/firebase.config';
 import { BehaviorSubject, Observable } from 'rxjs';
+import { AuthService } from './auth.service';
 
 @Injectable({
   providedIn: 'root'
@@ -532,5 +534,99 @@ export class FirestoreService {
 
   async getRejectedUsers() {
     return this.queryCollection('users', 'accountStatus', '==', 'rejected');
+  }
+
+  /**
+   * Get decrypted pending users via Cloud Function
+   * @param adminId - The ID of the authenticated admin
+   */
+  async getDecryptedPendingUsers(adminId: string): Promise<any[]> {
+    try {
+      const getDecryptedUsersCallable = httpsCallable(functions, 'getDecryptedUsers');
+      const result = await getDecryptedUsersCallable({
+        collection: 'pending_users',
+        adminId
+      });
+      
+      const data = result.data as { success: boolean; users: any[] };
+      if (data.success) {
+        return data.users;
+      }
+      throw new Error('Failed to decrypt users');
+    } catch (error) {
+      console.error('Error getting decrypted pending users:', error);
+      // Fall back to raw data if decryption fails
+      return this.getCollection('pending_users');
+    }
+  }
+
+  /**
+   * Get decrypted approved users via Cloud Function
+   * @param adminId - The ID of the authenticated admin
+   */
+  async getDecryptedApprovedUsers(adminId: string): Promise<any[]> {
+    try {
+      const getDecryptedUsersCallable = httpsCallable(functions, 'getDecryptedUsers');
+      const result = await getDecryptedUsersCallable({
+        collection: 'approved_users',
+        adminId
+      });
+      
+      const data = result.data as { success: boolean; users: any[] };
+      if (data.success) {
+        return data.users;
+      }
+      throw new Error('Failed to decrypt users');
+    } catch (error) {
+      console.error('Error getting decrypted approved users:', error);
+      // Fall back to raw data if decryption fails
+      return this.getCollection('approved_users');
+    }
+  }
+
+  /**
+   * Get single decrypted user via Cloud Function
+   * @param userId - The user document ID
+   * @param collectionName - The collection to fetch from
+   * @param adminId - The ID of the authenticated admin
+   */
+  async getDecryptedUser(userId: string, collectionName: string, adminId: string): Promise<any> {
+    try {
+      const decryptUserDataCallable = httpsCallable(functions, 'decryptUserData');
+      const result = await decryptUserDataCallable({
+        userId,
+        collection: collectionName,
+        adminId
+      });
+      
+      const data = result.data as { success: boolean; userData: any };
+      if (data.success) {
+        return data.userData;
+      }
+      throw new Error('Failed to decrypt user');
+    } catch (error) {
+      console.error('Error getting decrypted user:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Migrate existing unencrypted data to encrypted format
+   * @param adminId - The ID of the authenticated admin
+   */
+  async migrateToEncrypted(adminId: string): Promise<string> {
+    try {
+      const migrateCallable = httpsCallable(functions, 'migrateToEncrypted');
+      const result = await migrateCallable({ adminId });
+      
+      const data = result.data as { success: boolean; message: string };
+      if (data.success) {
+        return data.message;
+      }
+      throw new Error('Migration failed');
+    } catch (error) {
+      console.error('Error migrating to encrypted:', error);
+      throw error;
+    }
   }
 }

@@ -1,4 +1,16 @@
 <section class="admin-page accounts-page">
+    <!-- ADMIN PASSWORD MODAL -->
+    <div class="modal-overlay" *ngIf="showPasswordModal">
+      <div class="modal-content password-modal" (click)="$event.stopPropagation()">
+        <h3 class="modal-title">Admin Password Required</h3>
+        <p class="modal-subtitle">Enter your admin password to view decrypted user data.</p>
+        <input type="password" [(ngModel)]="adminPasswordInput" placeholder="Password" autofocus />
+        <div class="modal-actions">
+          <button type="button" class="btn-modal btn-yes" (click)="verifyAdminPassword()" [disabled]="isVerifyingPassword">Submit</button>
+        </div>
+        <div class="modal-error" *ngIf="passwordError">{{ passwordError }}</div>
+      </div>
+    </div>
   <header class="page-header">
     <h1>Verified Accounts ({{ filteredAccounts.length }})</h1>
     <input 
@@ -25,7 +37,6 @@
         <thead>
           <tr>
             <th class="col-name">Name</th>
-            <th class="col-user">Username</th>
             <th class="col-email">Email</th>
             <th class="col-phone">Phone</th>
             <th class="col-date">Approved Date</th>
@@ -39,12 +50,11 @@
             (click)="select(acc)"
             [class.selected-row]="selected?.id === acc.id"
           >
-            <td class="col-name">{{ acc.fullName }}</td>
-            <td class="col-user">@{{ acc.username }}</td>
-            <td class="col-email">{{ acc.email }}</td>
-            <td class="col-phone">{{ acc.contactNumber }}</td>
+            <td class="col-name">{{ decryptedMode ? acc.fullName : (acc.fullName || '[ENCRYPTED]') }}</td>
+            <td class="col-email">{{ decryptedMode ? acc.email : '[ENCRYPTED]' }}</td>
+            <td class="col-phone">{{ decryptedMode ? acc.contactNumber : '[ENCRYPTED]' }}</td>
             <td class="col-date">
-              {{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'mediumDate') : 'N/A' }}
+              {{ decryptedMode ? (getApprovedDate(acc) ? (getApprovedDate(acc) | date:'mediumDate') : 'N/A') : '[ENCRYPTED]' }}
             </td>
 
             <!-- prevent row-click from double firing when pressing buttons -->
@@ -69,18 +79,17 @@
       <h2>Account Details</h2>
 
       <div class="detail-grid">
-        <p><strong>Full Name:</strong> {{ acc.fullName }}</p>
-        <p><strong>Username:</strong> @{{ acc.username }}</p>
-        <p><strong>Email:</strong> {{ acc.email }}</p>
-        <p><strong>Address:</strong> {{ acc.address }}</p>
-        <p><strong>Birthdate:</strong> {{ acc.dateOfBirth }}</p>
-        <p><strong>Phone:</strong> {{ acc.contactNumber }}</p>
+        <p><strong>Full Name:</strong> {{ decryptedMode ? acc.fullName : '[ENCRYPTED]' }}</p>
+        <p><strong>Email:</strong> {{ decryptedMode ? acc.email : '[ENCRYPTED]' }}</p>
+        <p><strong>Address:</strong> {{ decryptedMode ? acc.address : '[ENCRYPTED]' }}</p>
+        <p><strong>Birthdate:</strong> {{ decryptedMode ? acc.dateOfBirth : '[ENCRYPTED]' }}</p>
+        <p><strong>Phone:</strong> {{ decryptedMode ? acc.contactNumber : '[ENCRYPTED]' }}</p>
         <p><strong>Status:</strong> {{ acc.accountStatus || 'N/A' }}</p>
-        <p><strong>Approved By:</strong> {{ acc.approvedBy || 'N/A' }}</p>
-        <p><strong>Approved On:</strong> {{ getApprovedDate(acc) ? (getApprovedDate(acc) | date:'medium') : 'N/A' }}</p>
+        <p><strong>Approved By:</strong> {{ decryptedMode ? acc.approvedBy : '[ENCRYPTED]' }}</p>
+        <p><strong>Approved On:</strong> {{ decryptedMode ? (getApprovedDate(acc) ? (getApprovedDate(acc) | date:'medium') : 'N/A') : '[ENCRYPTED]' }}</p>
       </div>
 
-      <div class="id-preview" *ngIf="getIdPhotoUrl(acc)">
+      <div class="id-preview" *ngIf="decryptedMode && getIdPhotoUrl(acc)">
         <p><strong>Valid ID Status:</strong></p>
         <button type="button" class="id-badge id-link" (click)="openIdModal(acc)">Uploaded (View)</button>
       </div>

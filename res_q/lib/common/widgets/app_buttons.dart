@@ -74,52 +74,170 @@ class ResqPillButton extends StatelessWidget {
   }
 }
 
+/// Back button style variants
+enum ResqBackButtonStyle {
+  /// White background with dark icon and shadow (default)
+  standard,
+
+  /// Red brand background with white icon
+  branded,
+
+  /// Transparent with red icon and subtle border
+  outline,
+
+  /// Minimal ghost style with no background
+  ghost,
+}
+
 class ResqBackButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final double size;
-  final Color backgroundColor;
-  final Color iconColor;
+  final Color? backgroundColor;
+  final Color? iconColor;
   final double iconSize;
   final double radius;
   final List<BoxShadow>? boxShadow;
+  final ResqBackButtonStyle style;
 
   const ResqBackButton({
     super.key,
     this.onPressed,
     this.size = 44,
-    this.backgroundColor = Colors.white,
-    this.iconColor = AppTheme.appBlack,
+    this.backgroundColor,
+    this.iconColor,
     this.iconSize = AppDimensions.iconMedium,
-    this.radius = AppDimensions.radiusSmall,
+    this.radius = AppDimensions.radiusMedium,
     this.boxShadow,
+    this.style = ResqBackButtonStyle.standard,
   });
+
+  /// Creates a branded back button with red background
+  const ResqBackButton.branded({
+    super.key,
+    this.onPressed,
+    this.size = 44,
+    this.iconSize = AppDimensions.iconMedium,
+    this.radius = AppDimensions.radiusMedium,
+  }) : style = ResqBackButtonStyle.branded,
+       backgroundColor = null,
+       iconColor = null,
+       boxShadow = null;
+
+  /// Creates an outline back button with red border
+  const ResqBackButton.outline({
+    super.key,
+    this.onPressed,
+    this.size = 44,
+    this.iconSize = AppDimensions.iconMedium,
+    this.radius = AppDimensions.radiusMedium,
+  }) : style = ResqBackButtonStyle.outline,
+       backgroundColor = null,
+       iconColor = null,
+       boxShadow = null;
+
+  /// Creates a ghost back button with no background
+  const ResqBackButton.ghost({
+    super.key,
+    this.onPressed,
+    this.size = 44,
+    this.iconSize = AppDimensions.iconMedium,
+    this.radius = AppDimensions.radiusMedium,
+  }) : style = ResqBackButtonStyle.ghost,
+       backgroundColor = null,
+       iconColor = null,
+       boxShadow = null;
+
+  Color _getBackgroundColor() {
+    if (backgroundColor != null) return backgroundColor!;
+    switch (style) {
+      case ResqBackButtonStyle.standard:
+        return Colors.white;
+      case ResqBackButtonStyle.branded:
+        return AppTheme.appRed;
+      case ResqBackButtonStyle.outline:
+      case ResqBackButtonStyle.ghost:
+        return Colors.transparent;
+    }
+  }
+
+  Color _getIconColor() {
+    if (iconColor != null) return iconColor!;
+    switch (style) {
+      case ResqBackButtonStyle.standard:
+        return AppTheme.appBlack;
+      case ResqBackButtonStyle.branded:
+        return Colors.white;
+      case ResqBackButtonStyle.outline:
+      case ResqBackButtonStyle.ghost:
+        return AppTheme.appRed;
+    }
+  }
+
+  List<BoxShadow> _getBoxShadow() {
+    if (boxShadow != null) return boxShadow!;
+    switch (style) {
+      case ResqBackButtonStyle.standard:
+        return [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.15),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ];
+      case ResqBackButtonStyle.branded:
+        return [
+          BoxShadow(
+            color: AppTheme.appRed.withOpacity(0.3),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ];
+      case ResqBackButtonStyle.outline:
+      case ResqBackButtonStyle.ghost:
+        return [];
+    }
+  }
+
+  Border? _getBorder() {
+    switch (style) {
+      case ResqBackButtonStyle.outline:
+        return Border.all(color: AppTheme.appRed.withOpacity(0.3), width: 1.5);
+      default:
+        return null;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final bgColor = _getBackgroundColor();
+    final fgColor = _getIconColor();
+    final shadow = _getBoxShadow();
+    final border = _getBorder();
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(radius),
+        splashColor: style == ResqBackButtonStyle.branded
+            ? Colors.white.withOpacity(0.2)
+            : AppTheme.appRed.withOpacity(0.1),
+        highlightColor: style == ResqBackButtonStyle.branded
+            ? Colors.white.withOpacity(0.1)
+            : AppTheme.appRed.withOpacity(0.05),
         onTap: onPressed ?? () => Navigator.pop(context),
         child: Container(
           width: size,
           height: size,
           decoration: BoxDecoration(
-            color: backgroundColor,
+            color: bgColor,
             borderRadius: BorderRadius.circular(radius),
-            boxShadow: boxShadow ??
-                [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.25),
-                    blurRadius: 6,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
+            border: border,
+            boxShadow: shadow,
           ),
           child: Center(
             child: Icon(
-              Icons.arrow_back_ios_new,
-              color: iconColor,
+              Icons.arrow_back_ios_new_rounded,
+              color: fgColor,
               size: iconSize,
             ),
           ),
@@ -159,7 +277,11 @@ class PinNumpad extends StatelessWidget {
     this.onBiometricsTap,
   });
 
-  Widget _buildButton(String value, {bool isAction = false, bool isBiometrics = false}) {
+  Widget _buildButton(
+    String value, {
+    bool isAction = false,
+    bool isBiometrics = false,
+  }) {
     final resolvedBorderColor = borderColor ?? textColor.withOpacity(0.3);
     final resolvedStyle = isAction
         ? (actionTextStyle ??
@@ -254,5 +376,3 @@ class PinNumpad extends StatelessWidget {
     );
   }
 }
-
-
