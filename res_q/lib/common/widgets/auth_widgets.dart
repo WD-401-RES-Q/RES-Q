@@ -1,9 +1,11 @@
 ﻿import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:ui' as ui;
 import '../theme/app_theme.dart';
@@ -80,76 +82,100 @@ class AuthTextField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const double fieldRadius = 12;
+    const Color validGreen = Color(0xFF00A458);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: AppTheme.appBlack,
-          ),
-        ),
-        const SizedBox(height: 4),
-        TextFormField(
-          controller: controller,
-          obscureText: obscureText,
-          keyboardType: keyboardType,
-          inputFormatters: inputFormatters,
-          validator: validator,
-          autovalidateMode: autovalidateMode,
-          autofillHints: autofillHints,
-          style: const TextStyle(
-            fontSize: 13,
-            color: AppTheme.appBlack,
-            fontWeight: FontWeight.w500,
-          ),
-          decoration: InputDecoration(
-            hintText: hintText ?? label,
-            hintStyle: TextStyle(
-              fontSize: 12,
-              color: AppTheme.appBlack.withOpacity(0.5),
-              fontWeight: FontWeight.w400,
+    return FormField<String>(
+      validator: validator == null ? null : (_) => validator!(controller.text),
+      autovalidateMode: autovalidateMode,
+      builder: (state) {
+        final hasValue = controller.text.trim().isNotEmpty;
+        final hasError = state.hasError;
+        final isValid = hasValue && !hasError;
+        final borderColor = hasError
+            ? Colors.red
+            : (isValid ? validGreen : Colors.black);
+        final focusBorderColor = hasError
+            ? Colors.red
+            : (isValid ? validGreen : AppTheme.appRed);
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.appBlack,
+              ),
             ),
-            prefixIcon: prefixIcon,
-            filled: true,
-            fillColor: AppTheme.appOffWhite,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 14,
+            const SizedBox(height: 4),
+            TextFormField(
+              controller: controller,
+              obscureText: obscureText,
+              keyboardType: keyboardType,
+              inputFormatters: inputFormatters,
+              autofillHints: autofillHints,
+              autovalidateMode: AutovalidateMode.disabled,
+              onChanged: (value) => state.didChange(value),
+              style: const TextStyle(
+                fontSize: 13,
+                color: AppTheme.appBlack,
+                fontWeight: FontWeight.w500,
+              ),
+              decoration: InputDecoration(
+                hintText: hintText ?? label,
+                hintStyle: TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.appBlack.withOpacity(0.5),
+                  fontWeight: FontWeight.w400,
+                ),
+                prefixIcon: prefixIcon,
+                filled: true,
+                fillColor: AppTheme.appOffWhite,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 14,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(fieldRadius),
+                  borderSide: BorderSide(color: borderColor, width: 1.5),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(fieldRadius),
+                  borderSide: BorderSide(color: borderColor, width: 1.5),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(fieldRadius),
+                  borderSide: BorderSide(color: focusBorderColor, width: 1.8),
+                ),
+                errorBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(fieldRadius),
+                  borderSide: const BorderSide(color: Colors.red, width: 1.5),
+                ),
+                focusedErrorBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(fieldRadius),
+                  borderSide: const BorderSide(color: Colors.red, width: 2),
+                ),
+                suffixIcon: suffixIcon,
+              ),
             ),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(fieldRadius),
-              borderSide: const BorderSide(color: Colors.black, width: 1.5),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(fieldRadius),
-              borderSide: const BorderSide(color: Colors.black, width: 1.5),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(fieldRadius),
-              borderSide: const BorderSide(color: AppTheme.appRed, width: 1.8),
-            ),
-            errorBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(fieldRadius),
-              borderSide: const BorderSide(color: Colors.red, width: 1.5),
-            ),
-            focusedErrorBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(fieldRadius),
-              borderSide: const BorderSide(color: Colors.red, width: 2),
-            ),
-            errorMaxLines: 2,
-            errorStyle: const TextStyle(
-              fontSize: 11,
-              color: Colors.red,
-              fontWeight: FontWeight.w500,
-            ),
-            suffixIcon: suffixIcon,
-          ),
-        ),
-      ],
+            if (state.hasError) ...[
+              const SizedBox(height: 6),
+              Text(
+                state.errorText ?? '',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Colors.red,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -266,8 +292,15 @@ class DateOfBirthInput extends StatelessWidget {
     this.autovalidateMode,
   });
 
-  InputDecoration _fieldDecoration(String label, {bool hasError = false}) {
+  InputDecoration _fieldDecoration(
+    String label, {
+    bool hasError = false,
+    bool isValid = false,
+  }) {
     const double fieldRadius = 12;
+    const Color validGreen = Color(0xFF00A458);
+    final enabledColor = isValid ? validGreen : Colors.black;
+    final focusedColor = isValid ? validGreen : AppTheme.appRed;
 
     return InputDecoration(
       hintText: label,
@@ -281,15 +314,15 @@ class DateOfBirthInput extends StatelessWidget {
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(fieldRadius),
-        borderSide: const BorderSide(color: Colors.black, width: 1.5),
+        borderSide: BorderSide(color: enabledColor, width: 1.5),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(fieldRadius),
-        borderSide: const BorderSide(color: Colors.black, width: 1.5),
+        borderSide: BorderSide(color: enabledColor, width: 1.5),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(fieldRadius),
-        borderSide: const BorderSide(color: AppTheme.appRed, width: 1.8),
+        borderSide: BorderSide(color: focusedColor, width: 1.8),
       ),
       errorText: hasError ? '' : null,
       errorStyle: const TextStyle(fontSize: 0, height: 0),
@@ -325,6 +358,11 @@ class DateOfBirthInput extends StatelessWidget {
         final monthError = monthValidator?.call(monthController.text);
         final dayError = dayValidator?.call(dayController.text);
         final yearError = yearValidator?.call(yearController.text);
+        final monthValid =
+            monthError == null && monthController.text.trim().isNotEmpty;
+        final dayValid = dayError == null && dayController.text.trim().isNotEmpty;
+        final yearValid =
+            yearError == null && yearController.text.trim().isNotEmpty;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -357,6 +395,7 @@ class DateOfBirthInput extends StatelessWidget {
                     decoration: _fieldDecoration(
                       'MM',
                       hasError: monthError != null,
+                      isValid: monthValid,
                     ),
                   ),
                 ),
@@ -378,6 +417,7 @@ class DateOfBirthInput extends StatelessWidget {
                     decoration: _fieldDecoration(
                       'DD',
                       hasError: dayError != null,
+                      isValid: dayValid,
                     ),
                   ),
                 ),
@@ -399,6 +439,7 @@ class DateOfBirthInput extends StatelessWidget {
                     decoration: _fieldDecoration(
                       'YYYY',
                       hasError: yearError != null,
+                      isValid: yearValid,
                     ),
                   ),
                 ),
@@ -484,8 +525,28 @@ class PhilippinePhoneFormatter extends TextInputFormatter {
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    // Remove all non-digits
-    final text = newValue.text.replaceAll(RegExp(r'\D'), '');
+    // Accept common autofill formats (e.g. +63..., 09..., spaces/dashes) and
+    // normalize to the 10-digit PH mobile format (9XXXXXXXXX) for this field.
+    String text = newValue.text.replaceAll(RegExp(r'\D'), '');
+
+    // Autofill/paste sometimes includes prefixes like 0, 63, or even 00.
+    // Strip those until we're down to the expected local 10-digit form.
+    while (text.length > 10) {
+      if (text.startsWith('0')) {
+        text = text.substring(1);
+        continue;
+      }
+      if (text.startsWith('63')) {
+        text = text.substring(2);
+        continue;
+      }
+      break;
+    }
+
+    // If extra digits remain (e.g. extensions), keep the first 10 digits.
+    if (text.length > 10) {
+      text = text.substring(0, 10);
+    }
     final buffer = StringBuffer();
 
     // Format as 9XX-XXX-XXXX (10 digits max)
@@ -531,11 +592,19 @@ class PhoneInputField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const double fieldRadius = 12;
+    const Color validGreen = Color(0xFF00A458);
 
     return FormField<String>(
       validator: validator == null ? null : (_) => validator!(controller.text),
       autovalidateMode: autovalidateMode,
       builder: (state) {
+        final digits = controller.text.replaceAll(RegExp(r'\D'), '');
+        final hasValue = digits.isNotEmpty;
+        final hasError = state.hasError;
+        final isValid = hasValue && !hasError;
+        final borderColor = hasError
+            ? Colors.red
+            : (isValid ? validGreen : Colors.black);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -554,7 +623,7 @@ class PhoneInputField extends StatelessWidget {
                 color: AppTheme.appOffWhite,
                 borderRadius: BorderRadius.circular(fieldRadius),
                 border: Border.all(
-                  color: state.hasError ? Colors.red : Colors.black,
+                  color: borderColor,
                   width: 1.5,
                 ),
               ),
@@ -574,7 +643,7 @@ class PhoneInputField extends StatelessWidget {
                   Container(
                     width: 1.5,
                     height: 24,
-                    color: state.hasError ? Colors.red : Colors.black,
+                    color: borderColor,
                   ),
                   Expanded(
                     child: TextFormField(
@@ -653,24 +722,11 @@ const List<Map<String, String>> _acceptedIdTypes = [
   {'name': 'Senior Citizen ID', 'icon': 'elderly'},
   {'name': 'PWD ID', 'icon': 'accessible'},
   {'name': 'OFW ID', 'icon': 'public'},
+  {'name': 'Birth Certificate (PSA/NSO)', 'icon': 'description'},
   {'name': 'Barangay ID', 'icon': 'location_city'},
 ];
 
-/// Standard ID card aspect ratio (credit card size: 85.6mm x 53.98mm)
-const double _idAspectRatioMin = 1.4; // Allow some tolerance
-const double _idAspectRatioMax = 1.8; // Allow some tolerance
-
-class _IdValidationResult {
-  final bool isValid;
-  final bool wrongSide;
-  final String? message;
-
-  const _IdValidationResult({
-    required this.isValid,
-    this.wrongSide = false,
-    this.message,
-  });
-}
+enum _IdImageSource { camera, gallery }
 
 /// Widget for uploading and verifying front and back of ID
 class IdVerificationWidget extends StatefulWidget {
@@ -697,6 +753,8 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
 
   String? _frontIdUrl;
   String? _frontLocalPath;
+  double? _frontAspectRatio;
+  Uint8List? _frontBytes;
   bool _uploadingFront = false;
   String? _frontError;
 
@@ -768,7 +826,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Please upload a clear photo of any of the following government-issued IDs:',
+                'Please upload a clear photo of any of the following IDs or documents:',
                 style: TextStyle(
                   fontSize: 12,
                   color: AppTheme.appBlack.withValues(alpha: 0.7),
@@ -823,6 +881,9 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                         case 'public':
                           iconData = Icons.public;
                           break;
+                        case 'description':
+                          iconData = Icons.description;
+                          break;
                         case 'location_city':
                           iconData = Icons.location_city;
                           break;
@@ -873,7 +934,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'Make sure your ID photo is clear, well-lit, and shows the entire card including your photo.',
+                        'Make sure your ID or document photo is clear, well-lit, and shows the entire page.',
                         style: const TextStyle(
                           fontSize: 11,
                           color: AppTheme.appBlack,
@@ -892,8 +953,8 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
   }
 
   /// Show dialog to choose between camera and gallery
-  Future<ImageSource?> _showImageSourceDialog() async {
-    return showDialog<ImageSource>(
+  Future<_IdImageSource?> _showImageSourceDialog() async {
+    return showDialog<_IdImageSource>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.appOffWhite,
@@ -915,18 +976,217 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
             _buildSourceOption(
               icon: Icons.camera_alt,
               label: 'Camera',
-              onTap: () => Navigator.pop(context, ImageSource.camera),
+              onTap: () => Navigator.pop(context, _IdImageSource.camera),
             ),
             const SizedBox(height: 8),
             _buildSourceOption(
               icon: Icons.photo_library,
               label: 'Gallery',
-              onTap: () => Navigator.pop(context, ImageSource.gallery),
+              onTap: () => Navigator.pop(context, _IdImageSource.gallery),
             ),
           ],
         ),
       ),
     );
+  }
+
+  String _normalizePath(String path) {
+    if (path.startsWith('file://')) {
+      return Uri.parse(path).toFilePath();
+    }
+    return path;
+  }
+
+
+
+  Future<String?> _cropImage(String path) async {
+    if (kIsWeb) return path;
+    try {
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: path,
+        compressQuality: 90,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Crop Document',
+            toolbarColor: AppTheme.appRed,
+            toolbarWidgetColor: Colors.white,
+            hideBottomControls: false,
+            lockAspectRatio: false,
+            initAspectRatio: CropAspectRatioPreset.original,
+            aspectRatioPresets: [
+              CropAspectRatioPreset.original,
+              CropAspectRatioPreset.ratio4x3,
+              CropAspectRatioPreset.ratio16x9,
+              CropAspectRatioPreset.square,
+            ],
+          ),
+          IOSUiSettings(
+            title: 'Crop Document',
+            aspectRatioLockEnabled: false,
+            rotateButtonsHidden: false,
+            resetButtonHidden: false,
+          ),
+        ],
+      );
+      return cropped?.path;
+    } catch (e) {
+      debugPrint('Crop failed: $e');
+      return null;
+    }
+  }
+
+
+
+  Future<bool> _showIdUploadDisclaimer() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        backgroundColor: AppTheme.appOffWhite,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: AppTheme.appBlack.withValues(alpha: 0.08)),
+        ),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 420),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: const BoxDecoration(
+                      color: AppTheme.appRed,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Center(
+                      child: Icon(
+                        Icons.warning_amber_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'UPLOAD REMINDER',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.appBlack,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    icon: const Icon(
+                      Icons.close,
+                      color: AppTheme.appRed,
+                      size: 22,
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Upload a clear photo of a valid ID or document only.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.appBlack.withValues(alpha: 0.7),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.appOffYellow.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: AppTheme.appOffYellow.withValues(alpha: 0.45),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.admin_panel_settings_outlined,
+                      color: AppTheme.appRed,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'All submissions are reviewed by an admin. If you upload a random picture or a photo that is not a valid document/ID, your registration will not be approved.',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.appBlack.withValues(alpha: 0.9),
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.appRed,
+                        side: BorderSide(
+                          color: AppTheme.appRed.withValues(alpha: 0.55),
+                          width: 1.2,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        textStyle: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.appRed,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        textStyle: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      child: const Text('I Understand'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    return confirmed ?? false;
   }
 
   Widget _buildSourceOption({
@@ -963,55 +1223,37 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     );
   }
 
-  /// Check if image has ID-like aspect ratio
-  Future<bool> _checkAspectRatio(String imagePath) async {
+
+  /// Read image aspect ratio (width / height)
+  Future<double?> _getImageAspectRatio(String imagePath) async {
     try {
       final file = File(imagePath);
       final bytes = await file.readAsBytes();
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
       final image = frame.image;
-
-      final width = image.width.toDouble();
-      final height = image.height.toDouble();
-
-      // Calculate aspect ratio (always width/height, landscape orientation)
-      final aspectRatio = width > height ? width / height : height / width;
-
-      return aspectRatio >= _idAspectRatioMin && aspectRatio <= _idAspectRatioMax;
+      if (image.height == 0) return null;
+      return image.width / image.height;
     } catch (e) {
-      debugPrint('Aspect ratio check error: $e');
-      return true; // On error, skip this check
+      debugPrint('Aspect ratio read error: $e');
+      return null;
     }
   }
 
-  /// Validate ID image using aspect ratio only (ML Kit removed)
-  Future<_IdValidationResult> _validateIdImage(String imagePath) async {
-    // Skip extra validation on web
-    if (kIsWeb) return const _IdValidationResult(isValid: true);
-
+  /// Read image aspect ratio from bytes (width / height)
+  Future<double?> _getImageAspectRatioFromBytes(Uint8List bytes) async {
     try {
-      // Step 1: Check aspect ratio (ID cards have standard dimensions)
-      final hasValidAspectRatio = await _checkAspectRatio(imagePath);
-      if (!hasValidAspectRatio) {
-        return const _IdValidationResult(
-          isValid: false,
-          message:
-              'Image does not appear to be an ID card. Please take a photo of a standard-sized ID.',
-        );
-      }
-
-      return const _IdValidationResult(isValid: true);
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final image = frame.image;
+      if (image.height == 0) return null;
+      return image.width / image.height;
     } catch (e) {
-      debugPrint('ID validation error: $e');
-      // On error, be strict - don't allow upload
-      return const _IdValidationResult(
-        isValid: false,
-        message:
-            'Could not verify the image. Please try again with a clearer photo.',
-      );
+      debugPrint('Aspect ratio read error: $e');
+      return null;
     }
   }
+
 
   /// Pick and validate image for front of ID
   Future<void> _pickAndValidateFrontImage() async {
@@ -1020,53 +1262,57 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
 
     try {
       final pickedFile = await _imagePicker.pickImage(
-        source: source,
+        source: source == _IdImageSource.camera
+            ? ImageSource.camera
+            : ImageSource.gallery,
         maxWidth: 1920,
         maxHeight: 1920,
         imageQuality: 85,
       );
 
-      if (pickedFile == null) return;
+      final imagePath = pickedFile?.path;
+      if (imagePath == null) return;
 
       setState(() {
         _uploadingFront = true;
         _frontError = null;
       });
 
-      // Validate image (aspect ratio only)
-      final validation = await _validateIdImage(pickedFile.path);
-
-      if (!validation.isValid) {
-        final errorMessage = validation.message ??
-            'This does not appear to be a valid ID. Please take a clear photo of your government ID.';
+      final normalizedPath = _normalizePath(imagePath);
+      final croppedPath = await _cropImage(normalizedPath);
+      if (croppedPath == null) {
         setState(() {
           _uploadingFront = false;
-          _frontError = errorMessage;
         });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-            content: Text(
-              validation.wrongSide
-                  ? errorMessage
-                  : 'Image validation failed. Tips: Ensure good lighting, avoid blur, capture the entire ID.',
-              style: const TextStyle(fontSize: 12),
-            ),
-              backgroundColor: Colors.red,
-              duration: const Duration(seconds: 4),
-            ),
-          );
-        }
         return;
       }
 
+      final proceed = await _showIdUploadDisclaimer();
+      if (!proceed) {
+        setState(() {
+          _uploadingFront = false;
+        });
+        return;
+      }
+
+      final bytes = await File(croppedPath).readAsBytes();
+      final aspectRatio = await _getImageAspectRatioFromBytes(bytes);
+
+      setState(() {
+        _frontAspectRatio = aspectRatio;
+        _frontBytes = bytes;
+      });
+
       // Upload to Firebase Storage
-      final downloadUrl = await _uploadToFirebase(pickedFile, 'front');
+      final downloadUrl = await _uploadToFirebase(
+        XFile(croppedPath),
+        'front',
+        bytes,
+      );
 
       setState(() {
         _frontIdUrl = downloadUrl;
-        _frontLocalPath = pickedFile.path;
+        _frontLocalPath = croppedPath;
         _uploadingFront = false;
       });
 
@@ -1094,7 +1340,11 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
   }
 
   /// Upload image to Firebase Storage
-  Future<String> _uploadToFirebase(XFile pickedFile, String side) async {
+  Future<String> _uploadToFirebase(
+    XFile pickedFile,
+    String side,
+    Uint8List? bytes,
+  ) async {
     final fileName = 'id_${side}_${DateTime.now().millisecondsSinceEpoch}.jpg';
     final username = widget.usernameForPath?.trim().isNotEmpty == true
         ? widget.usernameForPath!.trim()
@@ -1106,9 +1356,9 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         .child(username)
         .child(fileName);
 
-    final bytes = await pickedFile.readAsBytes();
+    final uploadBytes = bytes ?? await pickedFile.readAsBytes();
     final uploadTask = storageRef.putData(
-      bytes,
+      uploadBytes,
       SettableMetadata(contentType: 'image/jpeg'),
     );
 
@@ -1126,26 +1376,37 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     required String title,
     required String? uploadedUrl,
     required String? localPath,
+    required double? aspectRatio,
+    required Uint8List? bytes,
     required bool isUploading,
     required String? error,
     required VoidCallback onUpload,
   }) {
-    final bool hasImage = localPath != null || uploadedUrl != null;
+    final bool hasImage = bytes != null || localPath != null || uploadedUrl != null;
     final bool hasError = error != null;
     final Color borderColor = hasError ? Colors.red : Colors.black;
     const double boxHeight = 72;
 
     Widget buildPreview() {
+      if (bytes != null) {
+        return Image.memory(
+          bytes,
+          fit: BoxFit.contain,
+          alignment: Alignment.center,
+        );
+      }
       if (localPath != null && !kIsWeb) {
         return Image.file(
           File(localPath),
-          fit: BoxFit.cover,
+          fit: BoxFit.contain,
+          alignment: Alignment.center,
         );
       }
       if (uploadedUrl != null) {
         return Image.network(
           uploadedUrl,
-          fit: BoxFit.cover,
+          fit: BoxFit.contain,
+          alignment: Alignment.center,
           loadingBuilder: (context, child, loadingProgress) {
             if (loadingProgress == null) return child;
             return Center(
@@ -1206,31 +1467,44 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
           children: [
             Expanded(
               flex: 3,
-              child: GestureDetector(
-                onTap: isUploading ? null : onUpload,
-                child: Container(
-                  height: boxHeight,
-                  decoration: BoxDecoration(
-                    color: AppTheme.appOffWhite,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: borderColor, width: 2),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: hasImage
-                        ? buildPreview()
-                        : Center(
-                            child: Text(
-                              'TAP TO UPLOAD',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: AppTheme.appBlack,
-                                fontWeight: FontWeight.w500,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final double maxPreviewHeight =
+                      (MediaQuery.sizeOf(context).height * 0.55)
+                          .clamp(200.0, 520.0)
+                          .toDouble();
+                  final double previewHeight = aspectRatio == null
+                      ? boxHeight
+                      : (constraints.maxWidth / aspectRatio!)
+                          .clamp(boxHeight, maxPreviewHeight)
+                          .toDouble();
+                  return GestureDetector(
+                    onTap: isUploading ? null : onUpload,
+                    child: Container(
+                      height: previewHeight,
+                      decoration: BoxDecoration(
+                        color: AppTheme.appOffWhite,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: borderColor, width: 2),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: hasImage
+                            ? buildPreview()
+                            : Center(
+                                child: Text(
+                                  'TAP TO UPLOAD',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: AppTheme.appBlack,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
-                  ),
-                ),
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
             const SizedBox(width: 12),
@@ -1330,6 +1604,8 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
           title: 'FRONT OF ID',
           uploadedUrl: _frontIdUrl,
           localPath: _frontLocalPath,
+          aspectRatio: _frontAspectRatio,
+          bytes: _frontBytes,
           isUploading: _uploadingFront,
           error: _frontError,
           onUpload: _pickAndValidateFrontImage,
