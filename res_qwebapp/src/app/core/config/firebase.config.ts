@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
+import { getFunctions } from 'firebase/functions';
 
 // Firebase configuration from your Flutter app
 const firebaseConfig = {
@@ -21,3 +22,6 @@ export const db = getFirestore(app);
 
 // Initialize Auth
 export const auth = getAuth(app);
+
+// Initialize Cloud Functions (asia-east2 region for RES-Q)
+export const functions = getFunctions(app, 'asia-east2');

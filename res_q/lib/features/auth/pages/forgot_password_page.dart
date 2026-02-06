@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import '../../../common/widgets/app_snackbar.dart';
 
 class ForgotPasswordPage extends StatefulWidget {
   const ForgotPasswordPage({super.key});
@@ -35,10 +36,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   InputDecoration _inputDecoration(String label) {
     return InputDecoration(
       labelText: label,
-      labelStyle: const TextStyle(
-        fontSize: 12,
-        color: appBlack,
-      ),
+      labelStyle: const TextStyle(fontSize: 12, color: appBlack),
       filled: true,
       fillColor: Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
@@ -61,9 +59,11 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     if (!_formKey.currentState!.validate()) return;
 
     if (_newPassCtl.text != _confirmCtl.text) {
-      ScaffoldMessenger.of(
+      AppSnackBar.show(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Passwords do not match')));
+        'Passwords do not match',
+        type: AppSnackBarType.error,
+      );
       return;
     }
 
@@ -73,9 +73,11 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
     if (!mounted) return;
 
-    ScaffoldMessenger.of(
+    AppSnackBar.show(
       context,
-    ).showSnackBar(const SnackBar(content: Text('Password updated (mock).')));
+      'Password updated (mock).',
+      type: AppSnackBarType.success,
+    );
     Navigator.pop(context);
   }
 
@@ -92,197 +94,197 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 400),
                 child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 24,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                     // Back button
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(
-                          Icons.arrow_back_ios_new,
-                          color: appBlue,
-                          size: 24,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 32,
+                    vertical: 24,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // Back button
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: IconButton(
+                          onPressed: () => Navigator.pop(context),
+                          icon: const Icon(
+                            Icons.arrow_back_ios_new,
+                            color: appBlue,
+                            size: 24,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
+                      const SizedBox(height: 8),
 
-                    // Logo at the top
-                    SvgPicture.asset(
-                      'assets/icons/RESQ-LOGO.svg',
-                      height: 70,
-                      width: 200,
-                    ),
-                    const SizedBox(height: 40),
-
-                    // Title
-                    const Text(
-                      'FORGOT PASSWORD',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w900,
-                        color: appBlack,
+                      // Logo at the top
+                      SvgPicture.asset(
+                        'assets/icons/RESQ-LOGO.svg',
+                        height: 70,
+                        width: 200,
                       ),
-                    ),
+                      const SizedBox(height: 40),
 
-                    const SizedBox(height: 40),
+                      // Title
+                      const Text(
+                        'FORGOT PASSWORD',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                          color: appBlack,
+                        ),
+                      ),
 
-                    Form(
-                      key: _formKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          // Email Address Label
-                          const Text(
-                            'EMAIL ADDRESS',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: appBlack,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _emailCtl,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              color: appBlack,
-                              fontFamily: 'RobotoCondensed',
-                            ),
-                            decoration: _inputDecoration(''),
-                            validator: (v) =>
-                                (v == null || v.isEmpty) ? 'Required' : null,
-                          ),
-                          const SizedBox(height: 24),
+                      const SizedBox(height: 40),
 
-                          // New Password Label
-                          const Text(
-                            'NEW PASSWORD',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: appBlack,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _newPassCtl,
-                            obscureText: _obscureNew,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              color: appBlack,
-                              fontFamily: 'RobotoCondensed',
-                            ),
-                            decoration: _inputDecoration('').copyWith(
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscureNew
-                                      ? Icons.visibility
-                                      : Icons.visibility_off,
-                                  size: 20,
-                                ),
-                                onPressed: () => setState(
-                                  () => _obscureNew = !_obscureNew,
-                                ),
+                      Form(
+                        key: _formKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            // Email Address Label
+                            const Text(
+                              'EMAIL ADDRESS',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: appBlack,
                               ),
                             ),
-                            validator: (v) => (v == null || v.length < 6)
-                                ? 'Min 6 chars'
-                                : null,
-                          ),
-                          const SizedBox(height: 24),
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: _emailCtl,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                color: appBlack,
+                                fontFamily: 'RobotoCondensed',
+                              ),
+                              decoration: _inputDecoration(''),
+                              validator: (v) =>
+                                  (v == null || v.isEmpty) ? 'Required' : null,
+                            ),
+                            const SizedBox(height: 24),
 
-                          // Confirm New Password Label
-                          const Text(
-                            'CONFIRM NEW PASSWORD',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: appBlack,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _confirmCtl,
-                            obscureText: _obscureConfirm,
-                            style: const TextStyle(
-                              fontSize: 15,
-                              color: appBlack,
-                              fontFamily: 'RobotoCondensed',
-                            ),
-                            decoration: _inputDecoration('').copyWith(
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  _obscureConfirm
-                                      ? Icons.visibility
-                                      : Icons.visibility_off,
-                                  size: 20,
-                                ),
-                                onPressed: () => setState(
-                                  () => _obscureConfirm = !_obscureConfirm,
-                                ),
+                            // New Password Label
+                            const Text(
+                              'NEW PASSWORD',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: appBlack,
                               ),
                             ),
-                            validator: (v) =>
-                                (v == null || v.isEmpty) ? 'Required' : null,
-                          ),
-
-                          const SizedBox(height: 40),
-
-                          // Button with shadow
-                          Container(
-                            height: 56,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(28),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.2),
-                                  spreadRadius: 2,
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
-                            child: ElevatedButton(
-                              onPressed: _loading ? null : _submit,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: appBlue,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(28),
-                                ),
-                                elevation: 0,
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: _newPassCtl,
+                              obscureText: _obscureNew,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                color: appBlack,
+                                fontFamily: 'RobotoCondensed',
                               ),
-                              child: _loading
-                                  ? const CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    )
-                                  : const Text(
-                                      'UPDATE AND PROCEED TO LOGIN',
-                                      style: TextStyle(
-                                        fontSize: 17,
-                                        fontWeight: FontWeight.w200,
+                              decoration: _inputDecoration('').copyWith(
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscureNew
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                    size: 20,
+                                  ),
+                                  onPressed: () => setState(
+                                    () => _obscureNew = !_obscureNew,
+                                  ),
+                                ),
+                              ),
+                              validator: (v) => (v == null || v.length < 6)
+                                  ? 'Min 6 chars'
+                                  : null,
+                            ),
+                            const SizedBox(height: 24),
+
+                            // Confirm New Password Label
+                            const Text(
+                              'CONFIRM NEW PASSWORD',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: appBlack,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: _confirmCtl,
+                              obscureText: _obscureConfirm,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                color: appBlack,
+                                fontFamily: 'RobotoCondensed',
+                              ),
+                              decoration: _inputDecoration('').copyWith(
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    _obscureConfirm
+                                        ? Icons.visibility
+                                        : Icons.visibility_off,
+                                    size: 20,
+                                  ),
+                                  onPressed: () => setState(
+                                    () => _obscureConfirm = !_obscureConfirm,
+                                  ),
+                                ),
+                              ),
+                              validator: (v) =>
+                                  (v == null || v.isEmpty) ? 'Required' : null,
+                            ),
+
+                            const SizedBox(height: 40),
+
+                            // Button with shadow
+                            Container(
+                              height: 56,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(28),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.2),
+                                    spreadRadius: 2,
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: ElevatedButton(
+                                onPressed: _loading ? null : _submit,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: appBlue,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(28),
+                                  ),
+                                  elevation: 0,
+                                ),
+                                child: _loading
+                                    ? const CircularProgressIndicator(
+                                        strokeWidth: 2,
                                         color: Colors.white,
-                                        letterSpacing: 0.5,
-                                        fontFamily: 'RobotoCondensed',
+                                      )
+                                    : const Text(
+                                        'UPDATE AND PROCEED TO LOGIN',
+                                        style: TextStyle(
+                                          fontSize: 17,
+                                          fontWeight: FontWeight.w200,
+                                          color: Colors.white,
+                                          letterSpacing: 0.5,
+                                          fontFamily: 'RobotoCondensed',
+                                        ),
+                                        textAlign: TextAlign.center,
                                       ),
-                                      textAlign: TextAlign.center,
-                                    ),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
             ),
           ),
         ),

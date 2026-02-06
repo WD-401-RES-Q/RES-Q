@@ -36,7 +36,10 @@ service cloud.firestore {
     // Admins collection - open read for admin login (no Firebase Auth)
     match /admins/{docId} {
       allow read: if true;
-      allow write: if false; // Only backend admin scripts
+      // Allow update for password migration (hash + salt)
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['passwordHash', 'passwordSalt', 'password']);
+      allow create, delete: if false; // Only backend admin scripts
     }
 
     // Semi-admins collection - allow read for mobile login checks

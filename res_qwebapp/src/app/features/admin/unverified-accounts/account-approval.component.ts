@@ -2,10 +2,10 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FirestoreService } from '../../../core/services/firestore.service';
+import { AuthService } from '../../../core/services/auth.service';
 
 interface PendingUser {
   id: string;
-  username: string;
   fullName: string;
   email: string;
   contactNumber: string;
@@ -43,16 +43,31 @@ export class AccountApprovalComponent implements OnInit {
   // Admin username - should come from auth service in production
   adminUsername = 'admin'; // TODO: Get from authenticated admin user
 
-  constructor(private firestoreService: FirestoreService) {}
+  constructor(
+    private firestoreService: FirestoreService,
+    private authService: AuthService
+  ) {}
 
   ngOnInit() {
     this.loadPendingUsers();
   }
 
+  private getAdminId(): string {
+    const admin = this.authService.currentAdmin();
+    return admin?.id || '';
+  }
+
   async loadPendingUsers() {
     this.loading = true;
     try {
-      this.pendingUsers = await this.firestoreService.getPendingUsers();
+      const adminId = this.getAdminId();
+      // Use decrypted data if admin is authenticated
+      if (adminId) {
+        this.pendingUsers = await this.firestoreService.getDecryptedPendingUsers(adminId);
+      } else {
+        // Fallback to raw data (will show encrypted values)
+        this.pendingUsers = await this.firestoreService.getPendingUsers();
+      }
       console.log('Loaded pending users:', this.pendingUsers);
       console.log('Number of pending users:', this.pendingUsers.length);
       if (this.pendingUsers.length > 0) {
@@ -68,7 +83,12 @@ export class AccountApprovalComponent implements OnInit {
   async loadApprovedUsers() {
     this.loading = true;
     try {
-      this.approvedUsers = await this.firestoreService.getApprovedUsers();
+      const adminId = this.getAdminId();
+      if (adminId) {
+        this.approvedUsers = await this.firestoreService.getDecryptedApprovedUsers(adminId);
+      } else {
+        this.approvedUsers = await this.firestoreService.getApprovedUsers();
+      }
     } catch (error) {
       console.error('Error loading approved users:', error);
     } finally {

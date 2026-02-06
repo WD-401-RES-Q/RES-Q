@@ -8,7 +8,11 @@ import '../../../common/theme/app_text_styles.dart';
 import '../../../common/constants/app_dimensions.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
+import '../../../common/widgets/app_snackbar.dart';
 import '../../../common/services/registration_prefs.dart';
+
+/// User registration page with AES-256-GCM encrypted PII storage.
+/// See docs/AES-256-GCM-ENCRYPTION.md for encryption architecture details.
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({super.key});
@@ -79,7 +83,19 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }
 
   Future<void> _showTermsAndConditions() async {
+    // Unfocus any active text field before showing dialog
+    FocusManager.instance.primaryFocus?.unfocus();
+    
     final agreed = await TermsAndConditionsDialog.show(context);
+    
+    // Ensure keyboard stays hidden after dialog closes
+    if (mounted) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      // Additional delay to ensure keyboard doesn't reappear
+      await Future.delayed(const Duration(milliseconds: 100));
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+    
     if (agreed) {
       setState(() {
         _agree = true;
@@ -140,8 +156,9 @@ class _RegistrationPageState extends State<RegistrationPage> {
       _termsError = termsValid
           ? null
           : 'Please read and agree to terms and conditions';
-      _idPhotoError =
-          idValid ? null : 'Please upload the front of your government ID';
+      _idPhotoError = idValid
+          ? null
+          : 'Please upload the front of your government ID';
     });
 
     if (!formValid || !termsValid || !idValid) {
@@ -164,14 +181,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
     if (phoneExists) {
       setState(() => _loading = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'This phone number is already registered. Please use a different number.',
-            ),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 4),
-          ),
+        AppSnackBar.show(
+          context,
+          'This phone number is already registered. Please use a different number.',
+          type: AppSnackBarType.error,
+          duration: const Duration(seconds: 4),
         );
       }
       return;
@@ -214,12 +228,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
           }
 
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(msg),
-                backgroundColor: Colors.red,
-                duration: const Duration(seconds: 3),
-              ),
+            AppSnackBar.show(
+              context,
+              msg,
+              type: AppSnackBarType.error,
+              duration: const Duration(seconds: 3),
             );
           }
         },
@@ -246,12 +259,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
     } catch (e) {
       setState(() => _loading = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to send OTP: $e'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
+        AppSnackBar.show(
+          context,
+          'Failed to send OTP: $e',
+          type: AppSnackBarType.error,
+          duration: const Duration(seconds: 3),
         );
       }
     }
@@ -383,18 +395,15 @@ class _RegistrationPageState extends State<RegistrationPage> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const ResqBackButton(),
-                  const ResqLogo(fontSize: 48),
+                  const ResqBackButton.outline(),
+                  const ResqLogo(fontSize: 53),
                   const SizedBox(width: 44), // Balance the row
                 ],
               ),
             ),
             const SizedBox(height: AppDimensions.paddingSmall),
-            Text(
-              'REGISTER',
-              style: AppTextStyles.authPageTitle,
-            ),
-            const SizedBox(height: AppDimensions.paddingMedium),
+            Text('REGISTER', style: AppTextStyles.authPageTitle),
+            const SizedBox(height: AppDimensions.paddingSmall),
 
             // Scrollable form content
             Expanded(
@@ -406,140 +415,175 @@ class _RegistrationPageState extends State<RegistrationPage> {
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 360),
                       child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppDimensions.paddingXLarge,
-                        vertical: AppDimensions.paddingMedium,
-                      ),
-                      child: AutofillGroup(
-                        child: Form(
-                          key: _formKey,
-                          child: Column(
-                            children: [
-                            // FIRST NAME AND LAST NAME INLINE
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: AuthTextField(
-                                  controller: _firstNameCtl,
-                                  label: 'FIRST NAME',
-                                  hintText: 'e.g. Juan',
-                                  autofillHints: const [AutofillHints.givenName],
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                      RegExp(r"[a-zA-Z .'-]"),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppDimensions.paddingXLarge,
+                          vertical: AppDimensions.paddingMedium,
+                        ),
+                        child: AutofillGroup(
+                          child: Form(
+                            key: _formKey,
+                            child: Column(
+                              children: [
+                                // FIRST NAME AND LAST NAME INLINE
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      child: AuthTextField(
+                                        controller: _firstNameCtl,
+                                        label: 'FIRST NAME',
+                                        hintText: 'e.g. Juan',
+                                        autofillHints: const [
+                                          AutofillHints.givenName,
+                                        ],
+                                        inputFormatters: [
+                                          FilteringTextInputFormatter.allow(
+                                            RegExp(r"[a-zA-Z .'-]"),
+                                          ),
+                                        ],
+                                        validator: _validateFirstName,
+                                        autovalidateMode:
+                                            AutovalidateMode.onUserInteraction,
+                                      ),
+                                    ),
+                                    const SizedBox(
+                                      width: AppDimensions.paddingSmall,
+                                    ),
+                                    Expanded(
+                                      child: AuthTextField(
+                                        controller: _lastNameCtl,
+                                        label: 'LAST NAME',
+                                        hintText: 'e.g. Dela Cruz',
+                                        autofillHints: const [
+                                          AutofillHints.familyName,
+                                        ],
+                                        inputFormatters: [
+                                          FilteringTextInputFormatter.allow(
+                                            RegExp(r"[a-zA-Z .'-]"),
+                                          ),
+                                        ],
+                                        validator: _validateLastName,
+                                        autovalidateMode:
+                                            AutovalidateMode.onUserInteraction,
+                                      ),
                                     ),
                                   ],
-                                  validator: _validateFirstName,
+                                ),
+                                const SizedBox(
+                                  height: AppDimensions.paddingMedium,
+                                ),
+
+                                AuthTextField(
+                                  controller: _emailCtl,
+                                  label: 'EMAIL ADDRESS',
+                                  hintText: 'e.g. juan@email.com',
+                                  keyboardType: TextInputType.emailAddress,
+                                  autofillHints: const [AutofillHints.email],
+                                  validator: _validateEmail,
                                   autovalidateMode:
                                       AutovalidateMode.onUserInteraction,
                                 ),
-                              ),
-                              const SizedBox(width: AppDimensions.paddingSmall),
-                              Expanded(
-                                child: AuthTextField(
-                                  controller: _lastNameCtl,
-                                  label: 'LAST NAME',
-                                  hintText: 'e.g. Dela Cruz',
-                                  autofillHints: const [AutofillHints.familyName],
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                      RegExp(r"[a-zA-Z .'-]"),
-                                    ),
+                                const SizedBox(
+                                  height: AppDimensions.paddingMedium,
+                                ),
+
+                                // PHONE INPUT WITH +63 PREFIX
+                                PhoneInputField(
+                                  controller: _contactCtl,
+                                  validator: validatePhilippinePhone,
+                                  autofillHints: const [
+                                    AutofillHints.telephoneNumber,
                                   ],
-                                  validator: _validateLastName,
                                   autovalidateMode:
                                       AutovalidateMode.onUserInteraction,
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: AppDimensions.paddingMedium),
+                                const SizedBox(
+                                  height: AppDimensions.paddingMedium,
+                                ),
 
-                          AuthTextField(
-                            controller: _emailCtl,
-                            label: 'EMAIL ADDRESS',
-                            hintText: 'e.g. juan@email.com',
-                            keyboardType: TextInputType.emailAddress,
-                            autofillHints: const [AutofillHints.email],
-                            validator: _validateEmail,
-                            autovalidateMode:
-                                AutovalidateMode.onUserInteraction,
-                          ),
-                          const SizedBox(height: AppDimensions.paddingMedium),
+                                AuthTextField(
+                                  controller: _addressCtl,
+                                  label: 'HOME ADDRESS',
+                                  hintText:
+                                      'e.g. Blk 3 Lot 2, Brgy. Mabini, QC',
+                                  autofillHints: const [
+                                    AutofillHints.fullStreetAddress,
+                                  ],
+                                  validator: _validateAddress,
+                                  autovalidateMode:
+                                      AutovalidateMode.onUserInteraction,
+                                ),
+                                const SizedBox(
+                                  height: AppDimensions.paddingMedium,
+                                ),
 
-                          // PHONE INPUT WITH +63 PREFIX
-                          PhoneInputField(
-                            controller: _contactCtl,
-                            validator: validatePhilippinePhone,
-                            autofillHints: const [AutofillHints.telephoneNumber],
-                            autovalidateMode:
-                                AutovalidateMode.onUserInteraction,
-                          ),
-                          const SizedBox(height: AppDimensions.paddingMedium),
+                                DateOfBirthInput(
+                                  monthController: _dobMonthCtl,
+                                  dayController: _dobDayCtl,
+                                  yearController: _dobYearCtl,
+                                  monthValidator: _validateDobMonth,
+                                  dayValidator: _validateDobDay,
+                                  yearValidator: _validateDobYear,
+                                  autovalidateMode:
+                                      AutovalidateMode.onUserInteraction,
+                                ),
+                                const SizedBox(
+                                  height: AppDimensions.paddingLarge,
+                                ),
 
-                          AuthTextField(
-                            controller: _addressCtl,
-                            label: 'HOME ADDRESS',
-                            hintText: 'e.g. Blk 3 Lot 2, Brgy. Mabini, QC',
-                            autofillHints: const [AutofillHints.fullStreetAddress],
-                            validator: _validateAddress,
-                            autovalidateMode:
-                                AutovalidateMode.onUserInteraction,
-                          ),
-                          const SizedBox(height: AppDimensions.paddingMedium),
+                                // ID VERIFICATION WIDGET (FRONT ONLY)
+                                IdVerificationWidget(
+                                  onUploadComplete: _onIdUploadComplete,
+                                  initialFrontUrl: _frontIdUrl,
+                                  usernameForPath: _contactCtl.text.replaceAll(
+                                    RegExp(r'\D'),
+                                    '',
+                                  ),
+                                ),
+                                if (_idPhotoError != null) ...[
+                                  const SizedBox(
+                                    height: AppDimensions.paddingSmall,
+                                  ),
+                                  Text(
+                                    _idPhotoError!,
+                                    style: AppTextStyles.authError,
+                                  ),
+                                ],
+                                const SizedBox(
+                                  height: AppDimensions.paddingLarge,
+                                ),
 
-                          DateOfBirthInput(
-                            monthController: _dobMonthCtl,
-                            dayController: _dobDayCtl,
-                            yearController: _dobYearCtl,
-                            monthValidator: _validateDobMonth,
-                            dayValidator: _validateDobDay,
-                            yearValidator: _validateDobYear,
-                            autovalidateMode:
-                                AutovalidateMode.onUserInteraction,
-                          ),
-                          const SizedBox(height: AppDimensions.paddingLarge),
+                                // TERMS CHECKBOX (DISPLAY-ONLY, CLICK LINK TO AGREE)
+                                TermsCheckbox(
+                                  agreed: _agree,
+                                  onTermsTap: _showTermsAndConditions,
+                                ),
+                                if (_termsError != null) ...[
+                                  const SizedBox(
+                                    height: AppDimensions.paddingSmall,
+                                  ),
+                                  Text(
+                                    _termsError!,
+                                    style: AppTextStyles.authError,
+                                  ),
+                                ],
+                                const SizedBox(
+                                  height: AppDimensions.paddingLarge,
+                                ),
 
-                          // ID VERIFICATION WIDGET (FRONT ONLY)
-                          IdVerificationWidget(
-                            onUploadComplete: _onIdUploadComplete,
-                            initialFrontUrl: _frontIdUrl,
-                            usernameForPath: _contactCtl.text.replaceAll(RegExp(r'\D'), ''),
-                          ),
-                          if (_idPhotoError != null) ...[
-                            const SizedBox(height: AppDimensions.paddingSmall),
-                            Text(
-                              _idPhotoError!,
-                              style: AppTextStyles.authError,
+                                ResqPillButton(
+                                  label: 'CREATE ACCOUNT',
+                                  loading: _loading,
+                                  onPressed: (_loading || _frontIdUrl == null)
+                                      ? null
+                                      : _submit,
+                                  height: 48,
+                                  radius: 30,
+                                  backgroundColor: AppTheme.appOffYellow,
+                                  textStyle: AppTextStyles.authButton,
+                                ),
+                              ],
                             ),
-                          ],
-                          const SizedBox(height: AppDimensions.paddingLarge),
-
-                          // TERMS CHECKBOX (DISPLAY-ONLY, CLICK LINK TO AGREE)
-                          TermsCheckbox(
-                            agreed: _agree,
-                            onTermsTap: _showTermsAndConditions,
-                          ),
-                          if (_termsError != null) ...[
-                            const SizedBox(height: AppDimensions.paddingSmall),
-                            Text(_termsError!, style: AppTextStyles.authError),
-                          ],
-                          const SizedBox(height: AppDimensions.paddingLarge),
-
-                            ResqPillButton(
-                              label: 'CREATE ACCOUNT',
-                              loading: _loading,
-                              onPressed:
-                                  (_loading || _frontIdUrl == null)
-                                  ? null
-                                  : _submit,
-                              height: 48,
-                              radius: 30,
-                              backgroundColor: AppTheme.appOffYellow,
-                              textStyle: AppTextStyles.authButton,
-                            ),
-                            ],
                           ),
                         ),
                       ),
@@ -548,12 +592,9 @@ class _RegistrationPageState extends State<RegistrationPage> {
                 ),
               ),
             ),
-          ),
           ],
         ),
       ),
     );
   }
 }
-
-

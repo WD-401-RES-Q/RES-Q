@@ -206,7 +206,7 @@ class AppTextStyles {
   // Auth page styles
   static const TextStyle authPageTitle = TextStyle(
     fontFamily: 'Roboto',
-    fontSize: 20,
+    fontSize: 25,
     fontWeight: FontWeight.w700,
     color: AppColors.appBlack,
   );
@@ -247,4 +247,3 @@ class AppTextStyles {
     color: Colors.grey,
   );
 }
-

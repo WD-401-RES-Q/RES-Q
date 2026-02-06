@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/widgets/app_buttons.dart';
+import '../../../common/widgets/app_snackbar.dart';
 
 class ApprovedPinCreationPage extends StatefulWidget {
   const ApprovedPinCreationPage({super.key});
@@ -59,13 +60,10 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
       if (userQuery.docs.isEmpty) {
         setState(() => _loading = false);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Phone number not found or not approved yet. Please wait for admin approval.',
-            ),
-            backgroundColor: Colors.red,
-          ),
+        AppSnackBar.show(
+          context,
+          'Phone number not found or not approved yet. Please wait for admin approval.',
+          type: AppSnackBarType.error,
         );
         return;
       }
@@ -81,25 +79,23 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
       });
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✓ Phone verified! Please enter your new 4-digit PIN.'),
-          backgroundColor: appGreen,
-        ),
+      AppSnackBar.show(
+        context,
+        '✓ Phone verified! Please enter your new 4-digit PIN.',
+        type: AppSnackBarType.success,
       );
     } catch (e) {
       setState(() => _loading = false);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
+      AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
     }
   }
 
   Future<bool> _checkBiometricsAvailable() async {
     try {
       final canAuthenticateWithBiometrics = await _localAuth.canCheckBiometrics;
-      final canAuthenticate = canAuthenticateWithBiometrics || await _localAuth.isDeviceSupported();
+      final canAuthenticate =
+          canAuthenticateWithBiometrics || await _localAuth.isDeviceSupported();
       final availableBiometrics = await _localAuth.getAvailableBiometrics();
       return canAuthenticate && availableBiometrics.isNotEmpty;
     } catch (e) {
@@ -119,9 +115,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
       context: context,
       barrierDismissible: false,
       builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
@@ -134,11 +128,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
                   color: appBlue.withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.fingerprint,
-                  size: 48,
-                  color: appBlue,
-                ),
+                child: const Icon(Icons.fingerprint, size: 48, color: appBlue),
               ),
               const SizedBox(height: 20),
               const Text(
@@ -232,14 +222,34 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
     );
   }
 
-  Future<void> _saveBiometricsPreference(bool enabled, String? phoneNumber) async {
+  Future<void> _saveBiometricsPreference(
+    bool enabled,
+    String? phoneNumber,
+  ) async {
     try {
+      // Save to SharedPreferences for local/quick access
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('biometrics_enabled', enabled);
       if (phoneNumber != null) {
         await prefs.setString('biometrics_phone', phoneNumber);
       }
-      debugPrint('✅ Biometrics preference saved: $enabled for phone: $phoneNumber');
+
+      // Save to Firestore for persistence across devices (like votes)
+      if (phoneNumber != null) {
+        final cleanPhone = phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+        await FirebaseFirestore.instance
+            .collection('userPreferences')
+            .doc(cleanPhone)
+            .set({
+              'biometricsEnabled': enabled,
+              'biometricsUpdatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+        debugPrint('✅ Biometrics preference saved to Firestore: $enabled');
+      }
+
+      debugPrint(
+        '✅ Biometrics preference saved locally: $enabled for phone: $phoneNumber',
+      );
     } catch (e) {
       debugPrint('Error saving biometrics preference: $e');
     }
@@ -249,21 +259,19 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
     final pin = _pinCtl.text.trim();
 
     if (pin.length != 4) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('PIN must be exactly 4 digits'),
-          backgroundColor: Colors.red,
-        ),
+      AppSnackBar.show(
+        context,
+        'PIN must be exactly 4 digits',
+        type: AppSnackBarType.error,
       );
       return;
     }
 
     if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('PIN must contain only numbers'),
-          backgroundColor: Colors.red,
-        ),
+      AppSnackBar.show(
+        context,
+        'PIN must contain only numbers',
+        type: AppSnackBarType.error,
       );
       return;
     }
@@ -300,9 +308,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
     } catch (e) {
       setState(() => _loading = false);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-      );
+      AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
     }
   }
 
@@ -351,133 +357,139 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 360),
                 child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text(
-                        _phoneVerified ? 'RESET PIN' : 'FORGOT PIN',
-                        style: const TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.w900,
-                          color: appBlack,
-                          fontFamily: 'Roboto',
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        _phoneVerified
-                            ? 'Enter a new 4-digit PIN'
-                            : 'Enter your registered phone number to reset your PIN',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: appBlack.withOpacity(0.7),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 40),
-
-                      if (!_phoneVerified) ...[
-                        // Phone number input
-                        TextFormField(
-                          controller: _phoneCtl,
-                          keyboardType: TextInputType.phone,
+                  padding: const EdgeInsets.all(24.0),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(
+                          _phoneVerified ? 'RESET PIN' : 'FORGOT PIN',
                           style: const TextStyle(
-                            fontFamily: 'RobotoCondensed',
-                            fontSize: 16,
+                            fontSize: 32,
+                            fontWeight: FontWeight.w900,
                             color: appBlack,
-                          ),
-                          decoration: InputDecoration(
-                            labelText: 'Phone Number',
-                            hintText: '09XX-XXX-XXXX',
-                            prefixIcon: const Icon(
-                              Icons.phone,
-                              color: Colors.black,
-                            ),
-                            filled: true,
-                            fillColor: Colors.white,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: const BorderSide(color: Colors.black),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: const BorderSide(
-                                color: appBlue,
-                                width: 2,
-                              ),
-                            ),
-                          ),
-                          validator: (v) =>
-                              (v == null || v.isEmpty) ? 'Enter phone' : null,
-                        ),
-                        const SizedBox(height: 32),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 50,
-                          child: ElevatedButton(
-                            onPressed: _loading ? null : _verifyPhone,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: appBlue,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(50),
-                              ),
-                            ),
-                            child: _loading
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Text(
-                                    'VERIFY',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                      color: Colors.white,
-                                      fontFamily: 'Roboto',
-                                    ),
-                                  ),
+                            fontFamily: 'Roboto',
                           ),
                         ),
-                      ] else ...[
-                        // PIN Display (dots)
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: List.generate(4, (index) {
-                            final hasValue = _pinCtl.text.length > index;
-                            return Container(
-                              margin: const EdgeInsets.symmetric(horizontal: 8),
-                              width: 20,
-                              height: 20,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: hasValue ? appBlue : Colors.transparent,
-                                border: Border.all(color: appBlack, width: 2),
-                              ),
-                            );
-                          }),
+                        const SizedBox(height: 16),
+                        Text(
+                          _phoneVerified
+                              ? 'Enter a new 4-digit PIN'
+                              : 'Enter your registered phone number to reset your PIN',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: appBlack.withOpacity(0.7),
+                          ),
+                          textAlign: TextAlign.center,
                         ),
-                        const SizedBox(height: 32),
+                        const SizedBox(height: 40),
 
-                        // Numpad
-                        PinNumpad(
-                          enabled: !_loading,
-                          onKeyTap: _handlePinKey,
-                          actionBackgroundColor: appOffWhite,
-                          textColor: appBlack,
-                        ),
+                        if (!_phoneVerified) ...[
+                          // Phone number input
+                          TextFormField(
+                            controller: _phoneCtl,
+                            keyboardType: TextInputType.phone,
+                            style: const TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 16,
+                              color: appBlack,
+                            ),
+                            decoration: InputDecoration(
+                              labelText: 'Phone Number',
+                              hintText: '09XX-XXX-XXXX',
+                              prefixIcon: const Icon(
+                                Icons.phone,
+                                color: Colors.black,
+                              ),
+                              filled: true,
+                              fillColor: Colors.white,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(
+                                  color: Colors.black,
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: const BorderSide(
+                                  color: appBlue,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                            validator: (v) =>
+                                (v == null || v.isEmpty) ? 'Enter phone' : null,
+                          ),
+                          const SizedBox(height: 32),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 50,
+                            child: ElevatedButton(
+                              onPressed: _loading ? null : _verifyPhone,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: appBlue,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(50),
+                                ),
+                              ),
+                              child: _loading
+                                  ? const SizedBox(
+                                      height: 20,
+                                      width: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Text(
+                                      'VERIFY',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white,
+                                        fontFamily: 'Roboto',
+                                      ),
+                                    ),
+                            ),
+                          ),
+                        ] else ...[
+                          // PIN Display (dots)
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: List.generate(4, (index) {
+                              final hasValue = _pinCtl.text.length > index;
+                              return Container(
+                                margin: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                ),
+                                width: 20,
+                                height: 20,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: hasValue
+                                      ? appBlue
+                                      : Colors.transparent,
+                                  border: Border.all(color: appBlack, width: 2),
+                                ),
+                              );
+                            }),
+                          ),
+                          const SizedBox(height: 32),
+
+                          // Numpad
+                          PinNumpad(
+                            enabled: !_loading,
+                            onKeyTap: _handlePinKey,
+                            actionBackgroundColor: appOffWhite,
+                            textColor: appBlack,
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
               ),
-            ),
             ),
           ),
         ),
