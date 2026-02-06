@@ -320,7 +320,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
   String? _validateEmail(String? value) {
     final email = (value ?? '').trim();
-    if (email.isEmpty) return 'Email address is required';
+    // Optional for now (phone OTP already verifies contact ownership).
+    if (email.isEmpty) return null;
     return _isValidEmail(email) ? null : 'Enter a valid email address';
   }
 

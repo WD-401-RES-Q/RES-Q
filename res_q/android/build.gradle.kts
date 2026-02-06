@@ -7,6 +7,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        maven("https://jitpack.io")
+        maven("https://storage.googleapis.com/download.flutter.io")
     }
 }
 
