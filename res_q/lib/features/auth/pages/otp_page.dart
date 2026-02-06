@@ -8,7 +8,6 @@ import '../../../common/constants/app_dimensions.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
-import '../../../common/services/registration_prefs.dart';
 
 class OTPPage extends StatefulWidget {
   const OTPPage({super.key});
@@ -85,8 +84,8 @@ class _OTPPageState extends State<OTPPage> {
       if (!mounted) return;
       setState(() => _loading = false);
 
-      // Clear saved phone number after successful OTP verification
-      await RegistrationPrefs.clearPhoneNumber();
+      // Keep the locally-saved phone number so the Login page can prefill it
+      // for faster logins (PIN/biometrics) after admin approval.
 
       // Navigate to PIN creation page instead of saving directly
       if (mounted) {
