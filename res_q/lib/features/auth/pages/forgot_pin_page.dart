@@ -2,18 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../../common/constants/app_dimensions.dart';
+import '../../../common/theme/app_text_styles.dart';
+import '../../../common/theme/app_theme.dart';
+import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
 
-class ApprovedPinCreationPage extends StatefulWidget {
-  const ApprovedPinCreationPage({super.key});
+class ForgotPinPage extends StatefulWidget {
+  const ForgotPinPage({super.key});
 
   @override
-  State<ApprovedPinCreationPage> createState() =>
-      _ApprovedPinCreationPageState();
+  State<ForgotPinPage> createState() => _ForgotPinPageState();
 }
 
-class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
+class _ForgotPinPageState extends State<ForgotPinPage> {
   // Brand colors
   static const appBlue = Color(0xFFAC1B22);
   static const appRed = Color(0xFFFFC806);
@@ -42,10 +45,8 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
   Future<void> _verifyPhone() async {
     if (!_formKey.currentState!.validate()) return;
 
-    String phone = _phoneCtl.text.trim().replaceAll('-', '');
-    if (!phone.startsWith('+')) {
-      phone = phone.startsWith('0') ? '+63${phone.substring(1)}' : '+63$phone';
-    }
+    final phoneDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
+    final phone = '+63$phoneDigits';
 
     setState(() => _loading = true);
 
@@ -237,7 +238,7 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
       // Save to Firestore for persistence across devices (like votes)
       if (phoneNumber != null) {
         final cleanPhone = phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
-        await FirebaseFirestore.instance
+        await _firestore
             .collection('userPreferences')
             .doc(cleanPhone)
             .set({
@@ -339,159 +340,158 @@ class _ApprovedPinCreationPageState extends State<ApprovedPinCreationPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: appOffWhite,
-      appBar: AppBar(
-        backgroundColor: appOffWhite,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: appBlack),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
+      backgroundColor: AppTheme.appOffWhite,
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            child: GestureDetector(
-              onTap: () => FocusScope.of(context).unfocus(),
-              behavior: HitTestBehavior.opaque,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 360),
-                child: Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: Form(
-                    key: _formKey,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Text(
-                          _phoneVerified ? 'RESET PIN' : 'FORGOT PIN',
-                          style: const TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.w900,
-                            color: appBlack,
-                            fontFamily: 'Roboto',
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _phoneVerified
-                              ? 'Enter a new 4-digit PIN'
-                              : 'Enter your registered phone number to reset your PIN',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: appBlack.withOpacity(0.7),
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 40),
-
-                        if (!_phoneVerified) ...[
-                          // Phone number input
-                          TextFormField(
-                            controller: _phoneCtl,
-                            keyboardType: TextInputType.phone,
-                            style: const TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 16,
-                              color: appBlack,
-                            ),
-                            decoration: InputDecoration(
-                              labelText: 'Phone Number',
-                              hintText: '09XX-XXX-XXXX',
-                              prefixIcon: const Icon(
-                                Icons.phone,
-                                color: Colors.black,
-                              ),
-                              filled: true,
-                              fillColor: Colors.white,
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(
-                                  color: Colors.black,
-                                ),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(
-                                  color: appBlue,
-                                  width: 2,
-                                ),
-                              ),
-                            ),
-                            validator: (v) =>
-                                (v == null || v.isEmpty) ? 'Enter phone' : null,
-                          ),
-                          const SizedBox(height: 32),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: ElevatedButton(
-                              onPressed: _loading ? null : _verifyPhone,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: appBlue,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(50),
-                                ),
-                              ),
-                              child: _loading
-                                  ? const SizedBox(
-                                      height: 20,
-                                      width: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Text(
-                                      'VERIFY',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.white,
-                                        fontFamily: 'Roboto',
-                                      ),
-                                    ),
-                            ),
-                          ),
-                        ] else ...[
-                          // PIN Display (dots)
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: List.generate(4, (index) {
-                              final hasValue = _pinCtl.text.length > index;
-                              return Container(
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                ),
-                                width: 20,
-                                height: 20,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: hasValue
-                                      ? appBlue
-                                      : Colors.transparent,
-                                  border: Border.all(color: appBlack, width: 2),
-                                ),
-                              );
-                            }),
-                          ),
-                          const SizedBox(height: 32),
-
-                          // Numpad
-                          PinNumpad(
-                            enabled: !_loading,
-                            onKeyTap: _handlePinKey,
-                            actionBackgroundColor: appOffWhite,
-                            textColor: appBlack,
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(
+                top: AppDimensions.paddingMedium,
+                left: AppDimensions.paddingXLarge,
+                right: AppDimensions.paddingXLarge,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  ResqBackButton.outline(onPressed: () => Navigator.pop(context)),
+                  const ResqLogo(fontSize: 53),
+                  const SizedBox(width: 44),
+                ],
               ),
             ),
-          ),
+            const SizedBox(height: AppDimensions.paddingSmall),
+            Text(
+              _phoneVerified ? 'RESET PIN' : 'FORGOT PIN',
+              style: AppTextStyles.authPageTitle,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppDimensions.paddingXSmall),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    child: GestureDetector(
+                      onTap: () => FocusScope.of(context).unfocus(),
+                      behavior: HitTestBehavior.opaque,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppDimensions.paddingXLarge,
+                            vertical: AppDimensions.paddingXSmall,
+                          ),
+                          child: Align(
+                            alignment: const Alignment(0, -0.2),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 360),
+                              child: Form(
+                                key: _formKey,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    Text(
+                                      _phoneVerified
+                                          ? 'Enter a new 4-digit PIN'
+                                          : 'Enter your registered phone number to reset your PIN',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        color: AppTheme.appBlack.withOpacity(0.7),
+                                        fontFamily: 'RobotoCondensed',
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                    const SizedBox(height: AppDimensions.paddingSmall),
+
+                                    if (!_phoneVerified) ...[
+                                      PhoneInputField(
+                                        controller: _phoneCtl,
+                                        validator: validatePhilippinePhone,
+                                        autofillHints: const [
+                                          AutofillHints.telephoneNumber,
+                                        ],
+                                        autovalidateMode:
+                                            AutovalidateMode.onUserInteraction,
+                                      ),
+                                      const SizedBox(height: AppDimensions.paddingLarge),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        height: 50,
+                                        child: ElevatedButton(
+                                          onPressed: _loading ? null : _verifyPhone,
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: appBlue,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(50),
+                                            ),
+                                          ),
+                                          child: _loading
+                                              ? const SizedBox(
+                                                  height: 20,
+                                                  width: 20,
+                                                  child: CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                    color: Colors.white,
+                                                  ),
+                                                )
+                                              : const Text(
+                                                  'VERIFY',
+                                                  style: TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: Colors.white,
+                                                    fontFamily: 'Roboto',
+                                                  ),
+                                                ),
+                                        ),
+                                      ),
+                                    ] else ...[
+                                      // PIN Display (dots)
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: List.generate(4, (index) {
+                                          final hasValue = _pinCtl.text.length > index;
+                                          return Container(
+                                            margin: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                            ),
+                                            width: 20,
+                                            height: 20,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: hasValue ? appBlue : Colors.transparent,
+                                              border: Border.all(
+                                                color: appBlack,
+                                                width: 2,
+                                              ),
+                                            ),
+                                          );
+                                        }),
+                                      ),
+                                      const SizedBox(height: 32),
+
+                                      // Numpad
+                                      PinNumpad(
+                                        enabled: !_loading,
+                                        onKeyTap: _handlePinKey,
+                                        actionBackgroundColor: appOffWhite,
+                                        textColor: appBlack,
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );

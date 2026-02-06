@@ -6,6 +6,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
+import '../../../common/theme/app_text_styles.dart';
 import '../../home/pages/home_page.dart';
 import '../../semi_admin/pages/semi_admin_main_page.dart';
 import '../../../common/services/user_session.dart';
@@ -147,6 +148,8 @@ class _LoginPageState extends State<LoginPage>
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin biometric login successful!');
+        // Persist phone locally for faster next login.
+        await RegistrationPrefs.savePhoneNumber(phoneInput);
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
         UserSession.setUserData({
@@ -196,6 +199,8 @@ class _LoginPageState extends State<LoginPage>
       }
 
       // Login successful
+      // Persist phone locally for faster next login.
+      await RegistrationPrefs.savePhoneNumber(phoneInput);
       UserSession.setUserData(userData);
 
       // Use phone number as user ID for easier tracking
@@ -426,6 +431,8 @@ class _LoginPageState extends State<LoginPage>
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin login successful via PIN!');
+        // Persist phone locally for faster next login.
+        await RegistrationPrefs.savePhoneNumber(phoneInput);
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
         UserSession.setUserData({
@@ -476,6 +483,8 @@ class _LoginPageState extends State<LoginPage>
       }
 
       // Login successful
+      // Persist phone locally for faster next login.
+      await RegistrationPrefs.savePhoneNumber(phoneInput);
       UserSession.setUserData(userData);
 
       // Use phone number as user ID for easier tracking
@@ -635,8 +644,7 @@ class _LoginPageState extends State<LoginPage>
   Widget _logo() {
     return SvgPicture.asset(
       'assets/icons/RES-Q_LOGO.svg',
-      height: 80,
-      width: 120,
+      height: 53,
     );
   }
 
@@ -694,12 +702,7 @@ class _LoginPageState extends State<LoginPage>
                   const SizedBox(height: 12),
                   Text(
                     'LOGIN',
-                    style: TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 24,
-                      fontWeight: FontWeight.w900,
-                      color: appBlack,
-                    ),
+                    style: AppTextStyles.authPageTitle,
                   ),
                 ],
               ),
@@ -983,7 +986,7 @@ class _LoginPageState extends State<LoginPage>
                                   child: TextButton(
                                     onPressed: () => Navigator.pushNamed(
                                       context,
-                                      '/approved-pin-creation',
+                                      '/forgot-pin',
                                     ),
                                     style: TextButton.styleFrom(
                                       padding: EdgeInsets.zero,

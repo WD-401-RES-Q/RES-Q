@@ -4,7 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class RegistrationPrefs {
   static const String _phoneKey = 'registration_phone_number';
 
-  /// Save phone number for convenience on return visits
+  /// Save phone number locally for convenience (prefill login/registration).
   static Future<void> savePhoneNumber(String phone) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_phoneKey, phone);
@@ -16,7 +16,7 @@ class RegistrationPrefs {
     return prefs.getString(_phoneKey);
   }
 
-  /// Clear saved phone number after successful registration
+  /// Clear saved phone number (e.g., when switching accounts on this device).
   static Future<void> clearPhoneNumber() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_phoneKey);
