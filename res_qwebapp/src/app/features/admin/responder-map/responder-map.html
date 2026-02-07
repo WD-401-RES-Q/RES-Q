@@ -1,8 +1,8 @@
 <div class="map-page">
   <div class="map-header">
     <div>
-      <h1>Responder Tracker</h1>
-      <p>Track live responder movement inside Angeles City geofence.</p>
+      <h1>Response Tracker</h1>
+      <p>Track report, reporter, and responder locations inside Angeles City.</p>
     </div>
     <div class="live-indicator" [class.offline]="!isListening">
       <span class="dot"></span>
@@ -16,12 +16,20 @@
         <div id="responder-map"></div>
         <div class="map-legend">
           <div class="legend-item">
+            <span class="legend-dot report"></span>
+            Report location
+          </div>
+          <div class="legend-item">
+            <span class="legend-dot reporter"></span>
+            Reporter location
+          </div>
+          <div class="legend-item">
             <span class="legend-dot responder"></span>
             Responder location
           </div>
           <div class="legend-item">
             <span class="legend-dot fence"></span>
-            Angeles City geofence
+            Angeles geofence
           </div>
         </div>
         <div *ngIf="mapLoadError" class="map-error">{{ mapLoadError }}</div>
@@ -35,16 +43,16 @@
           aria-label="Hard refresh"
           (click)="hardRefresh()"
         >
-          <span class="tool-icon">↻</span>
+          <span class="tool-icon">REF</span>
         </button>
         <button
           class="map-tool-btn focus"
           type="button"
-          title="Fit responders"
-          aria-label="Fit responders"
+          title="Fit all"
+          aria-label="Fit all"
           (click)="fitToResponders()"
         >
-          <span class="tool-icon">⌖</span>
+          <span class="tool-icon">FIT</span>
         </button>
       </div>
     </section>
@@ -53,13 +61,13 @@
       <div class="panel-section">
         <div class="panel-title-row">
           <div>
-            <h2>Responders</h2>
-            <div class="subtext">Live positions from active reports.</div>
+            <h2>Active Deployments</h2>
+            <div class="subtext">Live positions linked to deployed reports.</div>
           </div>
           <div class="count-pill">{{ tracks.length }}</div>
         </div>
 
-        <div *ngIf="isLoading" class="empty-state">Loading responder locations…</div>
+        <div *ngIf="isLoading" class="empty-state">Loading deployment locations...</div>
         <div *ngIf="!isLoading && tracks.length === 0" class="empty-state">
           No responder locations available yet.
         </div>
@@ -82,18 +90,20 @@
               </span>
             </div>
             <div class="card-meta">
-              {{ track.incidentType || 'Incident' }} · {{ track.barangay || 'Angeles City' }}
+              {{ track.incidentType || 'Incident' }} - {{ track.barangay || 'Angeles City' }}
             </div>
           </button>
         </div>
       </div>
 
       <div class="panel-section">
-        <h2>Selected Responder</h2>
-        <div *ngIf="!selectedTrack" class="empty-state">
-          Select a responder to view details.
-        </div>
+        <h2>Selected Deployment</h2>
+        <div *ngIf="!selectedTrack" class="empty-state">Select a deployment to view details.</div>
         <div *ngIf="selectedTrack as track" class="details compact">
+          <div class="detail-row">
+            <span>Report ID</span>
+            <strong>{{ track.reportId }}</strong>
+          </div>
           <div class="detail-row">
             <span>Responder</span>
             <strong>{{ track.responderName || 'Unknown' }}</strong>
@@ -111,13 +121,39 @@
             <strong>{{ track.barangay || 'Angeles City' }}</strong>
           </div>
           <div class="detail-row">
-            <span>Last update</span>
+            <span>Report Lat</span>
+            <strong>{{ formatCoord(track.reportLocationLat) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Report Lng</span>
+            <strong>{{ formatCoord(track.reportLocationLng) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Reporter Lat</span>
+            <strong>{{ formatCoord(track.reporterLocationLat) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Reporter Lng</span>
+            <strong>{{ formatCoord(track.reporterLocationLng) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Responder Lat</span>
+            <strong>{{ formatCoord(track.responderLocationLat) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Responder Lng</span>
+            <strong>{{ formatCoord(track.responderLocationLng) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Reporter update</span>
+            <strong>{{ formatTimestamp(track.reporterLocationUpdatedAt) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Responder update</span>
             <strong>{{ formatTimestamp(track.responderLocationUpdatedAt) }}</strong>
           </div>
         </div>
-
       </div>
     </aside>
-
   </div>
 </div>

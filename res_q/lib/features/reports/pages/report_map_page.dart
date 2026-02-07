@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
@@ -53,7 +53,10 @@ class _WeatherData {
 }
 
 class _ReportMapPageState extends State<ReportMapPage>
-    with AutomaticKeepAliveClientMixin, TickerProviderStateMixin, WidgetsBindingObserver {
+    with
+        AutomaticKeepAliveClientMixin,
+        TickerProviderStateMixin,
+        WidgetsBindingObserver {
   final MapController _mapController = MapController();
   late final AnimationController _pinBounceController;
   WeatherState _weatherState = WeatherState.none;
@@ -68,8 +71,9 @@ class _ReportMapPageState extends State<ReportMapPage>
   String? _weatherError;
   _WeatherData? _weatherData;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
-      _reportSubscription;
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _commentsSubscription;
+  _reportSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _commentsSubscription;
   bool _commentsInitialized = false;
   List<Map<String, dynamic>> _responderCommentsFallback = [];
   Map<String, dynamic>? _liveReportData;
@@ -89,6 +93,7 @@ class _ReportMapPageState extends State<ReportMapPage>
   static const LatLng _angelesCityCenter = LatLng(15.1450, 120.5887);
   static const double _angelesCityRadiusMeters = 6000;
 
+  LatLng? _incidentLocation;
   LatLng? _userLocation;
   bool _locationShared = false;
   bool _showSuccessCard = false;
@@ -99,7 +104,6 @@ class _ReportMapPageState extends State<ReportMapPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _userLocation = _initialCenter;
     _pinBounceController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
@@ -111,20 +115,44 @@ class _ReportMapPageState extends State<ReportMapPage>
     final source = widget.reportData['locationSource'] as String?;
     final latValue = widget.reportData['locationLat'];
     final lngValue = widget.reportData['locationLng'];
-    if (source == 'pin' && latValue is num && lngValue is num) {
-      _userLocation = LatLng(latValue.toDouble(), lngValue.toDouble());
+    if (latValue is num && lngValue is num) {
+      _incidentLocation = LatLng(latValue.toDouble(), lngValue.toDouble());
+    } else {
+      _incidentLocation = _latLngFromDynamic(widget.reportData['location']);
+    }
+
+    final reporterLat = widget.reportData['reporterLocationLat'];
+    final reporterLng = widget.reportData['reporterLocationLng'];
+    if (reporterLat is num && reporterLng is num) {
+      _userLocation = LatLng(reporterLat.toDouble(), reporterLng.toDouble());
       _locationShared = true;
+    } else if (source?.toLowerCase() == 'current' &&
+        _incidentLocation != null) {
+      _userLocation = _incidentLocation;
+      _locationShared = true;
+    }
+
+    if (source == 'pin') {
       _showReportCard = true;
       _scheduleResponderRouteUpdate();
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_userLocation != null) {
-          _mapController.move(_userLocation!, 16.0);
+        final focusPoint = _incidentLocation ?? _userLocation;
+        if (focusPoint != null) {
+          _mapController.move(focusPoint, 16.0);
         }
       });
-    } else {
-      // Show location sharing modal automatically
+    } else if (!_locationShared) {
+      // Ask for live reporter location only when we don't already have one.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _showLocationSharingModal();
+      });
+    } else {
+      _showReportCard = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final focusPoint = _userLocation ?? _incidentLocation;
+        if (focusPoint != null) {
+          _mapController.move(focusPoint, 16.0);
+        }
       });
     }
   }
@@ -142,7 +170,8 @@ class _ReportMapPageState extends State<ReportMapPage>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Pause animation when app is in background to save CPU
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
       _pinBounceController.stop();
     } else if (state == AppLifecycleState.resumed) {
       if (!_pinBounceController.isAnimating) {
@@ -205,7 +234,11 @@ class _ReportMapPageState extends State<ReportMapPage>
             .collection('reports')
             .doc(widget.reportId)
             .update({
-              'location': GeoPoint(position.latitude, position.longitude),
+              'reporterLocation': GeoPoint(
+                position.latitude,
+                position.longitude,
+              ),
+              'reporterLocationUpdatedAt': Timestamp.now(),
               'locationSharedAt': Timestamp.now(),
             });
 
@@ -219,7 +252,9 @@ class _ReportMapPageState extends State<ReportMapPage>
         // Center map on user location
         _mapController.move(userLatLng, 16.0);
 
-        debugPrint('✅ Location shared: ${position.latitude}, ${position.longitude}');
+        debugPrint(
+          '✅ Location shared: ${position.latitude}, ${position.longitude}',
+        );
 
         // Show report details card
         Future.delayed(const Duration(milliseconds: 500), () {
@@ -246,146 +281,146 @@ class _ReportMapPageState extends State<ReportMapPage>
   void _showIncidentInfo(Map<String, dynamic> data) {
     showDialog(
       context: context,
-      builder: (context) => StreamBuilder<
-          DocumentSnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collection('reports')
-            .doc(widget.reportId)
-            .snapshots(),
-        builder: (context, snapshot) {
-          final live = snapshot.data?.data();
-          final merged = {
-            ...data,
-            if (live != null) ...live,
-          };
-          final incidentType =
-              merged['incidentType'] as String? ?? 'Unknown';
-          final reporter = merged['name'] as String? ?? 'Unknown';
-          final description =
-              merged['details'] as String? ??
-              merged['description'] as String? ??
-              'No description';
-          final status = _normalizeStatusLabel(
-            merged['responderStatus'] as String? ??
-                merged['status'] as String? ??
-                'Unverified',
-          );
-          final statusColor = _getStatusColor(status);
+      builder: (context) =>
+          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: FirebaseFirestore.instance
+                .collection('reports')
+                .doc(widget.reportId)
+                .snapshots(),
+            builder: (context, snapshot) {
+              final live = snapshot.data?.data();
+              final merged = {...data, if (live != null) ...live};
+              final incidentType =
+                  merged['incidentType'] as String? ?? 'Unknown';
+              final reporter = merged['name'] as String? ?? 'Unknown';
+              final description =
+                  merged['details'] as String? ??
+                  merged['description'] as String? ??
+                  'No description';
+              final status = _normalizeStatusLabel(
+                merged['responderStatus'] as String? ??
+                    merged['status'] as String? ??
+                    'Unverified',
+              );
+              final statusColor = _getStatusColor(status);
 
-          return Dialog(
-            backgroundColor: Colors.white,
-            insetPadding:
-                const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+              return Dialog(
+                backgroundColor: Colors.white,
+                insetPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 24,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFAC1B22),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(
-                          Icons.report,
-                          color: Colors.white,
-                          size: 20,
-                        ),
+                      Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFAC1B22),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Icon(
+                              Icons.report,
+                              color: Colors.white,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              incidentType.toUpperCase(),
+                              style: const TextStyle(
+                                fontFamily: 'Roboto',
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFAC1B22),
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.pop(context),
+                            icon: const Icon(Icons.close, size: 20),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: statusColor),
+                        ),
                         child: Text(
-                          incidentType.toUpperCase(),
-                          style: const TextStyle(
+                          'Status: $status',
+                          style: TextStyle(
                             fontFamily: 'Roboto',
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFFAC1B22),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: statusColor,
                           ),
                         ),
                       ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close, size: 20),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Reported by $reporter',
+                        style: const TextStyle(
+                          fontFamily: 'Roboto',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF1F2933),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        description,
+                        style: const TextStyle(
+                          fontFamily: 'Roboto',
+                          fontSize: 13,
+                          height: 1.4,
+                          color: Color(0xFF4B5563),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () => Navigator.pop(context),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFAC1B22),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: const Text(
+                            'CLOSE',
+                            style: TextStyle(
+                              fontFamily: 'Roboto',
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: statusColor),
-                    ),
-                    child: Text(
-                      'Status: $status',
-                      style: TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: statusColor,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Reported by $reporter',
-                    style: const TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: Color(0xFF1F2933),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    description,
-                    style: const TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 13,
-                      height: 1.4,
-                      color: Color(0xFF4B5563),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFAC1B22),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      child: const Text(
-                        'CLOSE',
-                        style: TextStyle(
-                          fontFamily: 'Roboto',
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
+                ),
+              );
+            },
+          ),
     );
   }
 
@@ -410,7 +445,9 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   void _scheduleResponderRouteUpdate() {
-    if (_responderLocation == null || _userLocation == null) return;
+    if (_responderLocation == null) return;
+    final destination = _userLocation ?? _incidentLocation;
+    if (destination == null) return;
     _routeDebounce?.cancel();
     _routeDebounce = Timer(const Duration(seconds: 2), () {
       _updateResponderRoute();
@@ -419,7 +456,7 @@ class _ReportMapPageState extends State<ReportMapPage>
 
   Future<void> _updateResponderRoute() async {
     final origin = _responderLocation;
-    final destination = _userLocation;
+    final destination = _userLocation ?? _incidentLocation;
     if (origin == null || destination == null) return;
 
     if (_lastRouteOrigin != null && _lastRouteDestination != null) {
@@ -443,8 +480,7 @@ class _ReportMapPageState extends State<ReportMapPage>
 
     _RouteResult? route = await _fetchRouteFromOsrm(origin, destination);
     List<LatLng> points = route?.points ?? [];
-    double? distanceKm =
-        route != null ? route.distanceMeters / 1000 : null;
+    double? distanceKm = route != null ? route.distanceMeters / 1000 : null;
     String? eta = route != null
         ? _formatDurationFromSeconds(route.durationSeconds)
         : null;
@@ -479,10 +515,7 @@ class _ReportMapPageState extends State<ReportMapPage>
     });
   }
 
-  Future<_RouteResult?> _fetchRouteFromOsrm(
-    LatLng start,
-    LatLng end,
-  ) async {
+  Future<_RouteResult?> _fetchRouteFromOsrm(LatLng start, LatLng end) async {
     final uri = Uri.parse(
       'https://router.project-osrm.org/route/v1/driving/'
       '${start.longitude},${start.latitude};'
@@ -498,10 +531,12 @@ class _ReportMapPageState extends State<ReportMapPage>
     if (routes == null || routes.isEmpty) {
       return null;
     }
-    final route = routes
-        .whereType<Map<String, dynamic>>()
-        .reduce((best, current) {
-      final bestDistance = (best['distance'] as num?)?.toDouble() ?? double.maxFinite;
+    final route = routes.whereType<Map<String, dynamic>>().reduce((
+      best,
+      current,
+    ) {
+      final bestDistance =
+          (best['distance'] as num?)?.toDouble() ?? double.maxFinite;
       final currentDistance =
           (current['distance'] as num?)?.toDouble() ?? double.maxFinite;
       return currentDistance < bestDistance ? current : best;
@@ -586,63 +621,87 @@ class _ReportMapPageState extends State<ReportMapPage>
         .doc(widget.reportId)
         .snapshots()
         .listen((snapshot) {
-      final data = snapshot.data();
-      if (data == null) return;
-      if (mounted) {
-        setState(() {
-          _liveReportData = Map<String, dynamic>.from(data);
+          final data = snapshot.data();
+          if (data == null) return;
+          final incidentLocation =
+              _latLngFromDynamic(data['incidentLocation']) ??
+              _latLngFromDynamic(data['location']);
+          final reporterLocation = _latLngFromDynamic(data['reporterLocation']);
+          final responderLoc = data['responderLocation'];
+          final responderLocation = responderLoc is GeoPoint
+              ? LatLng(responderLoc.latitude, responderLoc.longitude)
+              : null;
+
+          if (mounted) {
+            setState(() {
+              _liveReportData = Map<String, dynamic>.from(data);
+              if (incidentLocation != null) {
+                _incidentLocation = incidentLocation;
+              }
+              if (reporterLocation != null) {
+                _userLocation = reporterLocation;
+                _locationShared = true;
+              } else if ((data['locationSource'] as String?)?.toLowerCase() ==
+                      'current' &&
+                  _incidentLocation != null &&
+                  !_locationShared) {
+                // Backward compatibility for reports created before reporterLocation.
+                _userLocation = _incidentLocation;
+                _locationShared = true;
+              }
+              if (responderLocation != null) {
+                _responderLocation = responderLocation;
+              }
+            });
+          }
+          final commentsRaw = data['responderComments'];
+          if (commentsRaw is List) {
+            final parsed = commentsRaw
+                .whereType<Map>()
+                .map((entry) => Map<String, dynamic>.from(entry))
+                .toList();
+            parsed.sort((a, b) {
+              final aTime = a['timestamp'];
+              final bTime = b['timestamp'];
+              final aDate = aTime is Timestamp
+                  ? aTime.toDate()
+                  : (aTime is DateTime
+                        ? aTime
+                        : DateTime.fromMillisecondsSinceEpoch(0));
+              final bDate = bTime is Timestamp
+                  ? bTime.toDate()
+                  : (bTime is DateTime
+                        ? bTime
+                        : DateTime.fromMillisecondsSinceEpoch(0));
+              return bDate.compareTo(aDate);
+            });
+            if (mounted) {
+              setState(() {
+                _responderCommentsFallback = parsed;
+              });
+            }
+          }
+          final status = (data['status'] as String? ?? '').toLowerCase();
+          if ((status == 'resolved' || status == 'incident resolved') &&
+              !_resolvedDialogShown) {
+            _resolvedDialogShown = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              _showResolvedDialog();
+            });
+          }
+          if ((status == 'flagged' || status == 'unverified') &&
+              !_flaggedDialogShown) {
+            _flaggedDialogShown = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              _showFlaggedDialog();
+            });
+          }
+          if (responderLocation != null) {
+            _scheduleResponderRouteUpdate();
+          }
         });
-      }
-      final commentsRaw = data['responderComments'];
-      if (commentsRaw is List) {
-        final parsed = commentsRaw
-            .whereType<Map>()
-            .map((entry) => Map<String, dynamic>.from(entry))
-            .toList();
-        parsed.sort((a, b) {
-          final aTime = a['timestamp'];
-          final bTime = b['timestamp'];
-          final aDate = aTime is Timestamp
-              ? aTime.toDate()
-              : (aTime is DateTime ? aTime : DateTime.fromMillisecondsSinceEpoch(0));
-          final bDate = bTime is Timestamp
-              ? bTime.toDate()
-              : (bTime is DateTime ? bTime : DateTime.fromMillisecondsSinceEpoch(0));
-          return bDate.compareTo(aDate);
-        });
-        if (mounted) {
-          setState(() {
-            _responderCommentsFallback = parsed;
-          });
-        }
-      }
-      final status = (data['status'] as String? ?? '').toLowerCase();
-      if ((status == 'resolved' || status == 'incident resolved') &&
-          !_resolvedDialogShown) {
-        _resolvedDialogShown = true;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _showResolvedDialog();
-        });
-      }
-      if ((status == 'flagged' || status == 'unverified') &&
-          !_flaggedDialogShown) {
-        _flaggedDialogShown = true;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          _showFlaggedDialog();
-        });
-      }
-      final responderLoc = data['responderLocation'];
-      if (responderLoc is GeoPoint) {
-        final point = LatLng(responderLoc.latitude, responderLoc.longitude);
-        if (!mounted) return;
-        setState(() {
-          _responderLocation = point;
-        });
-        _scheduleResponderRouteUpdate();
-      }
-    });
   }
 
   void _subscribeToResponderComments() {
@@ -654,59 +713,62 @@ class _ReportMapPageState extends State<ReportMapPage>
         .orderBy('timestamp', descending: true)
         .snapshots()
         .listen((snapshot) {
-      if (!_commentsInitialized) {
-        _commentsInitialized = true;
-        return;
-      }
-      if (snapshot.docChanges.isEmpty) return;
-      final hasNew = snapshot.docChanges.any((change) {
-        if (change.type != DocumentChangeType.added) return false;
-        final data = change.doc.data();
-        if (data == null) return false;
-        final type = (data['type'] as String?)?.toLowerCase();
-        final role = (data['role'] as String?)?.toLowerCase();
-        return type == 'admin' ||
-            role == 'responder' ||
-            (type != 'user' && type != null);
-      });
-      if (!hasNew || !mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          duration: const Duration(seconds: 2),
-          content: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFAC1B22),
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
+          if (!_commentsInitialized) {
+            _commentsInitialized = true;
+            return;
+          }
+          if (snapshot.docChanges.isEmpty) return;
+          final hasNew = snapshot.docChanges.any((change) {
+            if (change.type != DocumentChangeType.added) return false;
+            final data = change.doc.data();
+            if (data == null) return false;
+            final type = (data['type'] as String?)?.toLowerCase();
+            final role = (data['role'] as String?)?.toLowerCase();
+            return type == 'admin' ||
+                role == 'responder' ||
+                (type != 'user' && type != null);
+          });
+          if (!hasNew || !mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              behavior: SnackBarBehavior.floating,
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              duration: const Duration(seconds: 2),
+              content: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
                 ),
-              ],
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.notifications, color: Colors.white, size: 18),
-                SizedBox(width: 8),
-                Text(
-                  'Responder posted an update',
-                  style: TextStyle(
-                    fontFamily: 'RobotoCondensed',
-                    fontWeight: FontWeight.w400,
-                    color: Colors.white,
-                  ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFAC1B22),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.2),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-              ],
+                child: const Row(
+                  children: [
+                    Icon(Icons.notifications, color: Colors.white, size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      'Responder posted an update',
+                      style: TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontWeight: FontWeight.w400,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
-        ),
-      );
-    });
+          );
+        });
   }
 
   void _showResolvedDialog() {
@@ -828,9 +890,7 @@ class _ReportMapPageState extends State<ReportMapPage>
 
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(
-        builder: (_) => const MainPage(initialIndex: 0),
-      ),
+      MaterialPageRoute(builder: (_) => const MainPage(initialIndex: 0)),
     );
   }
 
@@ -867,9 +927,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                 report.reportId,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontFamily: 'RobotoCondensed',
-                ),
+                style: const TextStyle(fontFamily: 'RobotoCondensed'),
               ),
               trailing: isCurrent
                   ? const Icon(Icons.check_circle, color: Color(0xFF00A458))
@@ -925,9 +983,12 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   void _goToCurrentLocation() {
-    if (_userLocation != null) {
-      _mapController.move(_userLocation!, 16.0);
+    final focusPoint = _userLocation ?? _incidentLocation;
+    if (focusPoint != null) {
+      _mapController.move(focusPoint, 16.0);
+      return;
     }
+    _mapController.move(_initialCenter, _initialZoom);
   }
 
   String _weatherLabel(WeatherState state) {
@@ -953,6 +1014,20 @@ class _ReportMapPageState extends State<ReportMapPage>
     return 'Unknown';
   }
 
+  LatLng? _latLngFromDynamic(Object? raw) {
+    if (raw is GeoPoint) {
+      return LatLng(raw.latitude, raw.longitude);
+    }
+    if (raw is Map) {
+      final lat = raw['latitude'] ?? raw['lat'];
+      final lng = raw['longitude'] ?? raw['lng'];
+      if (lat is num && lng is num) {
+        return LatLng(lat.toDouble(), lng.toDouble());
+      }
+    }
+    return null;
+  }
+
   IconData _weatherIcon(WeatherState state) {
     switch (state) {
       case WeatherState.sunny:
@@ -973,10 +1048,7 @@ class _ReportMapPageState extends State<ReportMapPage>
       builder: (context, child) {
         final eased = Curves.easeInOut.transform(_pinBounceController.value);
         final offset = sin(eased * pi) * 4;
-        return Transform.translate(
-          offset: Offset(0, -offset),
-          child: child,
-        );
+        return Transform.translate(offset: Offset(0, -offset), child: child);
       },
     );
   }
@@ -1104,9 +1176,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                 final timestamp = data['timestamp'];
                 final date = timestamp is Timestamp
                     ? timestamp.toDate()
-                    : (timestamp is DateTime
-                        ? timestamp
-                        : DateTime.now());
+                    : (timestamp is DateTime ? timestamp : DateTime.now());
                 final timeLabel = DateFormat('h:mm a').format(date);
                 return Container(
                   margin: const EdgeInsets.only(bottom: 8),
@@ -1167,10 +1237,7 @@ class _ReportMapPageState extends State<ReportMapPage>
               Color(0xFFFFE6A8),
             ],
           ),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.7),
-            width: 1.2,
-          ),
+          border: Border.all(color: Colors.white.withOpacity(0.7), width: 1.2),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.2),
@@ -1205,9 +1272,7 @@ class _ReportMapPageState extends State<ReportMapPage>
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.7),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: Colors.white.withOpacity(0.35),
-              ),
+              border: Border.all(color: Colors.white.withOpacity(0.35)),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.12),
@@ -1274,10 +1339,7 @@ class _ReportMapPageState extends State<ReportMapPage>
             color: const Color(0xFFF4F7FF),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(
-            _weatherIcon(data.state),
-            color: const Color(0xFF2563EB),
-          ),
+          child: Icon(_weatherIcon(data.state), color: const Color(0xFF2563EB)),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -1630,9 +1692,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                   if (reportData['mediaType'] != null)
                     _detailRow(
                       'Media Type',
-                      reportData['mediaType'] == 'video'
-                          ? 'Video'
-                          : 'Photo',
+                      reportData['mediaType'] == 'video' ? 'Video' : 'Photo',
                     ),
                   if ((reportData['incidentType'] ?? '')
                           .toString()
@@ -1655,9 +1715,9 @@ class _ReportMapPageState extends State<ReportMapPage>
                     ),
                   ],
                   if ((reportData['incidentType'] ?? '')
-                          .toString()
-                          .toUpperCase() ==
-                      'FIRE' ||
+                              .toString()
+                              .toUpperCase() ==
+                          'FIRE' ||
                       (reportData['incidentType'] ?? '')
                               .toString()
                               .toUpperCase() ==
@@ -1686,10 +1746,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                         ),
                         const SizedBox(height: 12),
                         if (reportData['responderName'] != null)
-                          _detailRow(
-                            'Responder',
-                            reportData['responderName'],
-                          ),
+                          _detailRow('Responder', reportData['responderName']),
                         const SizedBox(height: 8),
                         if (reportData['responderStatus'] != null ||
                             reportData['status'] != null)
@@ -1719,8 +1776,8 @@ class _ReportMapPageState extends State<ReportMapPage>
                                 ),
                                 child: Text(
                                   (reportData['responderStatus'] ??
-                                          reportData['status'])
-                                      ?.toString() ??
+                                              reportData['status'])
+                                          ?.toString() ??
                                       '',
                                   style: const TextStyle(
                                     fontSize: 12,
@@ -1914,10 +1971,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                     const SizedBox(height: 2),
                     Text(
                       'Tap to view details again',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                      ),
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
                     ),
                   ],
                 ),
@@ -1937,7 +1991,8 @@ class _ReportMapPageState extends State<ReportMapPage>
   bool _canDismissReport() {
     // Can only dismiss if responder has arrived or completed the response
     final source = _liveReportData ?? widget.reportData;
-    final status = source['responderStatus']?.toString().toLowerCase() ??
+    final status =
+        source['responderStatus']?.toString().toLowerCase() ??
         source['status']?.toString().toLowerCase();
     if (status == null) return false;
 
@@ -2008,10 +2063,26 @@ class _ReportMapPageState extends State<ReportMapPage>
                 tileBuilder: (context, tileWidget, tile) {
                   return ColorFiltered(
                     colorFilter: const ColorFilter.matrix([
-                      1.05, 0.03, 0.02, 0, 10,
-                      0.03, 1.05, 0.02, 0, 10,
-                      0.03, 0.05, 1.02, 0, 10,
-                      0, 0, 0, 1, 0,
+                      1.05,
+                      0.03,
+                      0.02,
+                      0,
+                      10,
+                      0.03,
+                      1.05,
+                      0.02,
+                      0,
+                      10,
+                      0.03,
+                      0.05,
+                      1.02,
+                      0,
+                      10,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
                     ]),
                     child: tileWidget,
                   );
@@ -2035,22 +2106,49 @@ class _ReportMapPageState extends State<ReportMapPage>
               if (_responderRoutePolylines.isNotEmpty)
                 PolylineLayer(polylines: _responderRoutePolylines),
 
-              // User location marker
+              // Incident location marker (report pin)
+              if (_incidentLocation != null)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _incidentLocation!,
+                      width: 72,
+                      height: 72,
+                      child: _buildBouncyPin(
+                        child: GestureDetector(
+                          onTap: () => _showIncidentInfo(
+                            _liveReportData ?? widget.reportData,
+                          ),
+                          child: Image.asset(
+                            _getMarkerAssetForIncidentType(
+                              (_liveReportData?['incidentType'] ??
+                                      widget.reportData['incidentType'] ??
+                                      'OTHERS')
+                                  .toString(),
+                            ),
+                            width: 64,
+                            height: 64,
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+              // Reporter live location marker
               if (_userLocation != null && _locationShared)
                 MarkerLayer(
                   markers: [
                     Marker(
                       point: _userLocation!,
-                      width: 72,
-                      height: 72,
+                      width: 54,
+                      height: 54,
                       child: _buildBouncyPin(
-                        child: GestureDetector(
-                          onTap: () => _showIncidentInfo(widget.reportData),
-                          child: const Icon(
-                            Icons.location_on,
-                            color: Color(0xFFAC1B22),
-                            size: 48,
-                          ),
+                        child: const Icon(
+                          Icons.person_pin_circle,
+                          color: Color(0xFF2563EB),
+                          size: 36,
                         ),
                       ),
                     ),
@@ -2067,7 +2165,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                       child: _buildBouncyPin(
                         child: const Icon(
                           Icons.directions_car,
-                          color: Color(0xFF2563EB),
+                          color: Color(0xFF00A458),
                           size: 34,
                         ),
                       ),
@@ -2363,5 +2461,3 @@ class _RouteResult {
   final double distanceMeters;
   final double durationSeconds;
 }
-
-
