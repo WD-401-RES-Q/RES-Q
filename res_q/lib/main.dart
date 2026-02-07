@@ -4,11 +4,9 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'firebase_options.dart';
 import 'features/home/pages/home_page.dart';
 import 'features/loading/pages/loading_screen.dart';
-import 'features/semi_admin/pages/semi_admin_main_page.dart';
 // auth pages
 import 'features/auth/pages/login_page.dart';
 import 'features/auth/pages/registration_page.dart';
-import 'features/auth/pages/forgot_password_page.dart';
 import 'features/auth/pages/otp_page.dart';
 import 'features/auth/pages/pin_creation_page.dart';
 import 'features/auth/pages/forgot_pin_page.dart';
@@ -37,7 +35,10 @@ class MyApp extends StatelessWidget {
           displayLarge: TextStyle(fontSize: 48.0, fontWeight: FontWeight.bold),
           displayMedium: TextStyle(fontSize: 40.0, fontWeight: FontWeight.bold),
           displaySmall: TextStyle(fontSize: 32.0, fontWeight: FontWeight.w700),
-          headlineMedium: TextStyle(fontSize: 24.0, fontWeight: FontWeight.w600),
+          headlineMedium: TextStyle(
+            fontSize: 24.0,
+            fontWeight: FontWeight.w600,
+          ),
           headlineSmall: TextStyle(fontSize: 20.0, fontWeight: FontWeight.w600),
           titleLarge: TextStyle(fontSize: 18.0, fontWeight: FontWeight.w600),
         ),
@@ -46,7 +47,6 @@ class MyApp extends StatelessWidget {
       routes: {
         '/login': (context) => const LoginPage(),
         '/register': (context) => const RegistrationPage(),
-        '/forgot': (context) => const ForgotPasswordPage(),
         '/otp': (context) => const OTPPage(),
         '/pin-creation': (context) => const PINCreationPage(),
         '/forgot-pin': (context) => const ForgotPinPage(),

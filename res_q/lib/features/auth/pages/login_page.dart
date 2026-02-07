@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -92,6 +94,9 @@ class _LoginPageState extends State<LoginPage>
       _showError('Please enter your phone number first');
       return;
     }
+
+    // Keep last used phone for faster next login.
+    await RegistrationPrefs.savePhoneNumber(phoneInput);
 
     if (!_canUseBiometrics) {
       _showError('Biometrics not available on this device. Please use PIN.');
@@ -259,34 +264,37 @@ class _LoginPageState extends State<LoginPage>
   }
 
   Future<void> _initialize() async {
-    await _seedSemiAdminsIfEmpty();
     await _loadSavedData();
     if (mounted) {
       setState(() => _initializing = false);
     }
+    // Run Firestore setup in background so local login prefill is instant.
+    unawaited(_seedSemiAdminsIfEmpty());
   }
 
   Future<void> _loadSavedData() async {
     try {
+      // Load biometrics preferences from local cache first.
+      final prefs = await SharedPreferences.getInstance();
+      _biometricsEnabled = prefs.getBool('biometrics_enabled') ?? false;
+      _biometricsPhone = prefs.getString('biometrics_phone');
+      debugPrint(
+        'Biometrics enabled: $_biometricsEnabled, phone: $_biometricsPhone',
+      );
+
       // Load saved phone number for convenience
       final savedPhone = await RegistrationPrefs.getPhoneNumber();
       if (savedPhone != null && savedPhone.isNotEmpty && mounted) {
         setState(() {
           _phoneCtl.text = _formatPhoneNumber(savedPhone);
         });
-        // Also load biometrics from Firestore for this phone
-        await _loadBiometricsFromFirestore(
-          '+63${savedPhone.replaceAll(RegExp(r'\D'), '')}',
+        // Sync biometrics from Firestore in background.
+        unawaited(
+          _loadBiometricsFromFirestore(
+            '+63${savedPhone.replaceAll(RegExp(r'\D'), '')}',
+          ),
         );
       }
-
-      // Load biometrics preferences from local cache
-      final prefs = await SharedPreferences.getInstance();
-      _biometricsEnabled = prefs.getBool('biometrics_enabled') ?? false;
-      _biometricsPhone = prefs.getString('biometrics_phone');
-      debugPrint(
-        '📱 Biometrics enabled: $_biometricsEnabled, phone: $_biometricsPhone',
-      );
     } catch (e) {
       debugPrint('Error loading saved data: $e');
     }
@@ -380,6 +388,10 @@ class _LoginPageState extends State<LoginPage>
     }
 
     setState(() => _showPhoneError = false);
+
+    // Save as soon as we have a valid number, even before auth succeeds.
+    await RegistrationPrefs.savePhoneNumber(phoneDigits);
+    if (!mounted) return;
 
     if (_initializing) {
       AppSnackBar.show(
@@ -642,10 +654,7 @@ class _LoginPageState extends State<LoginPage>
   }
 
   Widget _logo() {
-    return SvgPicture.asset(
-      'assets/icons/RES-Q_LOGO.svg',
-      height: 53,
-    );
+    return SvgPicture.asset('assets/icons/RES-Q_LOGO.svg', height: 53);
   }
 
   void _handlePinKey(String value) {
@@ -700,10 +709,7 @@ class _LoginPageState extends State<LoginPage>
                 children: [
                   _logo(),
                   const SizedBox(height: 12),
-                  Text(
-                    'LOGIN',
-                    style: AppTextStyles.authPageTitle,
-                  ),
+                  Text('LOGIN', style: AppTextStyles.authPageTitle),
                 ],
               ),
             ),
@@ -824,7 +830,9 @@ class _LoginPageState extends State<LoginPage>
                                               fontFamily: 'RobotoCondensed',
                                               fontWeight: FontWeight.w400,
                                               fontSize: 14,
-                                              color: appBlack.withOpacity(0.5),
+                                              color: appBlack.withValues(
+                                                alpha: 0.5,
+                                              ),
                                             ),
                                             border: InputBorder.none,
                                             contentPadding:
@@ -837,6 +845,15 @@ class _LoginPageState extends State<LoginPage>
                                             if (_showPhoneError) {
                                               setState(
                                                 () => _showPhoneError = false,
+                                              );
+                                            }
+                                            final digits = _phoneCtl.text
+                                                .replaceAll(RegExp(r'\D'), '');
+                                            if (digits.length == 10) {
+                                              unawaited(
+                                                RegistrationPrefs.savePhoneNumber(
+                                                  digits,
+                                                ),
                                               );
                                             }
                                           },

@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
@@ -85,9 +85,9 @@ class _RegistrationPageState extends State<RegistrationPage> {
   Future<void> _showTermsAndConditions() async {
     // Unfocus any active text field before showing dialog
     FocusManager.instance.primaryFocus?.unfocus();
-    
+
     final agreed = await TermsAndConditionsDialog.show(context);
-    
+
     // Ensure keyboard stays hidden after dialog closes
     if (mounted) {
       FocusManager.instance.primaryFocus?.unfocus();
@@ -95,7 +95,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
       await Future.delayed(const Duration(milliseconds: 100));
       FocusManager.instance.primaryFocus?.unfocus();
     }
-    
+
     if (agreed) {
       setState(() {
         _agree = true;
@@ -175,9 +175,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
     // Save phone number for convenience
     await RegistrationPrefs.savePhoneNumber(phoneDigits);
+    if (!mounted) return;
 
     // Check if phone number already exists
     final phoneExists = await _checkPhoneNumberExists(phone);
+    if (!mounted) return;
     if (phoneExists) {
       setState(() => _loading = false);
       if (mounted) {
@@ -214,6 +216,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
           // Auto-verification (rare on most devices)
         },
         verificationFailed: (FirebaseAuthException e) {
+          if (!mounted) return;
           setState(() => _loading = false);
           String msg = e.message ?? 'Phone verification failed';
 
@@ -240,23 +243,23 @@ class _RegistrationPageState extends State<RegistrationPage> {
           setState(() => _loading = false);
           _finishAutofillContext(); // Trigger "Save to Google" prompt
 
-          if (mounted) {
-            Navigator.pushNamed(
-              context,
-              '/otp',
-              arguments: {
-                'verificationId': verificationId,
-                'phoneNumber': phone,
-                'userData': userData,
-              },
-            );
-          }
+          if (!mounted) return;
+          Navigator.pushNamed(
+            context,
+            '/otp',
+            arguments: {
+              'verificationId': verificationId,
+              'phoneNumber': phone,
+              'userData': userData,
+            },
+          );
         },
         codeAutoRetrievalTimeout: (String verificationId) {
           // Auto-retrieval timeout
         },
       );
     } catch (e) {
+      if (!mounted) return;
       setState(() => _loading = false);
       if (mounted) {
         AppSnackBar.show(
