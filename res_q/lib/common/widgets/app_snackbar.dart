@@ -14,24 +14,13 @@ class AppSnackBar {
     bool useRootOverlay = false,
   }) {
     if (useRootOverlay) {
-      _showInOverlay(
-        context,
-        message,
-        type: type,
-        duration: duration,
-      );
+      _showInOverlay(context, message, type: type, duration: duration);
       return;
     }
 
     final messenger = ScaffoldMessenger.of(context);
     messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      build(
-        message,
-        type: type,
-        duration: duration,
-      ),
-    );
+    messenger.showSnackBar(build(message, type: type, duration: duration));
   }
 
   static SnackBar build(
@@ -40,8 +29,9 @@ class AppSnackBar {
     Duration duration = const Duration(seconds: 2),
   }) {
     final backgroundColor = _backgroundFor(type);
-    final foregroundColor =
-        type == AppSnackBarType.warning ? AppColors.appBlack : Colors.white;
+    final foregroundColor = type == AppSnackBarType.warning
+        ? AppColors.appBlack
+        : Colors.white;
     final icon = _iconFor(type, foregroundColor);
 
     return SnackBar(
@@ -53,8 +43,9 @@ class AppSnackBar {
       elevation: 6,
       duration: duration,
       backgroundColor: backgroundColor,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(12)),
       ),
       content: Row(
         children: [
@@ -87,13 +78,7 @@ class AppSnackBar {
     if (overlay == null) {
       final messenger = ScaffoldMessenger.of(context);
       messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(
-        build(
-          message,
-          type: type,
-          duration: duration,
-        ),
-      );
+      messenger.showSnackBar(build(message, type: type, duration: duration));
       return;
     }
 
@@ -101,8 +86,9 @@ class AppSnackBar {
     _activeOverlay = null;
 
     final backgroundColor = _backgroundFor(type);
-    final foregroundColor =
-        type == AppSnackBarType.warning ? AppColors.appBlack : Colors.white;
+    final foregroundColor = type == AppSnackBarType.warning
+        ? AppColors.appBlack
+        : Colors.white;
     final icon = _iconFor(type, foregroundColor);
 
     final entry = OverlayEntry(
@@ -206,5 +192,3 @@ class AppSnackBar {
     return Icon(icon, color: color, size: 20);
   }
 }
-
-

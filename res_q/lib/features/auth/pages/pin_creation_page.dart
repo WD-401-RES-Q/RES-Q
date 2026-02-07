@@ -2,7 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import '../../../common/theme/app_theme.dart';
+import '../../../common/theme/app_text_styles.dart';
+import '../../../common/constants/app_dimensions.dart';
+import '../../../common/widgets/auth_widgets.dart';
+import '../../../common/widgets/app_buttons.dart';
+import '../../../common/widgets/app_snackbar.dart';
 
 class PINCreationPage extends StatefulWidget {
   const PINCreationPage({super.key});
@@ -12,19 +17,10 @@ class PINCreationPage extends StatefulWidget {
 }
 
 class _PINCreationPageState extends State<PINCreationPage> {
-  // Brand colors
-  static const appBlue = Color(0xFFAC1B22);
-  static const appRed = Color(0xFFFFC806);
-  static const appBlack = Color(0xFF212121);
-  static const appOffWhite = Color(0xFFF7F8F3);
-
-  final TextEditingController _pinCtl = TextEditingController();
-  final TextEditingController _pinConfirmCtl = TextEditingController();
+  String _pin = '';
   bool _loading = false;
-  bool _obscurePin = true;
-  bool _obscureConfirm = true;
-  String? _pinError;
-  String? _pinConfirmError;
+  bool _showError = false;
+  String _errorMessage = '';
 
   String? _phoneNumber;
   Map<String, dynamic>? _userData;
@@ -44,16 +40,8 @@ class _PINCreationPageState extends State<PINCreationPage> {
     }
   }
 
-  @override
-  void dispose() {
-    _pinCtl.dispose();
-    _pinConfirmCtl.dispose();
-    super.dispose();
-  }
-
   String _formatPhoneForDisplay(String? phone) {
     if (phone == null || phone.isEmpty) return '';
-    // Handle +63XXXXXXXXXX format
     String digits = phone.replaceAll(RegExp(r'\D'), '');
     if (digits.startsWith('63')) digits = digits.substring(2);
     if (digits.length == 10) {
@@ -62,17 +50,36 @@ class _PINCreationPageState extends State<PINCreationPage> {
     return phone;
   }
 
-  Widget _logo() {
-    return SvgPicture.asset(
-      'assets/icons/RES-Q_LOGO.svg',
-      height: 48,
-    );
+  void _handlePinKey(String value) {
+    if (_loading) return;
+    setState(() {
+      _showError = false;
+      if (value == 'C') {
+        _pin = '';
+        return;
+      }
+      if (value == '⌫') {
+        if (_pin.isNotEmpty) {
+          _pin = _pin.substring(0, _pin.length - 1);
+        }
+        return;
+      }
+      if (_pin.length < 4) {
+        _pin += value;
+        if (_pin.length == 4) {
+          Future.delayed(const Duration(milliseconds: 200), () {
+            _createPin();
+          });
+        }
+      }
+    });
   }
 
   Future<bool> _checkBiometricsAvailable() async {
     try {
       final canAuthenticateWithBiometrics = await _localAuth.canCheckBiometrics;
-      final canAuthenticate = canAuthenticateWithBiometrics || await _localAuth.isDeviceSupported();
+      final canAuthenticate =
+          canAuthenticateWithBiometrics || await _localAuth.isDeviceSupported();
       final availableBiometrics = await _localAuth.getAvailableBiometrics();
       return canAuthenticate && availableBiometrics.isNotEmpty;
     } catch (e) {
@@ -85,18 +92,19 @@ class _PINCreationPageState extends State<PINCreationPage> {
     final canUseBiometrics = await _checkBiometricsAvailable();
 
     if (!canUseBiometrics || !mounted) {
-      return null; // Skip if biometrics not available
+      return null;
     }
 
     return showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (context) => Dialog(
+        backgroundColor: AppTheme.appOffWhite,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
         ),
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.all(AppDimensions.paddingXLarge),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -104,55 +112,57 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 width: 80,
                 height: 80,
                 decoration: BoxDecoration(
-                  color: appBlue.withOpacity(0.1),
+                  color: AppTheme.appRed.withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.fingerprint,
                   size: 48,
-                  color: appBlue,
+                  color: AppTheme.appRed,
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: AppDimensions.paddingLarge),
               Text(
-                'Enable Biometric Login?',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: appBlack,
-                ),
+                'ENABLE BIOMETRIC\nLOGIN?',
+                style: AppTextStyles.authPageTitle.copyWith(height: 1.2),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppDimensions.paddingMedium),
               Text(
                 'Would you like to use fingerprint or face recognition for faster login?',
                 style: TextStyle(
                   fontSize: 14,
-                  color: appBlack.withOpacity(0.7),
+                  color: AppTheme.appBlack,
+                  fontFamily: 'RobotoCondensed',
+                  height: 1.4,
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppDimensions.paddingSmall),
               Text(
                 'You can change this later in settings.',
                 style: TextStyle(
                   fontSize: 12,
-                  color: Colors.grey,
+                  color: AppTheme.appBlack.withOpacity(0.6),
                   fontStyle: FontStyle.italic,
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: AppDimensions.paddingXLarge),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
                       onPressed: () => Navigator.pop(context, false),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: appBlack,
-                        side: BorderSide(color: appBlack.withOpacity(0.3)),
+                        foregroundColor: AppTheme.appBlack,
+                        side: BorderSide(
+                          color: AppTheme.appBlack.withOpacity(0.3),
+                        ),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(
+                            AppDimensions.radiusMedium,
+                          ),
                         ),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
@@ -160,19 +170,21 @@ class _PINCreationPageState extends State<PINCreationPage> {
                         'No Thanks',
                         style: TextStyle(
                           fontWeight: FontWeight.w500,
-                          color: appBlack,
+                          color: AppTheme.appBlack,
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: AppDimensions.paddingMedium),
                   Expanded(
                     child: ElevatedButton(
                       onPressed: () => Navigator.pop(context, true),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: appBlue,
+                        backgroundColor: AppTheme.appRed,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(
+                            AppDimensions.radiusMedium,
+                          ),
                         ),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
@@ -205,44 +217,49 @@ class _PINCreationPageState extends State<PINCreationPage> {
     );
   }
 
-  Future<void> _saveBiometricsPreference(bool enabled, String? phoneNumber) async {
+  Future<void> _saveBiometricsPreference(
+    bool enabled,
+    String? phoneNumber,
+  ) async {
     try {
+      // Save to SharedPreferences for local/quick access
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('biometrics_enabled', enabled);
       if (phoneNumber != null) {
         await prefs.setString('biometrics_phone', phoneNumber);
       }
-      debugPrint('✅ Biometrics preference saved: $enabled');
+
+      // Save to Firestore for persistence across devices (like votes)
+      if (phoneNumber != null) {
+        final cleanPhone = phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+        await _firestore.collection('userPreferences').doc(cleanPhone).set({
+          'biometricsEnabled': enabled,
+          'biometricsUpdatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        debugPrint('✅ Biometrics preference saved to Firestore: $enabled');
+      }
+
+      debugPrint('✅ Biometrics preference saved locally: $enabled');
     } catch (e) {
       debugPrint('Error saving biometrics preference: $e');
     }
   }
 
   Future<void> _createPin() async {
-    final pin = _pinCtl.text.trim();
-    final pinConfirm = _pinConfirmCtl.text.trim();
-
-    // Clear previous errors
-    setState(() {
-      _pinError = null;
-      _pinConfirmError = null;
-    });
-
-    // Validation
-    if (pin.length != 4) {
-      setState(() => _pinError = 'PIN must be exactly 4 digits');
+    if (_pin.length != 4) {
+      setState(() {
+        _showError = true;
+        _errorMessage = 'PIN must be exactly 4 digits';
+      });
       return;
     }
 
-    if (!RegExp(r'^\d{4}$').hasMatch(pin)) {
-      setState(() => _pinError = 'PIN must contain only numbers');
-      return;
-    }
-
-    if (pin != pinConfirm) {
-      setState(() => _pinConfirmError = 'PINs do not match');
-      _pinCtl.clear();
-      _pinConfirmCtl.clear();
+    if (!RegExp(r'^\d{4}$').hasMatch(_pin)) {
+      setState(() {
+        _showError = true;
+        _errorMessage = 'PIN must contain only numbers';
+        _pin = '';
+      });
       return;
     }
 
@@ -253,9 +270,8 @@ class _PINCreationPageState extends State<PINCreationPage> {
         throw Exception('User ID not found');
       }
 
-      // Save PIN and user data to pending_users collection
       final userData = _userData ?? {};
-      userData['pin'] = pin; // Add PIN to user data
+      userData['pin'] = _pin;
       userData['accountStatus'] = 'pending';
       userData['createdAt'] = FieldValue.serverTimestamp();
 
@@ -265,347 +281,270 @@ class _PINCreationPageState extends State<PINCreationPage> {
 
       if (!mounted) return;
 
-      // Show biometrics opt-in dialog first
       final enableBiometrics = await _showBiometricsOptInDialog();
 
       if (enableBiometrics != null) {
-        // Save the preference
         await _saveBiometricsPreference(enableBiometrics, _phoneNumber);
       }
 
       if (!mounted) return;
 
-      // Show success dialog with approval pending message
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.pending_actions, size: 64, color: appRed),
-                const SizedBox(height: 16),
-                Text(
-                  'Account Pending Approval',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    color: appBlack,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Your account is currently pending admin approval. Please wait up to 48 hours for an administrator to review and approve your account.\n\nOnce approved, you will receive a text message and can create your PIN to login.',
-                  style: TextStyle(fontSize: 14, color: appBlack),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 24),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pushReplacementNamed(context, '/login');
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: appBlue,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                    ),
-                    child: Text(
-                      'OK',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
+      await _showApprovalPendingDialog();
     } catch (e) {
-      setState(() => _loading = false);
+      setState(() {
+        _loading = false;
+        _showError = true;
+        _errorMessage = 'Error: $e';
+        _pin = '';
+      });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
       }
     }
+  }
+
+  Future<void> _showApprovalPendingDialog() async {
+    return showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        backgroundColor: AppTheme.appOffWhite,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(AppDimensions.paddingXLarge),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: AppTheme.appRed.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.check_circle_outline,
+                  size: 48,
+                  color: AppTheme.appRed,
+                ),
+              ),
+              const SizedBox(height: AppDimensions.paddingLarge),
+              Text(
+                'ACCOUNT PENDING\nAPPROVAL',
+                style: AppTextStyles.authPageTitle.copyWith(height: 1.2),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppDimensions.paddingMedium),
+              Text(
+                'Your account is currently pending admin approval. Please wait up to 48 hours for an administrator to review and approve your account.\n\nOnce approved, you will receive a text message and can login with your PIN.',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.appBlack,
+                  fontFamily: 'RobotoCondensed',
+                  height: 1.4,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppDimensions.paddingXLarge),
+              ResqPillButton(
+                label: 'GOT IT',
+                onPressed: () {
+                  Navigator.pushReplacementNamed(context, '/login');
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPinDots() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(4, (index) {
+        final hasValue = _pin.length > index;
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 10),
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: hasValue
+                ? (_showError ? Colors.red : AppTheme.appRed)
+                : Colors.transparent,
+            border: Border.all(
+              color: _showError ? Colors.red : AppTheme.appBlack,
+              width: 2,
+            ),
+          ),
+        );
+      }),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: appOffWhite,
+      backgroundColor: AppTheme.appOffWhite,
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            child: GestureDetector(
-              onTap: () => FocusScope.of(context).unfocus(),
-              behavior: HitTestBehavior.opaque,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 360),
-                child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 16,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    _logo(),
-                    const SizedBox(height: 32),
-                    Text(
-                      'CREATE PIN',
-                      style: TextStyle(
-                        fontSize: 50,
-                        fontWeight: FontWeight.w900,
-                        color: appBlack,
-                        fontFamily: 'Roboto',
+        child: Column(
+          children: [
+            // Header with back button and logo
+            Padding(
+              padding: const EdgeInsets.only(
+                top: AppDimensions.paddingMedium,
+                left: AppDimensions.paddingXLarge,
+                right: AppDimensions.paddingXLarge,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const ResqBackButton.outline(),
+                  const ResqLogo(fontSize: 53),
+                  const SizedBox(width: 44),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppDimensions.paddingSmall),
+            Text('CREATE PIN', style: AppTextStyles.authPageTitle),
+            const SizedBox(height: AppDimensions.paddingSmall),
+
+            // Content
+            Expanded(
+              child: Center(
+                child: SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 360),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppDimensions.paddingXLarge,
+                        vertical: AppDimensions.paddingMedium,
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Set up your 4-digit PIN for fast login',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 20),
-                    // Phone number display (read-only)
-                    if (_phoneNumber != null && _phoneNumber!.isNotEmpty)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 14,
-                        ),
-                        decoration: BoxDecoration(
-                          color: appOffWhite,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: appBlack.withOpacity(0.2),
+                      child: Column(
+                        children: [
+                          Text(
+                            'Set up your 4-digit PIN for fast login',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: AppTheme.appBlack.withOpacity(0.7),
+                              fontFamily: 'RobotoCondensed',
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.phone_android, color: appBlack),
-                            const SizedBox(width: 12),
-                            Text(
-                              _formatPhoneForDisplay(_phoneNumber),
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: appBlack,
+
+                          const SizedBox(height: AppDimensions.paddingLarge),
+
+                          // Phone number display
+                          if (_phoneNumber != null && _phoneNumber!.isNotEmpty)
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 14,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppTheme.appOffWhite,
+                                borderRadius: BorderRadius.circular(
+                                  AppDimensions.radiusMedium,
+                                ),
+                                border: Border.all(
+                                  color: AppTheme.appBlack.withOpacity(0.2),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.phone_android,
+                                    color: AppTheme.appBlack,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    _formatPhoneForDisplay(_phoneNumber),
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: AppTheme.appBlack,
+                                      fontFamily: 'RobotoCondensed',
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                    const SizedBox(height: 28),
-                    // PIN Input
-                    Text(
-                      'PIN',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        color: appBlack,
-                        fontFamily: 'Roboto',
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    TextFormField(
-                      controller: _pinCtl,
-                      keyboardType: TextInputType.number,
-                      obscureText: _obscurePin,
-                      maxLength: 4,
-                      decoration: InputDecoration(
-                        hintText: '0000',
-                        hintStyle: TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontWeight: FontWeight.w400,
-                          fontSize: 14,
-                          color: appBlack.withOpacity(0.5),
-                        ),
-                        prefixIcon: const Icon(
-                          Icons.lock_outline,
-                          color: Colors.black,
-                        ),
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscurePin
-                                ? Icons.visibility
-                                : Icons.visibility_off,
-                            size: 18,
-                            color: Colors.grey,
-                          ),
-                          onPressed: () =>
-                              setState(() => _obscurePin = !_obscurePin),
-                        ),
-                        filled: true,
-                        fillColor: const Color(0xFFF7F8F3),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(
-                            color: Colors.black,
-                            width: 2,
-                          ),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 16,
-                          horizontal: 12,
-                        ),
-                      ),
-                    ),
-                    if (_pinError != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            _pinError!,
-                            style: const TextStyle(
+
+                          const SizedBox(height: AppDimensions.paddingXLarge),
+
+                          // PIN label
+                          Text(
+                            'ENTER YOUR PIN',
+                            style: TextStyle(
                               fontSize: 12,
-                              color: Colors.red,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.appBlack,
+                              fontFamily: 'Roboto',
+                              letterSpacing: 1,
                             ),
                           ),
-                        ),
-                      ),
-                    const SizedBox(height: 20),
-                    // Confirm PIN Input
-                    Text(
-                      'CONFIRM PIN',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        color: appBlack,
-                        fontFamily: 'Roboto',
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    TextFormField(
-                      controller: _pinConfirmCtl,
-                      keyboardType: TextInputType.number,
-                      obscureText: _obscureConfirm,
-                      maxLength: 4,
-                      decoration: InputDecoration(
-                        hintText: '0000',
-                        hintStyle: TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontWeight: FontWeight.w400,
-                          fontSize: 14,
-                          color: appBlack.withOpacity(0.5),
-                        ),
-                        prefixIcon: const Icon(
-                          Icons.lock_outline,
-                          color: Colors.black,
-                        ),
-                        suffixIcon: IconButton(
-                          icon: Icon(
-                            _obscureConfirm
-                                ? Icons.visibility
-                                : Icons.visibility_off,
-                            size: 18,
-                            color: Colors.grey,
-                          ),
-                          onPressed: () => setState(
-                            () => _obscureConfirm = !_obscureConfirm,
-                          ),
-                        ),
-                        filled: true,
-                        fillColor: const Color(0xFFF7F8F3),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(
-                            color: Colors.black,
-                            width: 2,
-                          ),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 16,
-                          horizontal: 12,
-                        ),
-                      ),
-                    ),
-                    if (_pinConfirmError != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            _pinConfirmError!,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.red,
-                            ),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 30),
-                    // CREATE PIN Button
-                    Align(
-                      alignment: Alignment.center,
-                      child: SizedBox(
-                        height: 50,
-                        width: 210,
-                        child: ElevatedButton(
-                          onPressed: _loading ? null : _createPin,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: appBlue,
-                            elevation: 3,
-                            shadowColor: Colors.black.withOpacity(1),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(50),
-                            ),
-                          ),
-                          child: _loading
-                              ? const SizedBox(
+
+                          const SizedBox(height: AppDimensions.paddingMedium),
+
+                          // PIN dots
+                          _loading
+                              ? SizedBox(
                                   height: 20,
                                   width: 20,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Colors.white,
+                                    color: AppTheme.appRed,
                                   ),
                                 )
-                              : const Text(
-                                  'CREATE PIN',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w400,
-                                    color: Colors.white,
-                                    fontFamily: 'RobotoCondensed',
-                                    fontSize: 18,
-                                  ),
-                                ),
-                        ),
+                              : _buildPinDots(),
+
+                          // Error message
+                          if (_showError) ...[
+                            const SizedBox(height: AppDimensions.paddingMedium),
+                            Text(
+                              _errorMessage,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.red,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+
+                          const SizedBox(height: AppDimensions.paddingXLarge),
+
+                          // Numpad
+                          PinNumpad(
+                            enabled: !_loading,
+                            onKeyTap: _handlePinKey,
+                            actionBackgroundColor: AppTheme.appOffWhite,
+                            textColor: AppTheme.appBlack,
+                          ),
+
+                          const SizedBox(height: AppDimensions.paddingLarge),
+
+                          Text(
+                            'Please remember your PIN.\nYou will need it to login.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppTheme.appBlack.withOpacity(0.6),
+                              fontFamily: 'RobotoCondensed',
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Please remember your PIN. You will need it to login.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: appBlack.withOpacity(0.6),
-                        fontFamily: 'RobotoCondensed',
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
-            ),
-          ),
+          ],
         ),
       ),
     );

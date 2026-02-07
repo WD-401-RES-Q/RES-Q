@@ -1,4 +1,42 @@
 .accounts-page {
+      /* Password Modal */
+      .password-modal {
+        background: #fff;
+        border-radius: 12px;
+        padding: 32px 24px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+        max-width: 400px;
+        margin: 120px auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .password-modal .modal-title {
+        font-size: 22px;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+      .password-modal .modal-subtitle {
+        font-size: 15px;
+        margin-bottom: 16px;
+        color: #555;
+      }
+      .password-modal input[type="password"] {
+        width: 100%;
+        padding: 10px;
+        font-size: 16px;
+        border-radius: 6px;
+        border: 1px solid #ccc;
+        margin-bottom: 16px;
+      }
+      .password-modal .modal-actions {
+        margin-bottom: 8px;
+      }
+      .password-modal .modal-error {
+        color: #c00;
+        font-size: 14px;
+        margin-top: 8px;
+      }
     padding: 24px;
     max-width: 1200px;
     margin: 0 auto;
@@ -87,7 +125,6 @@
 
   /* Column sizing (helps reduce cramped look) */
   .col-name { min-width: 160px; }
-  .col-user { min-width: 120px; }
   .col-email { min-width: 230px; }
   .col-phone { min-width: 140px; }
   .col-date { min-width: 150px; }

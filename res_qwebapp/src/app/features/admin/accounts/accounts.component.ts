@@ -3,12 +3,12 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FirestoreService } from '../../../core/services/firestore.service';
 import { FirebaseStorageService } from '../../../core/services/firebase-storage.service';
+import { AuthService } from '../../../core/services/auth.service';
 import { Subscription, Observable } from 'rxjs';
 
 interface Account {
   id: string;
   fullName: string;
-  username: string;
   email: string;
   address: string;
   dateOfBirth: string;
@@ -59,10 +59,17 @@ export class AccountsComponent implements OnInit, OnDestroy {
     { id: 'false-validation', label: 'False Validation', checked: false },
   ];
   private subscription?: Subscription;
+    // Modal for password entry
+    showPasswordModal = true;
+    adminPasswordInput = '';
+    passwordError = '';
+    isVerifyingPassword = false;
+    decryptedMode = false;
 
   constructor(
     private firestoreService: FirestoreService,
     private firebaseStorageService: FirebaseStorageService,
+    private authService: AuthService,
     private ngZone: NgZone,
     private cdr: ChangeDetectorRef
   ) {
@@ -72,9 +79,53 @@ export class AccountsComponent implements OnInit, OnDestroy {
     this.isLoading$ = this.firestoreService.isLoading$;
   }
 
+  async verifyAdminPassword() {
+    if (this.isVerifyingPassword) {
+      return;
+    }
+
+    this.passwordError = '';
+    const password = (this.adminPasswordInput || '').trim();
+
+    if (!password) {
+      this.passwordError = 'Please enter your password.';
+      return;
+    }
+
+    this.isVerifyingPassword = true;
+
+    try {
+      const ok = await this.authService.verifyCurrentAdminPassword(password);
+      if (!ok) {
+        this.passwordError = 'Incorrect password.';
+        return;
+      }
+
+      this.ngZone.run(() => {
+        this.showPasswordModal = false;
+        this.adminPasswordInput = '';
+        this.passwordError = '';
+        this.cdr.markForCheck();
+      });
+
+      await this.loadDecryptedAccounts();
+    } catch (error) {
+      console.error('Error verifying admin password:', error);
+      this.passwordError = 'Unable to verify password. Please try again.';
+    } finally {
+      this.isVerifyingPassword = false;
+      this.cdr.markForCheck();
+    }
+  }
+
   ngOnInit() {
     console.log('=== ACCOUNTS COMPONENT INIT ===');
     console.log('Component instance created at:', new Date().toISOString());
+    
+    // Show password modal on page load
+    this.showPasswordModal = true;
+    this.decryptedMode = false;
+    // Do not load decrypted accounts until password is verified
     
     // Subscribe only to handle selection logic
     this.subscription = this.accounts$.subscribe(
@@ -82,8 +133,11 @@ export class AccountsComponent implements OnInit, OnDestroy {
         console.log('=== APPROVED USERS DATA RECEIVED IN COMPONENT ===');
         console.log('Users count:', users.length);
         
-        this.accounts = users as Account[];
-        this.filterAccounts();
+        // Only use stream if we haven't loaded decrypted data yet
+        if (this.accounts.length === 0) {
+          this.accounts = users as Account[];
+          this.filterAccounts();
+        }
         
         // Select first account if none selected
         if (this.filteredAccounts.length > 0 && !this.selected) {
@@ -115,13 +169,41 @@ export class AccountsComponent implements OnInit, OnDestroy {
       const query = this.searchQuery.toLowerCase();
       this.filteredAccounts = activeAccounts.filter(acc =>
         (acc.fullName?.toLowerCase().includes(query) || false) ||
-        (acc.username?.toLowerCase().includes(query) || false) ||
         (acc.email?.toLowerCase().includes(query) || false) ||
         (acc.contactNumber?.toLowerCase().includes(query) || false) ||
         (acc.address?.toLowerCase().includes(query) || false)
       );
     }
     console.log('Filtered accounts:', this.filteredAccounts.length, 'Search query:', this.searchQuery);
+  }
+
+  /**
+   * Load decrypted account data using Cloud Functions
+   */
+  async loadDecryptedAccounts() {
+    const admin = this.authService.currentAdmin();
+    if (!admin?.id) {
+      console.log('No admin authenticated, using encrypted data from stream');
+      return;
+    }
+    try {
+      console.log('Loading decrypted accounts for admin:', admin.id);
+      const decryptedUsers = await this.firestoreService.getDecryptedApprovedUsers(admin.id);
+      this.ngZone.run(() => {
+        this.accounts = decryptedUsers as Account[];
+        this.filterAccounts();
+        if (this.filteredAccounts.length > 0 && !this.selected) {
+          this.selected = this.filteredAccounts[0];
+        }
+        this.cdr.detectChanges();
+      });
+      this.decryptedMode = true;
+      console.log('Decrypted accounts loaded:', this.accounts.length);
+    } catch (error) {
+      console.error('Failed to load decrypted accounts:', error);
+      // Will fall back to encrypted data from stream
+      this.decryptedMode = false;
+    }
   }
 
   onSearchChange() {
@@ -133,10 +215,10 @@ export class AccountsComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
-    console.log('AccountsComponent ngOnDestroy called');
-    if (this.subscription) {
-      this.subscription.unsubscribe();
-    }
+      console.log('AccountsComponent ngOnDestroy called');
+      if (this.subscription) {
+        this.subscription.unsubscribe();
+      }
   }
 
   select(account: Account) {
@@ -144,14 +226,34 @@ export class AccountsComponent implements OnInit, OnDestroy {
   }
 
   getApprovedDate(account: Account): Date | null {
-    if (!account.approvedAt) return null;
-    // Handle both Firestore Timestamp and already converted Date
-    if (account.approvedAt.toDate) {
-      return account.approvedAt.toDate();
+    const value: any = (account as any).approvedAt;
+    if (!value) {
+      return null;
     }
-    if (account.approvedAt instanceof Date) {
-      return account.approvedAt;
+
+    // Firestore Timestamp from web SDK
+    if (typeof value.toDate === 'function') {
+      return value.toDate();
     }
+
+    if (value instanceof Date) {
+      return value;
+    }
+
+    // Callable functions / JSON-serialized Timestamp from Admin SDK
+    const seconds = value.seconds ?? value._seconds;
+    const nanoseconds = value.nanoseconds ?? value._nanoseconds;
+    if (typeof seconds === 'number') {
+      const msFromNanos = typeof nanoseconds === 'number' ? nanoseconds / 1_000_000 : 0;
+      return new Date(seconds * 1000 + msFromNanos);
+    }
+
+    // ISO string / epoch
+    if (typeof value === 'string' || typeof value === 'number') {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+
     return null;
   }
 

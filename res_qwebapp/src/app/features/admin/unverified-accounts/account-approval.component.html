@@ -40,7 +40,6 @@
           <div class="user-avatar">{{ getInitials(user.fullName) }}</div>
           <div class="user-title">
             <h3>{{ user.fullName }}</h3>
-            <span class="username-text">@{{ user.username }}</span>
           </div>
           <span class="status-badge unverified">Unverified</span>
         </div>
@@ -114,7 +113,6 @@
         <thead>
           <tr>
             <th>Full Name</th>
-            <th>Username</th>
             <th>Email</th>
             <th>Phone</th>
             <th>Approved At</th>
@@ -124,7 +122,6 @@
         <tbody>
           <tr *ngFor="let user of approvedUsers">
             <td>{{ user.fullName }}</td>
-            <td>{{ user.username }}</td>
             <td>{{ user.email }}</td>
             <td>{{ user.contactNumber }}</td>
             <td>{{ formatDate(user['approvedAt']) }}</td>
@@ -148,7 +145,6 @@
         <thead>
           <tr>
             <th>Full Name</th>
-            <th>Username</th>
             <th>Email</th>
             <th>Rejected At</th>
             <th>Rejected By</th>
@@ -158,7 +154,6 @@
         <tbody>
           <tr *ngFor="let user of rejectedUsers">
             <td>{{ user.fullName }}</td>
-            <td>{{ user.username }}</td>
             <td>{{ user.email }}</td>
             <td>{{ formatDate(user['rejectedAt']) }}</td>
             <td>{{ user['rejectedBy'] || 'N/A' }}</td>

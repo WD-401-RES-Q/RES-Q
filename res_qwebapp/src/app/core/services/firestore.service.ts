@@ -15,8 +15,10 @@ import {
   onSnapshot,
   Unsubscribe
 } from 'firebase/firestore';
-import { db } from '../config/firebase.config';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../config/firebase.config';
 import { BehaviorSubject, Observable } from 'rxjs';
+import { AuthService } from './auth.service';
 
 @Injectable({
   providedIn: 'root'
@@ -109,15 +111,17 @@ export class FirestoreService {
       this.ngZone.run(() => {
         this.reportsSubject.next(reports);
         // Seed filtered subjects too for immediate UI without waiting on snapshots
+        // Pending includes: pending, responding, on scene, resolved, flagged (semi-admin actions)
         const pendingSeed = reports.filter((r: any) => {
           const s = (r.status ?? '').toString().toLowerCase();
-          return s === 'pending' || s === 'responding' || s === 'on scene';
+          return s === 'pending' || s === 'responding' || s === 'on scene' || s === 'resolved' || s === 'flagged';
         });
         const approvedSeed = reports.filter((r: any) => {
           const s = (r.status ?? '').toString().toLowerCase();
-          return s === 'approved' || s === 'resolved';
+          return s === 'approved';
         });
-        const flaggedSeed = reports.filter((r: any) => (r.status ?? '').toString().toLowerCase() === 'flagged');
+        // Flagged page only shows ADMIN_FLAGGED (web admin rejections)
+        const flaggedSeed = reports.filter((r: any) => (r.status ?? '').toString().toLowerCase() === 'admin_flagged');
         this.pendingReportsSubject.next(pendingSeed);
         this.approvedReportsSubject.next(approvedSeed);
         this.flaggedReportsSubject.next(flaggedSeed);
@@ -218,7 +222,7 @@ export class FirestoreService {
         }
       );
 
-      // Pending reports listener (Pending, RESPONDING, ON SCENE, and recent RESOLVED/FLAGGED from last 30 days)
+      // Pending reports listener (Pending, RESPONDING, ON SCENE, RESOLVED, FLAGGED - excludes ADMIN_FLAGGED)
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
       const thirtyDaysAgoTime = thirtyDaysAgo.getTime();
@@ -232,11 +236,10 @@ export class FirestoreService {
         (snapshot) => {
           this.ngZone.run(() => {
             const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
-            // Filter: always show Pending/RESPONDING/ON SCENE; show RESOLVED/FLAGGED if within last 30 days
+            // Show Pending/RESPONDING/ON SCENE always, RESOLVED/FLAGGED within 30 days
             const filtered = reports.filter(r => {
               const status = (r.status || '').toUpperCase();
               if (['PENDING', 'RESPONDING', 'ON SCENE'].includes(status)) return true;
-              // For RESOLVED: check if resolvedAt is within last 30 days
               if (status === 'RESOLVED') {
                 if (r.resolvedAt) {
                   const resolvedTime = typeof r.resolvedAt.toDate === 'function' 
@@ -244,9 +247,8 @@ export class FirestoreService {
                     : new Date(r.resolvedAt).getTime();
                   return resolvedTime >= thirtyDaysAgoTime;
                 }
-                return false;
+                return true;
               }
-              // For FLAGGED: check if flaggedAt is within last 30 days
               if (status === 'FLAGGED') {
                 if (r.flaggedAt) {
                   const flaggedTime = typeof r.flaggedAt.toDate === 'function' 
@@ -254,7 +256,7 @@ export class FirestoreService {
                     : new Date(r.flaggedAt).getTime();
                   return flaggedTime >= thirtyDaysAgoTime;
                 }
-                return false;
+                return true;
               }
               return false;
             });
@@ -308,17 +310,17 @@ export class FirestoreService {
         }
       );
 
-      // Flagged reports listener (FLAGGED status within last 30 days)
+      // Flagged reports listener (ADMIN_FLAGGED status - only reports flagged by web admin)
       const flaggedReportsQuery = query(
         collection(db, 'reports'), 
-        where('status', '==', 'FLAGGED')
+        where('status', 'in', ['ADMIN_FLAGGED', 'Admin_Flagged'])
       );
       this.flaggedReportsUnsubscribe = onSnapshot(
         flaggedReportsQuery,
         (snapshot) => {
           this.ngZone.run(() => {
             const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
-            // Filter: only show FLAGGED if within last 30 days
+            // Filter: show FLAGGED if within last 30 days, or if no flaggedAt (legacy data)
             const filtered = reports.filter(r => {
               if (r.flaggedAt) {
                 const flaggedTime = typeof r.flaggedAt.toDate === 'function' 
@@ -326,7 +328,8 @@ export class FirestoreService {
                   : new Date(r.flaggedAt).getTime();
                 return flaggedTime >= thirtyDaysAgoTime;
               }
-              return false;
+              // Include flagged reports without flaggedAt timestamp (legacy data)
+              return true;
             });
             this.flaggedReportsSubject.next(filtered);
           });
@@ -531,5 +534,99 @@ export class FirestoreService {
 
   async getRejectedUsers() {
     return this.queryCollection('users', 'accountStatus', '==', 'rejected');
+  }
+
+  /**
+   * Get decrypted pending users via Cloud Function
+   * @param adminId - The ID of the authenticated admin
+   */
+  async getDecryptedPendingUsers(adminId: string): Promise<any[]> {
+    try {
+      const getDecryptedUsersCallable = httpsCallable(functions, 'getDecryptedUsers');
+      const result = await getDecryptedUsersCallable({
+        collection: 'pending_users',
+        adminId
+      });
+      
+      const data = result.data as { success: boolean; users: any[] };
+      if (data.success) {
+        return data.users;
+      }
+      throw new Error('Failed to decrypt users');
+    } catch (error) {
+      console.error('Error getting decrypted pending users:', error);
+      // Fall back to raw data if decryption fails
+      return this.getCollection('pending_users');
+    }
+  }
+
+  /**
+   * Get decrypted approved users via Cloud Function
+   * @param adminId - The ID of the authenticated admin
+   */
+  async getDecryptedApprovedUsers(adminId: string): Promise<any[]> {
+    try {
+      const getDecryptedUsersCallable = httpsCallable(functions, 'getDecryptedUsers');
+      const result = await getDecryptedUsersCallable({
+        collection: 'approved_users',
+        adminId
+      });
+      
+      const data = result.data as { success: boolean; users: any[] };
+      if (data.success) {
+        return data.users;
+      }
+      throw new Error('Failed to decrypt users');
+    } catch (error) {
+      console.error('Error getting decrypted approved users:', error);
+      // Fall back to raw data if decryption fails
+      return this.getCollection('approved_users');
+    }
+  }
+
+  /**
+   * Get single decrypted user via Cloud Function
+   * @param userId - The user document ID
+   * @param collectionName - The collection to fetch from
+   * @param adminId - The ID of the authenticated admin
+   */
+  async getDecryptedUser(userId: string, collectionName: string, adminId: string): Promise<any> {
+    try {
+      const decryptUserDataCallable = httpsCallable(functions, 'decryptUserData');
+      const result = await decryptUserDataCallable({
+        userId,
+        collection: collectionName,
+        adminId
+      });
+      
+      const data = result.data as { success: boolean; userData: any };
+      if (data.success) {
+        return data.userData;
+      }
+      throw new Error('Failed to decrypt user');
+    } catch (error) {
+      console.error('Error getting decrypted user:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Migrate existing unencrypted data to encrypted format
+   * @param adminId - The ID of the authenticated admin
+   */
+  async migrateToEncrypted(adminId: string): Promise<string> {
+    try {
+      const migrateCallable = httpsCallable(functions, 'migrateToEncrypted');
+      const result = await migrateCallable({ adminId });
+      
+      const data = result.data as { success: boolean; message: string };
+      if (data.success) {
+        return data.message;
+      }
+      throw new Error('Migration failed');
+    } catch (error) {
+      console.error('Error migrating to encrypted:', error);
+      throw error;
+    }
   }
 }

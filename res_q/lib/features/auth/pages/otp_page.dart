@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-import '../../../common/services/registration_prefs.dart';
+import '../../../common/theme/app_theme.dart';
+import '../../../common/theme/app_text_styles.dart';
+import '../../../common/constants/app_dimensions.dart';
+import '../../../common/widgets/auth_widgets.dart';
+import '../../../common/widgets/app_buttons.dart';
+import '../../../common/widgets/app_snackbar.dart';
 
 class OTPPage extends StatefulWidget {
   const OTPPage({super.key});
@@ -12,12 +17,6 @@ class OTPPage extends StatefulWidget {
 }
 
 class _OTPPageState extends State<OTPPage> {
-  // Brand colors
-  static const appBlue = Color(0xFFAC1B22);
-  static const appRed = Color(0xFFFFC806);
-  static const appBlack = Color(0xFF212121);
-  static const appOffWhite = Color(0xFFF7F8F3);
-
   final TextEditingController _otpCtl = TextEditingController();
   bool _loading = false;
 
@@ -45,25 +44,22 @@ class _OTPPageState extends State<OTPPage> {
     super.dispose();
   }
 
-  Widget _logo() {
-    return SvgPicture.asset(
-      'assets/icons/RES-Q_LOGO.svg',
-      height: 48,
-    );
-  }
-
   Future<void> _verify() async {
     final code = _otpCtl.text.trim();
     if (code.length < 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter the 6-digit OTP code')),
+      AppSnackBar.show(
+        context,
+        'Enter the 6-digit OTP code',
+        type: AppSnackBarType.warning,
       );
       return;
     }
 
     if (_verificationId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Verification ID not found')),
+      AppSnackBar.show(
+        context,
+        'Verification ID not found',
+        type: AppSnackBarType.error,
       );
       return;
     }
@@ -88,8 +84,8 @@ class _OTPPageState extends State<OTPPage> {
       if (!mounted) return;
       setState(() => _loading = false);
 
-      // Clear saved phone number after successful OTP verification
-      await RegistrationPrefs.clearPhoneNumber();
+      // Keep the locally-saved phone number so the Login page can prefill it
+      // for faster logins (PIN/biometrics) after admin approval.
 
       // Navigate to PIN creation page instead of saving directly
       if (mounted) {
@@ -114,21 +110,18 @@ class _OTPPageState extends State<OTPPage> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMessage),
-            backgroundColor: appBlue,
-            duration: const Duration(seconds: 3),
-          ),
+        AppSnackBar.show(
+          context,
+          errorMessage,
+          type: AppSnackBarType.error,
+          duration: const Duration(seconds: 3),
         );
         _otpCtl.clear();
       }
     } catch (e) {
       setState(() => _loading = false);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+        AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
         _otpCtl.clear();
       }
     }
@@ -137,26 +130,36 @@ class _OTPPageState extends State<OTPPage> {
   Future<void> _saveUserData() async {
     try {
       final user = _auth.currentUser;
-      print('DEBUG: Saving user data. User ID: ${user?.uid}');
+      print('DEBUG: Saving user data with encryption. User ID: ${user?.uid}');
 
       if (user != null && _userData != null) {
-        print('DEBUG: User data: $_userData');
+        print('DEBUG: User data to encrypt: $_userData');
 
-        // Store newly verified users in a pending collection for admin review
-        await _firestore.collection('pending_users').doc(user.uid).set({
+        // Call Cloud Function to encrypt and store user data
+        final functions = FirebaseFunctions.instanceFor(region: 'asia-east2');
+        final callable = functions.httpsCallable('registerUserEncrypted');
+
+        final result = await callable.call({
           'fullName': _userData!['fullName'],
           'email': _userData!['email'],
-          'password': _userData!['password'],
           'contactNumber': _userData!['contactNumber'],
           'address': _userData!['address'],
           'dateOfBirth': _userData!['dateOfBirth'],
-          'idPhotoPath': _userData!['idPhotoPath'],
+          'idPhotoFront':
+              _userData!['idPhotoFront'] ?? _userData!['idPhotoPath'],
+          'idPhotoBack': _userData!['idPhotoBack'],
           'role': 'user',
           'accountStatus': 'pending',
-          'createdAt': FieldValue.serverTimestamp(),
+          'firebaseUid': user.uid,
         });
 
-        print('DEBUG: Successfully saved to pending_users collection');
+        print('DEBUG: Cloud Function result: ${result.data}');
+
+        if (result.data['success'] == true) {
+          print('DEBUG: Successfully saved encrypted user data');
+        } else {
+          throw Exception('Failed to register: ${result.data['message']}');
+        }
 
         // Sign the phone-auth session out so only approved accounts can log in later
         await _auth.signOut();
@@ -175,52 +178,50 @@ class _OTPPageState extends State<OTPPage> {
       context: context,
       barrierDismissible: false,
       builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        backgroundColor: AppTheme.appOffWhite,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
+        ),
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.all(AppDimensions.paddingXLarge),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.pending_actions, size: 64, color: appRed),
-              const SizedBox(height: 16),
-              Text(
-                'Registration Successful!',
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: appBlack,
+              // Success checkmark with app theme
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: AppTheme.appRed.withOpacity(0.1),
+                  shape: BoxShape.circle,
                 ),
+                child: Icon(
+                  Icons.check_circle_outline,
+                  size: 48,
+                  color: AppTheme.appRed,
+                ),
+              ),
+              const SizedBox(height: AppDimensions.paddingLarge),
+              Text(
+                'REGISTRATION\nSUCCESSFUL!',
+                style: AppTextStyles.authPageTitle.copyWith(height: 1.2),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppDimensions.paddingMedium),
               Text(
                 'Your account has been created and is pending admin approval. You will be able to login within 48 hours once an administrator approves your account.',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
-                  color: appBlack,
+                  color: AppTheme.appBlack,
+                  fontFamily: 'RobotoCondensed',
+                  height: 1.4,
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: appBlue,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: Text(
-                    'OK',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
+              const SizedBox(height: AppDimensions.paddingXLarge),
+              ResqPillButton(
+                label: 'GOT IT',
+                onPressed: () => Navigator.pop(context),
               ),
             ],
           ),
@@ -231,9 +232,11 @@ class _OTPPageState extends State<OTPPage> {
 
   void _resend() async {
     if (_phoneNumber == null) {
-      ScaffoldMessenger.of(
+      AppSnackBar.show(
         context,
-      ).showSnackBar(const SnackBar(content: Text('Phone number not found')));
+        'Phone number not found',
+        type: AppSnackBarType.error,
+      );
       return;
     }
 
@@ -247,8 +250,10 @@ class _OTPPageState extends State<OTPPage> {
         verificationFailed: (FirebaseAuthException e) {
           setState(() => _loading = false);
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Failed to resend OTP: ${e.message}')),
+            AppSnackBar.show(
+              context,
+              'Failed to resend OTP: ${e.message}',
+              type: AppSnackBarType.error,
             );
           }
         },
@@ -258,8 +263,10 @@ class _OTPPageState extends State<OTPPage> {
             _verificationId = verificationId;
           });
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('OTP resent successfully')),
+            AppSnackBar.show(
+              context,
+              'OTP resent successfully',
+              type: AppSnackBarType.success,
             );
           }
         },
@@ -270,9 +277,7 @@ class _OTPPageState extends State<OTPPage> {
     } catch (e) {
       setState(() => _loading = false);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+        AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
       }
     }
   }
@@ -280,170 +285,147 @@ class _OTPPageState extends State<OTPPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: appOffWhite,
+      backgroundColor: AppTheme.appOffWhite,
       body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            child: GestureDetector(
-              onTap: () => FocusScope.of(context).unfocus(),
-              behavior: HitTestBehavior.opaque,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 360),
-                child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 16,
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // BLUE BACK BUTTON (icon only)
-                    IconButton(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new,
-                        color: appBlue,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
+        child: Column(
+          children: [
+            // Fixed header with back button and logo (matching registration page)
+            Padding(
+              padding: const EdgeInsets.only(
+                top: AppDimensions.paddingMedium,
+                left: AppDimensions.paddingXLarge,
+                right: AppDimensions.paddingXLarge,
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const ResqBackButton.outline(),
+                  const ResqLogo(fontSize: 53),
+                  const SizedBox(width: 44), // Balance the row
+                ],
+              ),
+            ),
+            const SizedBox(height: AppDimensions.paddingSmall),
+            Text('VERIFY OTP', style: AppTextStyles.authPageTitle),
+            const SizedBox(height: AppDimensions.paddingSmall),
 
-                    // Logo + title
-                    Center(child: _logo()),
-                    const SizedBox(height: 12),
-                    Center(
-                      child: Text(
-                        'VERIFY OTP',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: appBlack,
+            // Scrollable content
+            Expanded(
+              child: Center(
+                child: SingleChildScrollView(
+                  child: GestureDetector(
+                    onTap: () => FocusScope.of(context).unfocus(),
+                    behavior: HitTestBehavior.opaque,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 360),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppDimensions.paddingXLarge,
+                          vertical: AppDimensions.paddingMedium,
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    Center(
-                      child: Text(
-                        'Enter the 6 digit code sent to your\nphone number.',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: appBlack,
-                          fontFamily: 'RobotoCondensed',
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    // OTP input
-                    Center(
-                      child: SizedBox(
-                        width: 220,
-                        child: TextField(
-                          controller: _otpCtl,
-                          keyboardType: TextInputType.number,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 22,
-                            letterSpacing: 8,
-                          ),
-                          maxLength: 6,
-                          decoration: InputDecoration(
-                            counterText: '',
-                            hintText: '• • • •',
-                            hintStyle: const TextStyle(
-                              fontSize: 22,
-                              color: Colors.grey,
-                              letterSpacing: 8,
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 16,
-                            ),
-                            filled: true,
-                            fillColor: Colors.white,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                color: Colors.black87,
-                                width: 1,
+                        child: Column(
+                          children: [
+                            Text(
+                              'Enter the 6 digit code sent to your\nphone number.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: AppTheme.appBlack,
+                                fontFamily: 'RobotoCondensed',
                               ),
                             ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                color: Colors.black87,
-                                width: 1,
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                color: appBlue,
-                                width: 1.4,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
 
-                    const SizedBox(height: 24),
+                            const SizedBox(height: AppDimensions.paddingXLarge),
 
-                    // VERIFY button
-                    SizedBox(
-                      width: double.infinity,
-                      height: 44,
-                      child: ElevatedButton(
-                        onPressed: _loading ? null : _verify,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: appBlue,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                        ),
-                        child: _loading
-                            ? const SizedBox(
-                                height: 18,
-                                width: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
+                            // OTP input
+                            SizedBox(
+                              width: 220,
+                              child: TextField(
+                                controller: _otpCtl,
+                                keyboardType: TextInputType.number,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  letterSpacing: 8,
+                                  color: AppTheme.appBlack,
                                 ),
-                              )
-                            : Text(
-                                'VERIFY',
-                                style: const TextStyle(
-                                  fontSize: 14,
+                                maxLength: 6,
+                                decoration: InputDecoration(
+                                  counterText: '',
+                                  hintText: '• • • •',
+                                  hintStyle: const TextStyle(
+                                    fontSize: 22,
+                                    color: Colors.grey,
+                                    letterSpacing: 8,
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 16,
+                                  ),
+                                  filled: true,
+                                  fillColor: AppTheme.appOffWhite,
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(
+                                      AppDimensions.radiusMedium,
+                                    ),
+                                    borderSide: BorderSide(
+                                      color: AppTheme.appBlack,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  enabledBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(
+                                      AppDimensions.radiusMedium,
+                                    ),
+                                    borderSide: BorderSide(
+                                      color: AppTheme.appBlack,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(
+                                      AppDimensions.radiusMedium,
+                                    ),
+                                    borderSide: BorderSide(
+                                      color: AppTheme.appRed,
+                                      width: 1.8,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+
+                            const SizedBox(height: AppDimensions.paddingXLarge),
+
+                            // VERIFY button using ResqPillButton
+                            ResqPillButton(
+                              label: 'VERIFY',
+                              onPressed: _loading ? null : _verify,
+                              loading: _loading,
+                            ),
+
+                            const SizedBox(height: AppDimensions.paddingMedium),
+
+                            TextButton(
+                              onPressed: _loading ? null : _resend,
+                              child: Text(
+                                'Resend code',
+                                style: TextStyle(
+                                  fontSize: 13,
                                   fontWeight: FontWeight.w600,
-                                  color: Colors.white,
+                                  color: AppTheme.appRed,
                                 ),
                               ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    Center(
-                      child: TextButton(
-                        onPressed: _resend,
-                        child: Text(
-                          'Resend code',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: appBlue,
-                          ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
-            ),
-          ),
+          ],
         ),
       ),
     );

@@ -11,6 +11,7 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/services/location_service.dart';
+import '../../../common/services/user_session.dart';
 
 enum WeatherState { none, sunny, cloudy, rainy }
 
@@ -965,6 +966,9 @@ class _AdminMapPageState extends State<AdminMapPage>
       if (status.toLowerCase() == 'flagged' ||
           status.toLowerCase() == 'unverified') {
         print('  → Handling FLAGGED');
+        final responderName = UserSession.currentUserData?['fullName'] as String? ??
+            UserSession.currentUserData?['username'] as String? ??
+            'Semi-Admin';
         await FirebaseFirestore.instance
             .collection('reports')
             .doc(reportId)
@@ -1038,6 +1042,9 @@ class _AdminMapPageState extends State<AdminMapPage>
 
   Future<void> _markIncidentResolved(String reportId) async {
     final resolvedTime = DateTime.now();
+    final responderName = UserSession.currentUserData?['fullName'] as String? ??
+        UserSession.currentUserData?['username'] as String? ??
+        'Semi-Admin';
     try {
       await FirebaseFirestore.instance
           .collection('reports')

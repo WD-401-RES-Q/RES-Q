@@ -11,7 +11,7 @@ import 'features/auth/pages/registration_page.dart';
 import 'features/auth/pages/forgot_password_page.dart';
 import 'features/auth/pages/otp_page.dart';
 import 'features/auth/pages/pin_creation_page.dart';
-import 'features/auth/pages/approved_pin_creation_page.dart';
+import 'features/auth/pages/forgot_pin_page.dart';
 // services
 import 'common/services/notification_service.dart';
 
@@ -49,7 +49,9 @@ class MyApp extends StatelessWidget {
         '/forgot': (context) => const ForgotPasswordPage(),
         '/otp': (context) => const OTPPage(),
         '/pin-creation': (context) => const PINCreationPage(),
-        '/approved-pin-creation': (context) => const ApprovedPinCreationPage(),
+        '/forgot-pin': (context) => const ForgotPinPage(),
+        // Backwards-compatible route alias
+        '/approved-pin-creation': (context) => const ForgotPinPage(),
         '/main': (context) => const MainPage(),
       },
     );

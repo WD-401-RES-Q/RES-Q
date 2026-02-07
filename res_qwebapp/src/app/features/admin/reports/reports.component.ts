@@ -21,6 +21,7 @@ interface Report {
   redFlags?: number;
   comments?: number;
   status: 'Pending' | 'Approved' | 'Flagged';
+  sortTimestamp?: number;
   approvedBy?: string;
   approvedAt?: string;
   respondingAt?: string;
@@ -122,6 +123,12 @@ export class ReportsComponent implements OnInit, OnDestroy {
     // Apply incident type filter
     if (this.incidentFilter !== 'all') {
       reports = this.applyIncidentFilter(reports);
+    }
+
+    if (this.dateFilter === 'all') {
+      reports = [...reports].sort(
+        (a, b) => (b.sortTimestamp ?? 0) - (a.sortTimestamp ?? 0)
+      );
     }
 
     return reports;
@@ -264,6 +271,7 @@ export class ReportsComponent implements OnInit, OnDestroy {
     const reportedAt = doc.reportedAt || doc.createdAt || doc.timestamp;
     const dateObj = this.coerceDate(reportedAt);
     const [dateStr, timeStr] = this.formatDateTime(dateObj);
+    const sortTimestamp = dateObj ? dateObj.getTime() : 0;
 
     // Normalize location display
     let locationStr = 'Unknown location';
@@ -291,6 +299,7 @@ export class ReportsComponent implements OnInit, OnDestroy {
       redFlags: doc.redFlags ?? 0,
       comments: doc.comments ?? 0,
       status: status,
+      sortTimestamp,
       approvedBy: doc.approvedBy ?? undefined,
       approvedAt: doc.approvedAt ? this.formatTimestamp(doc.approvedAt) : undefined,
       respondingAt: doc.respondingAt ? this.formatTimestamp(doc.respondingAt) : undefined,
@@ -432,7 +441,7 @@ export class ReportsComponent implements OnInit, OnDestroy {
 
     this.firestoreService
       .updateDocument('reports', this.reportToReject.id, {
-        status: 'Flagged',
+        status: 'ADMIN_FLAGGED',
         flaggedAt: new Date(),
         flaggedBy: adminName
       })

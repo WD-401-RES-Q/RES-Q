@@ -5,6 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/widgets/app_buttons.dart';
+import '../../../common/widgets/app_snackbar.dart';
+import '../../../common/theme/app_text_styles.dart';
 import '../../home/pages/home_page.dart';
 import '../../semi_admin/pages/semi_admin_main_page.dart';
 import '../../../common/services/user_session.dart';
@@ -98,6 +100,14 @@ class _LoginPageState extends State<LoginPage>
 
     // Check if biometrics is enabled for this phone number
     final phone = '+63$phoneInput';
+
+    // First check local cache, then Firestore if needed
+    if (!_biometricsEnabled || _biometricsPhone != phone) {
+      // Try loading from Firestore
+      await _loadBiometricsFromFirestore(phone);
+    }
+
+    // Re-check after potential Firestore load
     if (!_biometricsEnabled || _biometricsPhone != phone) {
       _showError(
         'Biometric login not enabled for this account. Please use PIN or enable biometrics in settings.',
@@ -138,7 +148,14 @@ class _LoginPageState extends State<LoginPage>
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin biometric login successful!');
-        _finishAutofillContext(); // Trigger "Save to Google" prompt
+        // Persist phone locally for faster next login.
+        await RegistrationPrefs.savePhoneNumber(phoneInput);
+        // Set user session data for semi-admin
+        final semiAdminData = semiAdminQuery.docs.first.data();
+        UserSession.setUserData({
+          ...semiAdminData,
+          'id': semiAdminQuery.docs.first.id,
+        });
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -182,6 +199,8 @@ class _LoginPageState extends State<LoginPage>
       }
 
       // Login successful
+      // Persist phone locally for faster next login.
+      await RegistrationPrefs.savePhoneNumber(phoneInput);
       UserSession.setUserData(userData);
 
       // Use phone number as user ID for easier tracking
@@ -221,9 +240,7 @@ class _LoginPageState extends State<LoginPage>
 
   void _showError(String message) {
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message), backgroundColor: Colors.red),
-      );
+      AppSnackBar.show(context, message, type: AppSnackBarType.error);
     }
   }
 
@@ -257,9 +274,13 @@ class _LoginPageState extends State<LoginPage>
         setState(() {
           _phoneCtl.text = _formatPhoneNumber(savedPhone);
         });
+        // Also load biometrics from Firestore for this phone
+        await _loadBiometricsFromFirestore(
+          '+63${savedPhone.replaceAll(RegExp(r'\D'), '')}',
+        );
       }
 
-      // Load biometrics preferences
+      // Load biometrics preferences from local cache
       final prefs = await SharedPreferences.getInstance();
       _biometricsEnabled = prefs.getBool('biometrics_enabled') ?? false;
       _biometricsPhone = prefs.getString('biometrics_phone');
@@ -268,6 +289,37 @@ class _LoginPageState extends State<LoginPage>
       );
     } catch (e) {
       debugPrint('Error loading saved data: $e');
+    }
+  }
+
+  Future<void> _loadBiometricsFromFirestore(String phone) async {
+    try {
+      final cleanPhone = phone.replaceAll(RegExp(r'[^0-9+]'), '');
+      final doc = await _firestore
+          .collection('userPreferences')
+          .doc(cleanPhone)
+          .get();
+
+      if (doc.exists) {
+        final data = doc.data();
+        final firestoreBiometricsEnabled =
+            data?['biometricsEnabled'] as bool? ?? false;
+
+        if (firestoreBiometricsEnabled) {
+          // Update local SharedPreferences with Firestore value
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('biometrics_enabled', true);
+          await prefs.setString('biometrics_phone', cleanPhone);
+
+          _biometricsEnabled = true;
+          _biometricsPhone = cleanPhone;
+          debugPrint(
+            '✅ Loaded biometrics preference from Firestore: enabled for $cleanPhone',
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading biometrics from Firestore: $e');
     }
   }
 
@@ -330,11 +382,10 @@ class _LoginPageState extends State<LoginPage>
     setState(() => _showPhoneError = false);
 
     if (_initializing) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Initializing... Please wait a moment.'),
-          backgroundColor: Colors.orange,
-        ),
+      AppSnackBar.show(
+        context,
+        'Initializing... Please wait a moment.',
+        type: AppSnackBarType.warning,
       );
       return;
     }
@@ -380,7 +431,14 @@ class _LoginPageState extends State<LoginPage>
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin login successful via PIN!');
-        _finishAutofillContext(); // Trigger "Save to Google" prompt
+        // Persist phone locally for faster next login.
+        await RegistrationPrefs.savePhoneNumber(phoneInput);
+        // Set user session data for semi-admin
+        final semiAdminData = semiAdminQuery.docs.first.data();
+        UserSession.setUserData({
+          ...semiAdminData,
+          'id': semiAdminQuery.docs.first.id,
+        });
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -425,6 +483,8 @@ class _LoginPageState extends State<LoginPage>
       }
 
       // Login successful
+      // Persist phone locally for faster next login.
+      await RegistrationPrefs.savePhoneNumber(phoneInput);
       UserSession.setUserData(userData);
 
       // Use phone number as user ID for easier tracking
@@ -452,9 +512,7 @@ class _LoginPageState extends State<LoginPage>
       setState(() => _loading = false);
       _resetPinWithError('Error occurred. Please try again.');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
       }
     }
   }
@@ -586,8 +644,7 @@ class _LoginPageState extends State<LoginPage>
   Widget _logo() {
     return SvgPicture.asset(
       'assets/icons/RES-Q_LOGO.svg',
-      height: 80,
-      width: 120,
+      height: 53,
     );
   }
 
@@ -645,12 +702,7 @@ class _LoginPageState extends State<LoginPage>
                   const SizedBox(height: 12),
                   Text(
                     'LOGIN',
-                    style: TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 24,
-                      fontWeight: FontWeight.w900,
-                      color: appBlack,
-                    ),
+                    style: AppTextStyles.authPageTitle,
                   ),
                 ],
               ),
@@ -934,7 +986,7 @@ class _LoginPageState extends State<LoginPage>
                                   child: TextButton(
                                     onPressed: () => Navigator.pushNamed(
                                       context,
-                                      '/approved-pin-creation',
+                                      '/forgot-pin',
                                     ),
                                     style: TextButton.styleFrom(
                                       padding: EdgeInsets.zero,
