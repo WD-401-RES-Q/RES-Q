@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../../common/widgets/app_snackbar.dart';
 
@@ -24,11 +23,17 @@ class MainPage extends StatefulWidget {
 }
 
 class _MainPageState extends State<MainPage> {
-  late int _currentIndex = widget.initialIndex;
+  static const int _homeTabIndex = 0;
+  static const int _tabCount = 5;
+
+  late int _currentIndex;
+  late final Set<int> _loadedTabs;
 
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.initialIndex;
+    _loadedTabs = {widget.initialIndex};
   }
 
   Widget _buildMapPage() {
@@ -46,20 +51,47 @@ class _MainPageState extends State<MainPage> {
     return const MapPage();
   }
 
+  void _onTabTapped(int index) {
+    if (index == _currentIndex) return;
+    setState(() {
+      _currentIndex = index;
+      _loadedTabs.add(index);
+    });
+  }
+
+  Widget _buildPageForIndex(int index) {
+    switch (index) {
+      case 0:
+        return TickerMode(
+          enabled: _currentIndex == _homeTabIndex,
+          child: const _HomePageContent(),
+        );
+      case 1:
+        return const CommunityPage();
+      case 2:
+        return _buildMapPage();
+      case 3:
+        return const NotificationsPage();
+      case 4:
+        return const ProfilePage();
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      const _HomePageContent(),
-      const CommunityPage(),
-      _buildMapPage(),
-      const NotificationsPage(),
-      const ProfilePage(),
-    ];
+    final pages = List<Widget>.generate(_tabCount, (index) {
+      if (!_loadedTabs.contains(index)) {
+        return const SizedBox.shrink();
+      }
+      return _buildPageForIndex(index);
+    });
     return Scaffold(
-      backgroundColor: Color(0xFFF7F8F3),
+      backgroundColor: const Color(0xFFF7F8F3),
       bottomNavigationBar: BottomNavBar(
         currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
+        onTap: _onTabTapped,
       ),
       body: SafeArea(
         child: IndexedStack(index: _currentIndex, children: pages),
@@ -77,6 +109,14 @@ class _HomePageContent extends StatefulWidget {
 
 class _HomePageContentState extends State<_HomePageContent>
     with TickerProviderStateMixin {
+  static const List<String> _incidentAssets = [
+    'assets/icons/FINAL-EARTHQUAKE-ICON.png',
+    'assets/icons/FINAL-FLOOD-ICON.png',
+    'assets/icons/FINAL-FIRE-ICON.png',
+    'assets/icons/FINAL-CRASH-ICON.png',
+    'assets/icons/FINAL-OTHERS-ICON.png',
+  ];
+
   late final AnimationController _borderController;
   late final AnimationController _holdController;
 
@@ -98,6 +138,16 @@ class _HomePageContentState extends State<_HomePageContent>
             _openEmergencyCall();
           }
         });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _precacheIncidentAssets();
+    });
+  }
+
+  Future<void> _precacheIncidentAssets() async {
+    if (!mounted) return;
+    for (final asset in _incidentAssets) {
+      await precacheImage(AssetImage(asset), context);
+    }
   }
 
   @override
@@ -108,7 +158,8 @@ class _HomePageContentState extends State<_HomePageContent>
   }
 
   void _openEmergencyCall() {
-    print("Emergency call button pressed");
+    if (!mounted) return;
+    debugPrint('Emergency call button pressed');
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const EmergencyCallScreen()),
@@ -134,7 +185,7 @@ class _HomePageContentState extends State<_HomePageContent>
           Padding(
             padding: const EdgeInsets.only(top: 8, bottom: 4),
             child: SizedBox(
-              height: 36,
+              height: 53,
               child: SvgPicture.asset(
                 "assets/icons/RES-Q_LOGO.svg",
                 fit: BoxFit.contain,
@@ -320,8 +371,8 @@ class _HomePageContentState extends State<_HomePageContent>
                                   value: progress,
                                   strokeWidth: (emergencyButtonSize * 0.06)
                                       .clamp(4.0, 6.0),
-                                  backgroundColor: Colors.white.withOpacity(
-                                    0.15,
+                                  backgroundColor: Colors.white.withValues(
+                                    alpha: 0.15,
                                   ),
                                   valueColor: const AlwaysStoppedAnimation(
                                     Color(0xFFFFC806),
@@ -370,7 +421,7 @@ class _HomePageContentState extends State<_HomePageContent>
       child: InkWell(
         borderRadius: BorderRadius.circular(30),
         onTap: () {
-          print("$title card tapped");
+          debugPrint('$title card tapped');
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -430,7 +481,8 @@ class _HomePageContentState extends State<_HomePageContent>
   }) {
     return AnimatedBuilder(
       animation: _borderController,
-      builder: (context, _) {
+      child: RepaintBoundary(child: child),
+      builder: (context, animatedChild) {
         final angle = _borderController.value * 2 * math.pi;
         return Container(
           decoration: BoxDecoration(
@@ -446,7 +498,7 @@ class _HomePageContentState extends State<_HomePageContent>
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.25),
+                color: Colors.black.withValues(alpha: 0.25),
                 spreadRadius: 2,
                 blurRadius: 8,
                 offset: const Offset(0, 4),
@@ -460,7 +512,7 @@ class _HomePageContentState extends State<_HomePageContent>
               shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
               borderRadius: isCircle ? null : borderRadius,
             ),
-            child: child,
+            child: animatedChild,
           ),
         );
       },
