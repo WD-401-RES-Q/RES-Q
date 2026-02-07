@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/constants/app_dimensions.dart';
 import '../../../common/theme/app_text_styles.dart';
 import '../../../common/theme/app_theme.dart';
+import '../../../common/services/registration_prefs.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
@@ -19,8 +20,6 @@ class ForgotPinPage extends StatefulWidget {
 class _ForgotPinPageState extends State<ForgotPinPage> {
   // Brand colors
   static const appBlue = Color(0xFFAC1B22);
-  static const appRed = Color(0xFFFFC806);
-  static const appGreen = Color(0xFF00A458);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
 
@@ -47,6 +46,8 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
 
     final phoneDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
     final phone = '+63$phoneDigits';
+    await RegistrationPrefs.savePhoneNumber(phoneDigits);
+    if (!mounted) return;
 
     setState(() => _loading = true);
 
@@ -58,9 +59,10 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
           .limit(1)
           .get();
 
+      if (!mounted) return;
+
       if (userQuery.docs.isEmpty) {
         setState(() => _loading = false);
-        if (!mounted) return;
         AppSnackBar.show(
           context,
           'Phone number not found or not approved yet. Please wait for admin approval.',
@@ -86,8 +88,8 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
         type: AppSnackBarType.success,
       );
     } catch (e) {
-      setState(() => _loading = false);
       if (!mounted) return;
+      setState(() => _loading = false);
       AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
     }
   }
@@ -126,7 +128,7 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
                 width: 80,
                 height: 80,
                 decoration: BoxDecoration(
-                  color: appBlue.withOpacity(0.1),
+                  color: appBlue.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.fingerprint, size: 48, color: appBlue),
@@ -146,7 +148,7 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
                 'Would you like to use fingerprint or face recognition for faster login?',
                 style: TextStyle(
                   fontSize: 14,
-                  color: appBlack.withOpacity(0.7),
+                  color: appBlack.withValues(alpha: 0.7),
                 ),
                 textAlign: TextAlign.center,
               ),
@@ -168,7 +170,9 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
                       onPressed: () => Navigator.pop(context, false),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: appBlack,
-                        side: BorderSide(color: appBlack.withOpacity(0.3)),
+                        side: BorderSide(
+                          color: appBlack.withValues(alpha: 0.3),
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
@@ -238,13 +242,10 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
       // Save to Firestore for persistence across devices (like votes)
       if (phoneNumber != null) {
         final cleanPhone = phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
-        await _firestore
-            .collection('userPreferences')
-            .doc(cleanPhone)
-            .set({
-              'biometricsEnabled': enabled,
-              'biometricsUpdatedAt': FieldValue.serverTimestamp(),
-            }, SetOptions(merge: true));
+        await _firestore.collection('userPreferences').doc(cleanPhone).set({
+          'biometricsEnabled': enabled,
+          'biometricsUpdatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
         debugPrint('✅ Biometrics preference saved to Firestore: $enabled');
       }
 
@@ -286,9 +287,13 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
         'pinCreatedAt': FieldValue.serverTimestamp(),
       });
 
-      setState(() => _loading = false);
+      final phoneDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
+      if (phoneDigits.isNotEmpty) {
+        await RegistrationPrefs.savePhoneNumber(phoneDigits);
+      }
 
       if (!mounted) return;
+      setState(() => _loading = false);
 
       // Show biometrics opt-in dialog
       final phoneNumber = _userData?['contactNumber'] as String?;
@@ -301,14 +306,15 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
       if (!mounted) return;
 
       // Navigate back to login with success message
-      Navigator.pushReplacementNamed(
+      Navigator.pushNamedAndRemoveUntil(
         context,
         '/login',
+        (_) => false,
         arguments: {'showPinSuccess': true},
       );
     } catch (e) {
-      setState(() => _loading = false);
       if (!mounted) return;
+      setState(() => _loading = false);
       AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
     }
   }
@@ -353,7 +359,9 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  ResqBackButton.outline(onPressed: () => Navigator.pop(context)),
+                  ResqBackButton.outline(
+                    onPressed: () => Navigator.pop(context),
+                  ),
                   const ResqLogo(fontSize: 53),
                   const SizedBox(width: 44),
                 ],
@@ -374,7 +382,9 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
                       onTap: () => FocusScope.of(context).unfocus(),
                       behavior: HitTestBehavior.opaque,
                       child: ConstrainedBox(
-                        constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
+                        ),
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
                             horizontal: AppDimensions.paddingXLarge,
@@ -389,7 +399,8 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
                                   mainAxisAlignment: MainAxisAlignment.start,
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
                                   children: [
                                     Text(
                                       _phoneVerified
@@ -397,12 +408,16 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
                                           : 'Enter your registered phone number to reset your PIN',
                                       style: TextStyle(
                                         fontSize: 14,
-                                        color: AppTheme.appBlack.withOpacity(0.7),
+                                        color: AppTheme.appBlack.withValues(
+                                          alpha: 0.7,
+                                        ),
                                         fontFamily: 'RobotoCondensed',
                                       ),
                                       textAlign: TextAlign.center,
                                     ),
-                                    const SizedBox(height: AppDimensions.paddingSmall),
+                                    const SizedBox(
+                                      height: AppDimensions.paddingSmall,
+                                    ),
 
                                     if (!_phoneVerified) ...[
                                       PhoneInputField(
@@ -414,26 +429,32 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
                                         autovalidateMode:
                                             AutovalidateMode.onUserInteraction,
                                       ),
-                                      const SizedBox(height: AppDimensions.paddingLarge),
+                                      const SizedBox(
+                                        height: AppDimensions.paddingLarge,
+                                      ),
                                       SizedBox(
                                         width: double.infinity,
                                         height: 50,
                                         child: ElevatedButton(
-                                          onPressed: _loading ? null : _verifyPhone,
+                                          onPressed: _loading
+                                              ? null
+                                              : _verifyPhone,
                                           style: ElevatedButton.styleFrom(
                                             backgroundColor: appBlue,
                                             shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(50),
+                                              borderRadius:
+                                                  BorderRadius.circular(50),
                                             ),
                                           ),
                                           child: _loading
                                               ? const SizedBox(
                                                   height: 20,
                                                   width: 20,
-                                                  child: CircularProgressIndicator(
-                                                    strokeWidth: 2,
-                                                    color: Colors.white,
-                                                  ),
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                        color: Colors.white,
+                                                      ),
                                                 )
                                               : const Text(
                                                   'VERIFY',
@@ -449,9 +470,11 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
                                     ] else ...[
                                       // PIN Display (dots)
                                       Row(
-                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
                                         children: List.generate(4, (index) {
-                                          final hasValue = _pinCtl.text.length > index;
+                                          final hasValue =
+                                              _pinCtl.text.length > index;
                                           return Container(
                                             margin: const EdgeInsets.symmetric(
                                               horizontal: 8,
@@ -460,7 +483,9 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
                                             height: 20,
                                             decoration: BoxDecoration(
                                               shape: BoxShape.circle,
-                                              color: hasValue ? appBlue : Colors.transparent,
+                                              color: hasValue
+                                                  ? appBlue
+                                                  : Colors.transparent,
                                               border: Border.all(
                                                 color: appBlack,
                                                 width: 2,
