@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/theme/app_text_styles.dart';
@@ -8,6 +6,7 @@ import '../../../common/constants/app_dimensions.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
+import '../../../common/services/registration_prefs.dart';
 
 class OTPPage extends StatefulWidget {
   const OTPPage({super.key});
@@ -19,22 +18,42 @@ class OTPPage extends StatefulWidget {
 class _OTPPageState extends State<OTPPage> {
   final TextEditingController _otpCtl = TextEditingController();
   bool _loading = false;
+  bool _argsInitialized = false;
 
   String? _verificationId;
   String? _phoneNumber;
   Map<String, dynamic>? _userData;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (_argsInitialized) return;
+    _argsInitialized = true;
+
     final args = ModalRoute.of(context)?.settings.arguments as Map?;
     if (args != null) {
       _verificationId = args['verificationId'] as String?;
       _phoneNumber = args['phoneNumber'] as String?;
       _userData = args['userData'] as Map<String, dynamic>?;
+    }
+
+    final hasRequiredArgs =
+        _verificationId != null &&
+        _phoneNumber != null &&
+        _phoneNumber!.isNotEmpty &&
+        _userData != null;
+    if (!hasRequiredArgs) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        AppSnackBar.show(
+          context,
+          'Registration session expired. Please start again.',
+          type: AppSnackBarType.warning,
+        );
+        Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+      });
     }
   }
 
@@ -45,6 +64,16 @@ class _OTPPageState extends State<OTPPage> {
   }
 
   Future<void> _verify() async {
+    if (_verificationId == null || _phoneNumber == null || _userData == null) {
+      AppSnackBar.show(
+        context,
+        'Registration session expired. Please start again.',
+        type: AppSnackBarType.warning,
+      );
+      Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+      return;
+    }
+
     final code = _otpCtl.text.trim();
     if (code.length < 6) {
       AppSnackBar.show(
@@ -87,20 +116,23 @@ class _OTPPageState extends State<OTPPage> {
       // Keep the locally-saved phone number so the Login page can prefill it
       // for faster logins (PIN/biometrics) after admin approval.
 
-      // Navigate to PIN creation page instead of saving directly
-      if (mounted) {
-        Navigator.pushReplacementNamed(
-          context,
-          '/pin-creation',
-          arguments: {
-            'phoneNumber': _phoneNumber,
-            'userData': _userData,
-            'uid': user.uid,
-          },
-        );
-      }
+      await RegistrationPrefs.savePhoneNumber(_phoneNumber!);
+      if (!mounted) return;
+
+      // Navigate to PIN creation page.
+      Navigator.pushReplacementNamed(
+        context,
+        '/pin-creation',
+        arguments: {
+          'phoneNumber': _phoneNumber,
+          'userData': _userData,
+          'uid': user.uid,
+        },
+      );
     } on FirebaseAuthException catch (e) {
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
 
       String errorMessage = 'Verification failed';
       if (e.code == 'invalid-verification-code') {
@@ -119,115 +151,14 @@ class _OTPPageState extends State<OTPPage> {
         _otpCtl.clear();
       }
     } catch (e) {
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
       if (mounted) {
         AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
         _otpCtl.clear();
       }
     }
-  }
-
-  Future<void> _saveUserData() async {
-    try {
-      final user = _auth.currentUser;
-      print('DEBUG: Saving user data with encryption. User ID: ${user?.uid}');
-
-      if (user != null && _userData != null) {
-        print('DEBUG: User data to encrypt: $_userData');
-
-        // Call Cloud Function to encrypt and store user data
-        final functions = FirebaseFunctions.instanceFor(region: 'asia-east2');
-        final callable = functions.httpsCallable('registerUserEncrypted');
-
-        final result = await callable.call({
-          'fullName': _userData!['fullName'],
-          'email': _userData!['email'],
-          'contactNumber': _userData!['contactNumber'],
-          'address': _userData!['address'],
-          'dateOfBirth': _userData!['dateOfBirth'],
-          'idPhotoFront':
-              _userData!['idPhotoFront'] ?? _userData!['idPhotoPath'],
-          'idPhotoBack': _userData!['idPhotoBack'],
-          'role': 'user',
-          'accountStatus': 'pending',
-          'firebaseUid': user.uid,
-        });
-
-        print('DEBUG: Cloud Function result: ${result.data}');
-
-        if (result.data['success'] == true) {
-          print('DEBUG: Successfully saved encrypted user data');
-        } else {
-          throw Exception('Failed to register: ${result.data['message']}');
-        }
-
-        // Sign the phone-auth session out so only approved accounts can log in later
-        await _auth.signOut();
-        print('DEBUG: User signed out after pending save');
-      } else {
-        print('DEBUG: ERROR - user is null or userData is null');
-      }
-    } catch (e) {
-      print('DEBUG: Error in _saveUserData: $e');
-      rethrow;
-    }
-  }
-
-  Future<void> _showApprovalPendingDialog() async {
-    return showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Dialog(
-        backgroundColor: AppTheme.appOffWhite,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(AppDimensions.paddingXLarge),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Success checkmark with app theme
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: AppTheme.appRed.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.check_circle_outline,
-                  size: 48,
-                  color: AppTheme.appRed,
-                ),
-              ),
-              const SizedBox(height: AppDimensions.paddingLarge),
-              Text(
-                'REGISTRATION\nSUCCESSFUL!',
-                style: AppTextStyles.authPageTitle.copyWith(height: 1.2),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppDimensions.paddingMedium),
-              Text(
-                'Your account has been created and is pending admin approval. You will be able to login within 48 hours once an administrator approves your account.',
-                style: TextStyle(
-                  fontSize: 14,
-                  color: AppTheme.appBlack,
-                  fontFamily: 'RobotoCondensed',
-                  height: 1.4,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppDimensions.paddingXLarge),
-              ResqPillButton(
-                label: 'GOT IT',
-                onPressed: () => Navigator.pop(context),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   void _resend() async {
@@ -248,6 +179,7 @@ class _OTPPageState extends State<OTPPage> {
         timeout: const Duration(seconds: 60),
         verificationCompleted: (PhoneAuthCredential credential) async {},
         verificationFailed: (FirebaseAuthException e) {
+          if (!mounted) return;
           setState(() => _loading = false);
           if (mounted) {
             AppSnackBar.show(
@@ -258,6 +190,7 @@ class _OTPPageState extends State<OTPPage> {
           }
         },
         codeSent: (String verificationId, int? resendToken) {
+          if (!mounted) return;
           setState(() {
             _loading = false;
             _verificationId = verificationId;
@@ -271,11 +204,14 @@ class _OTPPageState extends State<OTPPage> {
           }
         },
         codeAutoRetrievalTimeout: (String verificationId) {
+          if (!mounted) return;
           setState(() => _verificationId = verificationId);
         },
       );
     } catch (e) {
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
       if (mounted) {
         AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
       }

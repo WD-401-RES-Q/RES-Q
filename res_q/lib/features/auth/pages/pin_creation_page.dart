@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/theme/app_theme.dart';
@@ -21,6 +22,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
   bool _loading = false;
   bool _showError = false;
   String _errorMessage = '';
+  bool _argsInitialized = false;
 
   String? _phoneNumber;
   Map<String, dynamic>? _userData;
@@ -32,11 +34,34 @@ class _PINCreationPageState extends State<PINCreationPage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (_argsInitialized) return;
+    _argsInitialized = true;
+
     final args = ModalRoute.of(context)?.settings.arguments as Map?;
     if (args != null) {
       _phoneNumber = args['phoneNumber'] as String?;
       _userData = args['userData'] as Map<String, dynamic>?;
       _uid = args['uid'] as String?;
+    }
+
+    _uid ??= FirebaseAuth.instance.currentUser?.uid;
+
+    final hasRequiredArgs =
+        _phoneNumber != null &&
+        _phoneNumber!.isNotEmpty &&
+        _userData != null &&
+        _uid != null &&
+        _uid!.isNotEmpty;
+    if (!hasRequiredArgs) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        AppSnackBar.show(
+          context,
+          'Registration session expired. Please start again.',
+          type: AppSnackBarType.warning,
+        );
+        Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+      });
     }
   }
 
@@ -112,7 +137,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 width: 80,
                 height: 80,
                 decoration: BoxDecoration(
-                  color: AppTheme.appRed.withOpacity(0.1),
+                  color: AppTheme.appRed.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
@@ -143,7 +168,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 'You can change this later in settings.',
                 style: TextStyle(
                   fontSize: 12,
-                  color: AppTheme.appBlack.withOpacity(0.6),
+                  color: AppTheme.appBlack.withValues(alpha: 0.6),
                   fontStyle: FontStyle.italic,
                 ),
                 textAlign: TextAlign.center,
@@ -157,7 +182,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppTheme.appBlack,
                         side: BorderSide(
-                          color: AppTheme.appBlack.withOpacity(0.3),
+                          color: AppTheme.appBlack.withValues(alpha: 0.3),
                         ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(
@@ -246,6 +271,18 @@ class _PINCreationPageState extends State<PINCreationPage> {
   }
 
   Future<void> _createPin() async {
+    if (_phoneNumber == null || _userData == null) {
+      if (mounted) {
+        AppSnackBar.show(
+          context,
+          'Registration session expired. Please start again.',
+          type: AppSnackBarType.warning,
+        );
+        Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+      }
+      return;
+    }
+
     if (_pin.length != 4) {
       setState(() {
         _showError = true;
@@ -266,20 +303,28 @@ class _PINCreationPageState extends State<PINCreationPage> {
     setState(() => _loading = true);
 
     try {
-      if (_uid == null) {
+      final uid = _uid ?? FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null || uid.isEmpty) {
         throw Exception('User ID not found');
       }
+      _uid = uid;
 
       final userData = _userData ?? {};
       userData['pin'] = _pin;
       userData['accountStatus'] = 'pending';
       userData['createdAt'] = FieldValue.serverTimestamp();
 
-      await _firestore.collection('pending_users').doc(_uid).set(userData);
+      await _firestore.collection('pending_users').doc(uid).set(userData);
 
-      setState(() => _loading = false);
+      // End temporary phone-auth session; pending accounts should still use login.
+      try {
+        await FirebaseAuth.instance.signOut();
+      } catch (e) {
+        debugPrint('Sign-out after registration failed: $e');
+      }
 
       if (!mounted) return;
+      setState(() => _loading = false);
 
       final enableBiometrics = await _showBiometricsOptInDialog();
 
@@ -291,12 +336,14 @@ class _PINCreationPageState extends State<PINCreationPage> {
 
       await _showApprovalPendingDialog();
     } catch (e) {
-      setState(() {
-        _loading = false;
-        _showError = true;
-        _errorMessage = 'Error: $e';
-        _pin = '';
-      });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _showError = true;
+          _errorMessage = 'Error: $e';
+          _pin = '';
+        });
+      }
       if (mounted) {
         AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
       }
@@ -321,38 +368,80 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 width: 80,
                 height: 80,
                 decoration: BoxDecoration(
-                  color: AppTheme.appRed.withOpacity(0.1),
+                  color: AppTheme.appRed.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
+                  border: Border.all(color: AppTheme.appRed, width: 2),
                 ),
                 child: Icon(
-                  Icons.check_circle_outline,
+                  Icons.hourglass_top,
                   size: 48,
                   color: AppTheme.appRed,
                 ),
               ),
               const SizedBox(height: AppDimensions.paddingLarge),
               Text(
-                'ACCOUNT PENDING\nAPPROVAL',
-                style: AppTextStyles.authPageTitle.copyWith(height: 1.2),
+                'ACCOUNT PENDING',
+                style: AppTextStyles.authPageTitle.copyWith(
+                  color: AppTheme.appRed,
+                  height: 1.2,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Awaiting Admin Approval',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.appBlack,
+                  fontFamily: 'Roboto',
+                  letterSpacing: 0.5,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: AppDimensions.paddingMedium),
               Text(
-                'Your account is currently pending admin approval. Please wait up to 48 hours for an administrator to review and approve your account.\n\nOnce approved, you will receive a text message and can login with your PIN.',
+                'Your account is currently pending admin approval. This usually takes up to 48 hours.\n\nYou will receive a text message once approved and can then log in with your PIN.',
                 style: TextStyle(
-                  fontSize: 14,
-                  color: AppTheme.appBlack,
+                  fontSize: 13.5,
+                  color: AppTheme.appBlack.withValues(alpha: 0.85),
                   fontFamily: 'RobotoCondensed',
                   height: 1.4,
                 ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: AppDimensions.paddingXLarge),
-              ResqPillButton(
-                label: 'GOT IT',
-                onPressed: () {
-                  Navigator.pushReplacementNamed(context, '/login');
-                },
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pushNamedAndRemoveUntil(
+                      context,
+                      '/login',
+                      (_) => false,
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.appRed,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppDimensions.radiusMedium,
+                      ),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  child: Text(
+                    'GOT IT',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                      fontSize: 16,
+                      letterSpacing: 1.1,
+                    ),
+                  ),
+                ),
               ),
             ],
           ),
@@ -429,7 +518,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                             'Set up your 4-digit PIN for fast login',
                             style: TextStyle(
                               fontSize: 14,
-                              color: AppTheme.appBlack.withOpacity(0.7),
+                              color: AppTheme.appBlack.withValues(alpha: 0.7),
                               fontFamily: 'RobotoCondensed',
                             ),
                             textAlign: TextAlign.center,
@@ -451,7 +540,9 @@ class _PINCreationPageState extends State<PINCreationPage> {
                                   AppDimensions.radiusMedium,
                                 ),
                                 border: Border.all(
-                                  color: AppTheme.appBlack.withOpacity(0.2),
+                                  color: AppTheme.appBlack.withValues(
+                                    alpha: 0.2,
+                                  ),
                                 ),
                               ),
                               child: Row(
@@ -532,7 +623,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
                             'Please remember your PIN.\nYou will need it to login.',
                             style: TextStyle(
                               fontSize: 12,
-                              color: AppTheme.appBlack.withOpacity(0.6),
+                              color: AppTheme.appBlack.withValues(alpha: 0.6),
                               fontFamily: 'RobotoCondensed',
                             ),
                             textAlign: TextAlign.center,
