@@ -4,11 +4,13 @@ import 'dart:math';
 import 'dart:ui';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/services/location_service.dart';
 import '../../../common/services/user_session.dart';
@@ -52,6 +54,9 @@ class _AdminMapPageState extends State<AdminMapPage>
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
   StreamSubscription<Position>? _responderLocationSub;
   String? _activeReportId;
+  String? _autoAssignedReportId;
+  String? _lastPresenceStatus;
+  bool? _lastPresenceAvailability;
 
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
@@ -105,6 +110,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       duration: const Duration(milliseconds: 1600),
     )..repeat(reverse: true);
     _startResponderLocationSharing();
+    unawaited(_syncOwnPresence(status: 'available', isAvailable: true));
   }
 
   @override
@@ -274,7 +280,178 @@ class _AdminMapPageState extends State<AdminMapPage>
         _resolvedReports = resolvedReports;
       });
     }
-    print('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+    _syncAutoAssignedReport(snapshot);
+    print('Loaded ${snapshot.docs.length} reports from Firestore');
+  }
+
+  String _normalizePhoneValue(Object? raw) {
+    return (raw?.toString() ?? '').replaceAll(RegExp(r'\D'), '');
+  }
+
+  bool _isClosedIncidentStatus(String status) {
+    final normalized = status.trim().toLowerCase();
+    return normalized == 'resolved' ||
+        normalized == 'incident resolved' ||
+        normalized == 'flagged' ||
+        normalized == 'unverified';
+  }
+
+  DateTime _parseSortTimestamp(Object? raw) {
+    if (raw is Timestamp) {
+      return raw.toDate();
+    }
+    if (raw is DateTime) {
+      return raw;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  Future<void> _syncOwnPresence({
+    required String status,
+    required bool isAvailable,
+  }) async {
+    final normalizedStatus = status.trim().toLowerCase();
+    if (_lastPresenceStatus == normalizedStatus &&
+        _lastPresenceAvailability == isAvailable) {
+      return;
+    }
+
+    final userData = UserSession.currentUserData;
+    final docId =
+        (userData?['id'] ?? userData?['contactNumber'])?.toString().trim() ??
+        '';
+    if (docId.isEmpty) {
+      return;
+    }
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('semi_admins')
+          .doc(docId)
+          .set({
+            'isLoggedIn': true,
+            'status': normalizedStatus,
+            'isAvailable': isAvailable,
+            'lastSeenAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+      _lastPresenceStatus = normalizedStatus;
+      _lastPresenceAvailability = isAvailable;
+    } catch (e) {
+      debugPrint('Failed to sync responder presence: $e');
+    }
+  }
+
+  void _syncAutoAssignedReport(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    final userData = UserSession.currentUserData;
+    final responderPhone = _normalizePhoneValue(
+      userData?['contactNumber'] ?? userData?['phoneNumber'],
+    );
+    final responderName = (userData?['fullName'] ?? userData?['username'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final authUid = FirebaseAuth.instance.currentUser?.uid.trim();
+
+    if ((responderPhone.isEmpty && responderName.isEmpty) &&
+        (authUid == null || authUid.isEmpty)) {
+      return;
+    }
+
+    String? matchedReportId;
+    LatLng? matchedDestination;
+    DateTime latestAssignedAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final status =
+          (data['responderStatus'] as String? ??
+                  data['status'] as String? ??
+                  '')
+              .toLowerCase();
+      if (_isClosedIncidentStatus(status)) {
+        continue;
+      }
+
+      final assignedId = (data['responderId'] as String? ?? '').trim();
+      final assignedIdPhone = _normalizePhoneValue(assignedId);
+      final assignedContactPhone = _normalizePhoneValue(
+        data['responderContactNumber'] ?? data['responderPhone'],
+      );
+      final assignedName = (data['responderName'] as String? ?? '')
+          .trim()
+          .toLowerCase();
+
+      final matchesPhone =
+          responderPhone.isNotEmpty &&
+          (assignedIdPhone == responderPhone ||
+              assignedContactPhone == responderPhone);
+      final matchesUid =
+          authUid != null && authUid.isNotEmpty && assignedId == authUid;
+      final matchesName =
+          responderName.isNotEmpty &&
+          assignedName.isNotEmpty &&
+          assignedName == responderName;
+
+      if (!matchesPhone && !matchesUid && !matchesName) {
+        continue;
+      }
+
+      final incidentPoint =
+          _latLngFromDynamic(data['incidentLocation']) ??
+          _latLngFromDynamic(data['location']);
+      if (incidentPoint == null) {
+        continue;
+      }
+
+      final assignedAt = _parseSortTimestamp(
+        data['responderAssignedAt'] ??
+            data['deployedAt'] ??
+            data['respondingAt'] ??
+            data['reportedAt'],
+      );
+      if (assignedAt.isBefore(latestAssignedAt)) {
+        continue;
+      }
+
+      latestAssignedAt = assignedAt;
+      matchedReportId = doc.id;
+      matchedDestination = incidentPoint;
+    }
+
+    if (matchedReportId == null || matchedDestination == null) {
+      _autoAssignedReportId = null;
+      unawaited(_syncOwnPresence(status: 'available', isAvailable: true));
+      return;
+    }
+
+    final shouldRefreshRoute =
+        _autoAssignedReportId != matchedReportId ||
+        _activeReportId != matchedReportId ||
+        _destination == null ||
+        const Distance().as(
+              LengthUnit.Meter,
+              _destination!,
+              matchedDestination,
+            ) >
+            20;
+
+    _autoAssignedReportId = matchedReportId;
+    unawaited(_syncOwnPresence(status: 'busy', isAvailable: false));
+    if (!shouldRefreshRoute) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _activeReportId = matchedReportId;
+        _destination = matchedDestination;
+      });
+    } else {
+      _activeReportId = matchedReportId;
+      _destination = matchedDestination;
+    }
+
+    _calculateRoute();
   }
 
   bool _shouldShowIncidentType(String incidentType) {
@@ -951,98 +1128,111 @@ class _AdminMapPageState extends State<AdminMapPage>
     }
   }
 
-  Future<void> _updateIncidentStatus(String reportId, String status) async {
+  Future<bool> _updateIncidentStatus(String reportId, String status) async {
     try {
-      print('🔵 _updateIncidentStatus called');
-      print('  reportId: $reportId');
-      print('  status param: $status');
+      final statusLower = status.trim().toLowerCase();
+      final now = Timestamp.now();
+      final responderName =
+          UserSession.currentUserData?['fullName'] as String? ??
+          UserSession.currentUserData?['username'] as String? ??
+          'Semi-Admin';
 
-      if (status.toLowerCase() == 'resolved' ||
-          status.toLowerCase() == 'incident resolved') {
-        print('  → Handling RESOLVED');
-        await _markIncidentResolved(reportId);
-        return;
+      if (statusLower == 'resolved' || statusLower == 'incident resolved') {
+        return _markIncidentResolved(reportId);
       }
-      if (status.toLowerCase() == 'flagged' ||
-          status.toLowerCase() == 'unverified') {
-        print('  → Handling FLAGGED');
-        final responderName = UserSession.currentUserData?['fullName'] as String? ??
-            UserSession.currentUserData?['username'] as String? ??
-            'Semi-Admin';
+      if (statusLower == 'flagged' || statusLower == 'unverified') {
         await FirebaseFirestore.instance
             .collection('reports')
             .doc(reportId)
             .update({
               'status': 'FLAGGED',
               'responderStatus': 'FLAGGED',
-              'flaggedAt': Timestamp.now(),
+              'flaggedAt': now,
+              'flaggedBy': responderName,
               'resolvedAt': FieldValue.delete(),
+              'resolvedBy': FieldValue.delete(),
+              'responderStatusUpdatedAt': now,
+              'responderStatusUpdatedBy': responderName,
             });
-        print('  ✓ FLAGGED written to Firestore');
         _cancelResolvedRemoval(reportId);
         _scheduleResolvedRemoval(reportId, DateTime.now(), Duration.zero);
-        return;
+        return true;
       }
 
-      // Handle responding and on scene - only update timestamps, keep status as Pending
-      if (status.toLowerCase() == 'responding') {
-        print('  → Handling RESPONDING');
-        print(
-          '  Writing: respondingAt + responderStatus only, NOT changing status field',
-        );
+      if (statusLower == 'responding') {
         await FirebaseFirestore.instance
             .collection('reports')
             .doc(reportId)
             .update({
-              'respondingAt': Timestamp.now(),
+              'status': 'RESPONDING',
               'responderStatus': 'RESPONDING',
+              'respondingAt': now,
+              'respondingBy': responderName,
+              'responderStatusUpdatedAt': now,
+              'responderStatusUpdatedBy': responderName,
+              'resolvedAt': FieldValue.delete(),
+              'resolvedBy': FieldValue.delete(),
+              'flaggedAt': FieldValue.delete(),
+              'flaggedBy': FieldValue.delete(),
             });
-        print('  ✓ RESPONDING written to Firestore (status field NOT changed)');
-        return;
+        _cancelResolvedRemoval(reportId);
+        return true;
       }
 
-      if (status.toLowerCase() == 'on scene') {
-        print('  → Handling ON SCENE');
-        print(
-          '  Writing: arrivedAt + responderStatus only, NOT changing status field',
-        );
+      if (statusLower == 'on scene' || statusLower == 'on-scene') {
         await FirebaseFirestore.instance
             .collection('reports')
             .doc(reportId)
             .update({
-              'arrivedAt': Timestamp.now(),
+              'status': 'ON SCENE',
               'responderStatus': 'ON SCENE',
+              'arrivedAt': now,
+              'arrivedBy': responderName,
+              'responderStatusUpdatedAt': now,
+              'responderStatusUpdatedBy': responderName,
+              'resolvedAt': FieldValue.delete(),
+              'resolvedBy': FieldValue.delete(),
+              'flaggedAt': FieldValue.delete(),
+              'flaggedBy': FieldValue.delete(),
             });
-        print('  ✓ ON SCENE written to Firestore (status field NOT changed)');
-        return;
+        _cancelResolvedRemoval(reportId);
+        return true;
       }
 
-      // For any other status, update normally
-      print('  → Handling other status: $status');
+      final normalizedStatus = _normalizeStatusLabel(status);
       await FirebaseFirestore.instance
           .collection('reports')
           .doc(reportId)
           .update({
-            'status': status,
-            'responderStatus': status,
+            'status': normalizedStatus,
+            'responderStatus': normalizedStatus,
+            'responderStatusUpdatedAt': now,
+            'responderStatusUpdatedBy': responderName,
             'resolvedAt': FieldValue.delete(),
+            'resolvedBy': FieldValue.delete(),
             'flaggedAt': FieldValue.delete(),
+            'flaggedBy': FieldValue.delete(),
           });
       _cancelResolvedRemoval(reportId);
+      return true;
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to update status: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to update status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return false;
     }
   }
 
-  Future<void> _markIncidentResolved(String reportId) async {
+  Future<bool> _markIncidentResolved(String reportId) async {
     final resolvedTime = DateTime.now();
-    final responderName = UserSession.currentUserData?['fullName'] as String? ??
+    final resolvedAt = Timestamp.fromDate(resolvedTime);
+    final responderName =
+        UserSession.currentUserData?['fullName'] as String? ??
         UserSession.currentUserData?['username'] as String? ??
         'Semi-Admin';
     try {
@@ -1052,22 +1242,29 @@ class _AdminMapPageState extends State<AdminMapPage>
           .update({
             'status': 'RESOLVED',
             'responderStatus': 'RESOLVED',
-            'resolvedAt': Timestamp.fromDate(resolvedTime),
+            'resolvedAt': resolvedAt,
+            'resolvedBy': responderName,
             'flaggedAt': FieldValue.delete(),
+            'flaggedBy': FieldValue.delete(),
+            'responderStatusUpdatedAt': resolvedAt,
+            'responderStatusUpdatedBy': responderName,
           });
       _cancelResolvedRemoval(reportId);
       _scheduleResolvedRemoval(reportId, resolvedTime, Duration.zero);
       if (_activeReportId == reportId) {
         _activeReportId = null;
       }
+      return true;
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to resolve incident: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to resolve incident: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return false;
     }
   }
 
@@ -1226,6 +1423,52 @@ class _AdminMapPageState extends State<AdminMapPage>
     );
   }
 
+  Future<void> _callReporter(String rawPhoneNumber) async {
+    final normalized = _normalizePhoneValue(rawPhoneNumber);
+    if (normalized.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Reporter contact number is unavailable.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    String dialable = rawPhoneNumber.trim();
+    if (dialable.isEmpty || dialable.toLowerCase() == 'unknown') {
+      if (normalized.length == 10 && normalized.startsWith('9')) {
+        dialable = '+63$normalized';
+      } else if (normalized.startsWith('63')) {
+        dialable = '+$normalized';
+      } else {
+        dialable = normalized;
+      }
+    }
+
+    final uri = Uri(scheme: 'tel', path: dialable);
+    try {
+      final launched = await launchUrl(uri);
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to start a phone call on this device.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to launch dialer: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   Future<void> _showIncidentInfo(
     Map<String, dynamic> data,
     String reportId,
@@ -1249,6 +1492,7 @@ class _AdminMapPageState extends State<AdminMapPage>
         activeData['description'] as String? ??
         '';
     final contactNumber = activeData['contactNumber'] as String? ?? 'Unknown';
+    final canCallReporter = _normalizePhoneValue(contactNumber).isNotEmpty;
     final vehiclePlateNumber =
         activeData['vehiclePlateNumber'] as String? ?? 'Not provided';
     final vehicleBodyType =
@@ -1279,7 +1523,9 @@ class _AdminMapPageState extends State<AdminMapPage>
     _activeReportId = reportId;
     _destination = position;
     final initialStatus = _normalizeStatusLabel(
-      activeData['status'] as String? ?? 'Unverified',
+      activeData['responderStatus'] as String? ??
+          activeData['status'] as String? ??
+          'Pending',
     );
     await _loadAdminComments(reportId, position);
     final incidentComments =
@@ -1393,13 +1639,15 @@ class _AdminMapPageState extends State<AdminMapPage>
                                         final confirm =
                                             await _confirmStatusChange(option);
                                         if (confirm != true) return;
+                                        final updated =
+                                            await _updateIncidentStatus(
+                                              reportId,
+                                              option,
+                                            );
+                                        if (!updated) return;
                                         setDialogState(() {
                                           status = option;
                                         });
-                                        await _updateIncidentStatus(
-                                          reportId,
-                                          option,
-                                        );
                                       },
                                       style: OutlinedButton.styleFrom(
                                         side: BorderSide(
@@ -1465,6 +1713,32 @@ class _AdminMapPageState extends State<AdminMapPage>
                             fontFamily: 'Roboto',
                             fontSize: 12,
                             color: Color(0xFF4B5563),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: canCallReporter
+                                ? () => _callReporter(contactNumber)
+                                : null,
+                            icon: const Icon(Icons.call, size: 16),
+                            label: const Text(
+                              'Call Reporter',
+                              style: TextStyle(
+                                fontFamily: 'Roboto',
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFAC1B22),
+                              side: const BorderSide(color: Color(0xFFAC1B22)),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -1768,11 +2042,17 @@ class _AdminMapPageState extends State<AdminMapPage>
 
   String _normalizeStatusLabel(String status) {
     final normalized = status.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return 'PENDING';
+    }
     if (normalized == 'flagged' || normalized == 'unverified') {
       return 'FLAGGED';
     }
-    if (normalized == 'on-scene') {
+    if (normalized == 'on scene' || normalized == 'on-scene') {
       return 'ON SCENE';
+    }
+    if (normalized == 'incident resolved') {
+      return 'RESOLVED';
     }
     return status.toUpperCase();
   }

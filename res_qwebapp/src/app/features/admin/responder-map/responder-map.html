@@ -2,7 +2,7 @@
   <div class="map-header">
     <div>
       <h1>Response Tracker</h1>
-      <p>Track report, reporter, and responder locations inside Angeles City.</p>
+      <p>Live auto-sync for new reports and responder login/logout activity; refresh is optional.</p>
     </div>
     <div class="live-indicator" [class.offline]="!isListening">
       <span class="dot"></span>
@@ -14,6 +14,38 @@
     <section class="map-section">
       <div class="map-shell">
         <div id="responder-map"></div>
+        <div class="map-tools">
+          <button
+            class="map-tool-btn optional refresh"
+            type="button"
+            title="Optional hard refresh"
+            aria-label="Optional hard refresh"
+            (click)="hardRefresh()"
+          >
+            <span class="tool-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M20 4V10H14" />
+                <path d="M20 10C18.6 6.7 15.5 4.5 12 4.5C7.3 4.5 3.5 8.3 3.5 13C3.5 17.7 7.3 21.5 12 21.5C15.8 21.5 19.1 19 20.2 15.5" />
+              </svg>
+            </span>
+          </button>
+          <button
+            class="map-tool-btn focus"
+            type="button"
+            title="Fit all reports"
+            aria-label="Fit all reports"
+            (click)="fitToResponders()"
+          >
+            <span class="tool-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M9 3H3V9" />
+                <path d="M15 3H21V9" />
+                <path d="M9 21H3V15" />
+                <path d="M15 21H21V15" />
+              </svg>
+            </span>
+          </button>
+        </div>
         <div class="map-legend">
           <div class="legend-item">
             <span class="legend-dot report"></span>
@@ -34,48 +66,111 @@
         </div>
         <div *ngIf="mapLoadError" class="map-error">{{ mapLoadError }}</div>
       </div>
-
-      <div class="map-tools">
-        <button
-          class="map-tool-btn refresh"
-          type="button"
-          title="Hard refresh"
-          aria-label="Hard refresh"
-          (click)="hardRefresh()"
-        >
-          <span class="tool-icon">REF</span>
-        </button>
-        <button
-          class="map-tool-btn focus"
-          type="button"
-          title="Fit all"
-          aria-label="Fit all"
-          (click)="fitToResponders()"
-        >
-          <span class="tool-icon">FIT</span>
-        </button>
-      </div>
     </section>
 
     <aside class="side-panel">
       <div class="panel-section">
         <div class="panel-title-row">
           <div>
-            <h2>Active Deployments</h2>
-            <div class="subtext">Live positions linked to deployed reports.</div>
+            <h2>Dispatch Controls</h2>
+            <div class="subtext">Choose a pending report, then deploy an available responder.</div>
           </div>
-          <div class="count-pill">{{ tracks.length }}</div>
+          <div class="count-pill">{{ pendingReports.length }}</div>
+        </div>
+
+        <div class="dispatch-grid">
+          <div class="dispatch-column">
+            <div class="dispatch-heading">Pending Reports</div>
+            <div *ngIf="pendingReports.length === 0" class="empty-state">
+              No pending reports waiting for deployment.
+            </div>
+            <div class="dispatch-list">
+              <button
+                class="dispatch-item"
+                *ngFor="let report of pendingReports; trackBy: trackById"
+                (click)="selectReportForDispatch(report.reportId)"
+                [class.active]="report.reportId === selectedReportId"
+              >
+                <div class="dispatch-title">
+                  <span>{{ report.reportId }}</span>
+                  <span
+                    class="status-pill"
+                    [style.background]="getStatusColor(report.reportStatus)"
+                    [style.color]="getStatusTextColor(report.reportStatus)"
+                  >
+                    {{ getStatusLabel(report.reportStatus) }}
+                  </span>
+                </div>
+                <div class="card-meta">
+                  {{ report.incidentType || 'Incident' }} - {{ report.barangay || 'Angeles City' }}
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <div class="dispatch-column">
+            <div class="dispatch-heading">
+              Responders
+              <span>{{ availableRespondersCount }}/{{ responders.length }} available</span>
+            </div>
+            <div *ngIf="responders.length === 0" class="empty-state">No responders found.</div>
+            <div class="dispatch-list">
+              <button
+                class="dispatch-item responder"
+                *ngFor="let responder of responders; trackBy: trackResponderById"
+                (click)="selectResponder(responder.id)"
+                [class.active]="responder.id === selectedResponderId"
+                [class.unavailable]="!responder.isAvailable"
+                [disabled]="!responder.isAvailable"
+              >
+                <div class="dispatch-title">
+                  <span>{{ responder.fullName }}</span>
+                  <span
+                    class="status-pill"
+                    [class.available]="responder.activityStatus === 'available'"
+                    [class.busy]="responder.activityStatus === 'busy'"
+                    [class.offline]="responder.activityStatus === 'offline'"
+                  >
+                    {{ getResponderActivityLabel(responder) }}
+                  </span>
+                </div>
+                <div class="card-meta">{{ responder.contactNumber || responder.id }}</div>
+                <div *ngIf="responder.activityStatus === 'busy' && responder.assignedReportId" class="card-meta subtle">
+                  Assigned: {{ responder.assignedReportId }}
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <button
+          class="deploy-btn"
+          type="button"
+          [disabled]="!canDeploySelection || isDeploying"
+          (click)="deploySelectedResponder()"
+        >
+          {{ isDeploying ? 'Deploying...' : 'Deploy Selected Responder' }}
+        </button>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-title-row">
+          <div>
+            <h2>Active Deployments</h2>
+            <div class="subtext">Reports already assigned to responders.</div>
+          </div>
+          <div class="count-pill">{{ activeDeployments.length }}</div>
         </div>
 
         <div *ngIf="isLoading" class="empty-state">Loading deployment locations...</div>
-        <div *ngIf="!isLoading && tracks.length === 0" class="empty-state">
-          No responder locations available yet.
+        <div *ngIf="!isLoading && activeDeployments.length === 0" class="empty-state">
+          No active deployments yet.
         </div>
 
         <div class="responder-list compact">
           <button
             class="responder-card compact"
-            *ngFor="let track of tracks; trackBy: trackById"
+            *ngFor="let track of activeDeployments; trackBy: trackById"
             (click)="focusResponder(track.reportId)"
             [class.active]="track.reportId === selectedId"
           >
@@ -109,6 +204,14 @@
             <strong>{{ track.responderName || 'Unknown' }}</strong>
           </div>
           <div class="detail-row">
+            <span>Responder contact</span>
+            <strong>{{ track.responderContactNumber || 'Unknown' }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Reporter contact</span>
+            <strong>{{ track.reporterContactNumber || 'Unknown' }}</strong>
+          </div>
+          <div class="detail-row">
             <span>Status</span>
             <strong>{{ getStatusLabel(track.responderStatus || track.reportStatus) }}</strong>
           </div>
@@ -121,36 +224,34 @@
             <strong>{{ track.barangay || 'Angeles City' }}</strong>
           </div>
           <div class="detail-row">
-            <span>Report Lat</span>
-            <strong>{{ formatCoord(track.reportLocationLat) }}</strong>
-          </div>
-          <div class="detail-row">
-            <span>Report Lng</span>
-            <strong>{{ formatCoord(track.reportLocationLng) }}</strong>
-          </div>
-          <div class="detail-row">
-            <span>Reporter Lat</span>
-            <strong>{{ formatCoord(track.reporterLocationLat) }}</strong>
-          </div>
-          <div class="detail-row">
-            <span>Reporter Lng</span>
-            <strong>{{ formatCoord(track.reporterLocationLng) }}</strong>
-          </div>
-          <div class="detail-row">
-            <span>Responder Lat</span>
-            <strong>{{ formatCoord(track.responderLocationLat) }}</strong>
-          </div>
-          <div class="detail-row">
-            <span>Responder Lng</span>
-            <strong>{{ formatCoord(track.responderLocationLng) }}</strong>
-          </div>
-          <div class="detail-row">
             <span>Reporter update</span>
             <strong>{{ formatTimestamp(track.reporterLocationUpdatedAt) }}</strong>
           </div>
           <div class="detail-row">
             <span>Responder update</span>
             <strong>{{ formatTimestamp(track.responderLocationUpdatedAt) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Dispatch at</span>
+            <strong>{{ formatTimestamp(track.deployedAt || track.respondingAt) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Route</span>
+            <strong>
+              {{
+                track.responderLocationLat != null && track.responderLocationLng != null
+                  ? 'Responder to report'
+                  : 'Waiting for responder GPS'
+              }}
+            </strong>
+          </div>
+          <div class="detail-actions">
+            <button type="button" (click)="openDialer(track.reporterContactNumber)" [disabled]="!canDial(track.reporterContactNumber)">
+              Call Reporter
+            </button>
+            <button type="button" (click)="openDialer(track.responderContactNumber)" [disabled]="!canDial(track.responderContactNumber)">
+              Call Responder
+            </button>
           </div>
         </div>
       </div>

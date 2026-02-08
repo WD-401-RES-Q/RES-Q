@@ -1,14 +1,14 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../../../common/theme/app_theme.dart';
@@ -22,10 +22,9 @@ class MapPage extends StatefulWidget {
   State<MapPage> createState() => _MapPageState();
 }
 
-class _MapPageState extends State<MapPage> with TickerProviderStateMixin, WidgetsBindingObserver {
+class _MapPageState extends State<MapPage> {
   final MapController _mapController = MapController();
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
-  late final AnimationController _pinBounceController;
   WeatherState _weatherState = WeatherState.none;
 
   // Weather cache (shared across instances, 15 min TTL)
@@ -54,12 +53,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
   static const int _reportFetchLimit = 100;
   bool _hasShownReportLimitNotice = false;
   bool _hasShownIndexWarning = false;
-  final List<QueryDocumentSnapshot<Map<String, dynamic>>> _allReports = [];
-  DocumentSnapshot<Map<String, dynamic>>? _lastAllReportDoc;
-  bool _isAllReportsLoading = false;
-  bool _hasMoreAllReports = true;
-  String? _allReportsError;
-  static const int _allReportsPageSize = 50;
 
   bool _showEarthquake = true;
   bool _showFlood = true;
@@ -86,37 +79,18 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
-    _pinBounceController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    )..repeat(reverse: true);
     _subscribeToReports();
   }
 
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Pause animation when app is in background to save CPU
-    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      _pinBounceController.stop();
-    } else if (state == AppLifecycleState.resumed) {
-      if (!_pinBounceController.isAnimating) {
-        _pinBounceController.repeat(reverse: true);
-      }
-    }
-  }
-
-  @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _reportsSubscription?.cancel();
     _trackingTimer?.cancel();
     for (final timer in _resolvedRemovalTimers.values) {
       timer.cancel();
     }
-    _pinBounceController.dispose();
     _weatherCardOffset.dispose();
     super.dispose();
   }
@@ -274,7 +248,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
                                 height: 200,
                                 color: const Color(0xFFF3F4F6),
                                 child: const Center(
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 ),
                               ),
                               errorWidget: (context, url, error) {
@@ -364,13 +340,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
     });
 
     try {
-      final osrmRoute =
-          await _fetchRouteFromOsrm(_userLocation!, _destination!);
+      final osrmRoute = await _fetchRouteFromOsrm(
+        _userLocation!,
+        _destination!,
+      );
       if (osrmRoute != null && osrmRoute.points.isNotEmpty) {
         _routePoints = osrmRoute.points;
         _estimatedDistance = osrmRoute.distanceMeters / 1000;
-        _estimatedTime =
-            _formatDurationFromSeconds(osrmRoute.durationSeconds);
+        _estimatedTime = _formatDurationFromSeconds(osrmRoute.durationSeconds);
       } else {
         _routePoints = _generateSimulatedRoute(_userLocation!, _destination!);
         final distance = _calculateDistance(_routePoints);
@@ -445,10 +422,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
     return points;
   }
 
-  Future<_RouteResult?> _fetchRouteFromOsrm(
-    LatLng start,
-    LatLng end,
-  ) async {
+  Future<_RouteResult?> _fetchRouteFromOsrm(LatLng start, LatLng end) async {
     final uri = Uri.parse(
       'https://router.project-osrm.org/route/v1/driving/'
       '${start.longitude},${start.latitude};'
@@ -698,27 +672,29 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
         .orderBy('reportedAt', descending: true)
         .limit(_reportFetchLimit) // Limit most recent reports for performance
         .snapshots()
-        .listen((snapshot) {
-      _applyReportSnapshot(snapshot);
-    }, onError: (error) {
-      debugPrint('❌ Failed to subscribe to reports: $error');
-      if (!_hasShownIndexWarning &&
-          error is FirebaseException &&
-          error.code == 'failed-precondition') {
-        _hasShownIndexWarning = true;
-        if (kDebugMode) {
-          debugPrint(
-            'Firestore index required for reports query. Check logs for the index link.',
-          );
-        }
-      }
-    });
+        .listen(
+          (snapshot) {
+            _applyReportSnapshot(snapshot);
+          },
+          onError: (error) {
+            debugPrint('❌ Failed to subscribe to reports: $error');
+            if (!_hasShownIndexWarning &&
+                error is FirebaseException &&
+                error.code == 'failed-precondition') {
+              _hasShownIndexWarning = true;
+              if (kDebugMode) {
+                debugPrint(
+                  'Firestore index required for reports query. Check logs for the index link.',
+                );
+              }
+            }
+          },
+        );
   }
 
   Marker? _createIncidentMarker({
     required String reportId,
     required Map<String, dynamic> data,
-    bool animate = true,
   }) {
     final location = data['location'] as GeoPoint?;
     if (location == null) {
@@ -731,8 +707,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
     final statusLower = (data['status'] as String? ?? '').toLowerCase();
     final isResolved =
         statusLower == 'resolved' || statusLower == 'incident resolved';
-    final isFlagged =
-        statusLower == 'flagged' || statusLower == 'unverified';
+    final isFlagged = statusLower == 'flagged' || statusLower == 'unverified';
     final isInactive = isResolved || isFlagged;
 
     final markerSize = isInactive ? 56.0 : 72.0;
@@ -748,18 +723,10 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
             height: markerSize,
             fit: BoxFit.contain,
           ),
-          if (badge != null)
-            Positioned(
-              right: -2,
-              top: -2,
-              child: badge,
-            ),
+          if (badge != null) Positioned(right: -2, top: -2, child: badge),
         ],
       ),
     );
-    final markerContent =
-        animate ? _buildBouncyPin(child: baseContent) : baseContent;
-
     return Marker(
       key: ValueKey('incident-$reportId'),
       point: LatLng(location.latitude, location.longitude),
@@ -768,9 +735,9 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
       child: isInactive
           ? Opacity(
               opacity: 0.45,
-              child: IgnorePointer(ignoring: true, child: markerContent),
+              child: IgnorePointer(ignoring: true, child: baseContent),
             )
-          : markerContent,
+          : baseContent,
     );
   }
 
@@ -804,11 +771,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
         } else {
           _cancelResolvedRemoval(reportId);
         }
-        final marker = _createIncidentMarker(
-          reportId: reportId,
-          data: data,
-          animate: true,
-        );
+        final marker = _createIncidentMarker(reportId: reportId, data: data);
         if (marker != null) {
           _incidentMarkers.add(marker);
         }
@@ -835,264 +798,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
         );
       }
     }
-  }
-
-  Future<void> _loadMoreAllReports({bool reset = false}) async {
-    if (_isAllReportsLoading) {
-      return;
-    }
-    if (!reset && !_hasMoreAllReports) {
-      return;
-    }
-
-    if (reset) {
-      _allReports.clear();
-      _lastAllReportDoc = null;
-      _hasMoreAllReports = true;
-      _allReportsError = null;
-    }
-
-    setState(() {
-      _isAllReportsLoading = true;
-      if (reset) {
-        _allReportsError = null;
-      }
-    });
-
-    try {
-      Query<Map<String, dynamic>> query = FirebaseFirestore.instance
-          .collection('reports')
-          .orderBy('reportedAt', descending: true)
-          .limit(_allReportsPageSize);
-
-      if (_lastAllReportDoc != null) {
-        query = query.startAfterDocument(_lastAllReportDoc!);
-      }
-
-      final snapshot = await query.get();
-      if (snapshot.docs.isEmpty) {
-        _hasMoreAllReports = false;
-      } else {
-        _lastAllReportDoc = snapshot.docs.last;
-        _allReports.addAll(snapshot.docs);
-        if (snapshot.docs.length < _allReportsPageSize) {
-          _hasMoreAllReports = false;
-        }
-      }
-
-    } catch (e) {
-      _allReportsError = 'Failed to load reports';
-      debugPrint('❌ Failed to load reports: $e');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isAllReportsLoading = false;
-        });
-      }
-    }
-  }
-
-  void _openAllReportsSheet() {
-    if (_allReports.isEmpty && !_isAllReportsLoading) {
-      _loadMoreAllReports();
-    }
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.85,
-          minChildSize: 0.4,
-          maxChildSize: 0.95,
-          expand: false,
-          builder: (context, scrollController) {
-            Widget body;
-            if (_allReports.isEmpty) {
-              if (_isAllReportsLoading) {
-                body = const Center(
-                  child: CircularProgressIndicator(),
-                );
-              } else if (_allReportsError != null) {
-                body = Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _allReportsError ?? 'Failed to load reports',
-                        style: const TextStyle(color: Colors.red),
-                      ),
-                      const SizedBox(height: 12),
-                      ElevatedButton(
-                        onPressed: () => _loadMoreAllReports(reset: true),
-                        child: const Text('Retry'),
-                      ),
-                    ],
-                  ),
-                );
-              } else {
-                body = const Center(
-                  child: Text('No reports available.'),
-                );
-              }
-            } else {
-              body = NotificationListener<ScrollNotification>(
-                onNotification: (notification) {
-                  if (notification.metrics.axis == Axis.vertical &&
-                      notification.metrics.pixels >=
-                          notification.metrics.maxScrollExtent - 200) {
-                    _loadMoreAllReports();
-                  }
-                  return false;
-                },
-                child: ListView.separated(
-                  controller: scrollController,
-                  itemCount: _allReports.length +
-                      (_isAllReportsLoading || _hasMoreAllReports ? 1 : 0),
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    if (index >= _allReports.length) {
-                      if (_isAllReportsLoading) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 16),
-                          child: Center(
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        );
-                      }
-                      return const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        child: Center(
-                          child: Text(
-                            'Scroll to load more',
-                            style: TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 12,
-                              color: Color(0xFF6B7280),
-                            ),
-                          ),
-                        ),
-                      );
-                    }
-                    final doc = _allReports[index];
-                    final data = doc.data();
-                    final incidentType =
-                        data['incidentType'] as String? ?? 'Incident';
-                    final status = _normalizeStatusLabel(
-                      data['status'] as String? ?? 'Unverified',
-                    );
-                    final reportedAt = _parseReportedAt(data);
-                    final reportedLabel = reportedAt != null
-                        ? _formatResolvedTimestamp(reportedAt)
-                        : 'Unknown time';
-                    final reporter = data['name'] as String? ?? 'Unknown';
-                    final location = data['location'] as GeoPoint?;
-
-                    return ListTile(
-                      title: Text(
-                        incidentType,
-                        style: const TextStyle(
-                          fontFamily: 'Roboto',
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      subtitle: Text(
-                        '$status • $reportedLabel\nReported by $reporter',
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                        ),
-                      ),
-                      isThreeLine: true,
-                      trailing: IconButton(
-                        icon: const Icon(Icons.place_outlined),
-                        onPressed: location == null
-                            ? null
-                            : () {
-                                Navigator.pop(context);
-                                _focusReportOnMap(data);
-                              },
-                      ),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _showIncidentInfo(data);
-                      },
-                    );
-                  },
-                ),
-              );
-            }
-
-            return SafeArea(
-              child: Column(
-                children: [
-                  const SizedBox(height: 8),
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.list_alt, color: Color(0xFFAC1B22)),
-                        const SizedBox(width: 8),
-                        const Text(
-                          'All Reports',
-                          style: TextStyle(
-                            fontFamily: 'Roboto',
-                            fontWeight: FontWeight.w900,
-                            fontSize: 16,
-                            color: Color(0xFF111827),
-                          ),
-                        ),
-                        const Spacer(),
-                        IconButton(
-                          tooltip: 'Refresh',
-                          onPressed: () => _loadMoreAllReports(reset: true),
-                          icon: const Icon(Icons.refresh),
-                        ),
-                        IconButton(
-                          tooltip: 'Close',
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Expanded(child: body),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void _focusReportOnMap(Map<String, dynamic> data) {
-    final location = data['location'] as GeoPoint?;
-    if (location == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Report has no location data.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-    _mapController.move(
-      LatLng(location.latitude, location.longitude),
-      16.0,
-    );
-    _showIncidentInfo(data);
   }
 
   bool _shouldShowIncidentType(String incidentType) {
@@ -1147,6 +852,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
     }
     return null;
   }
+
   bool _shouldKeepResolved(String reportId, DateTime? resolvedAt) {
     if (resolvedAt == null) {
       return false;
@@ -1194,11 +900,11 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
   }
 
   Widget? _buildStatusBadge(String statusLower, double markerSize) {
-    final isResolved = statusLower == 'resolved' ||
-        statusLower == 'incident resolved';
-    final isFlagged =
-        statusLower == 'flagged' || statusLower == 'unverified';
-    final isAttention = statusLower == 'pending' ||
+    final isResolved =
+        statusLower == 'resolved' || statusLower == 'incident resolved';
+    final isFlagged = statusLower == 'flagged' || statusLower == 'unverified';
+    final isAttention =
+        statusLower == 'pending' ||
         statusLower == 'on scene' ||
         statusLower == 'responding';
 
@@ -1209,13 +915,13 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
     final color = isResolved
         ? const Color(0xFF00A458)
         : isFlagged
-            ? const Color(0xFFDC2626)
-            : const Color(0xFFAC1B22);
+        ? const Color(0xFFDC2626)
+        : const Color(0xFFAC1B22);
     final icon = isResolved
         ? Icons.check
         : isFlagged
-            ? Icons.close
-            : Icons.priority_high;
+        ? Icons.close
+        : Icons.priority_high;
 
     return Container(
       width: badgeSize,
@@ -1278,8 +984,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     final entry = _resolvedReports[index];
-                    final data =
-                        entry['data'] as Map<String, dynamic>? ?? {};
+                    final data = entry['data'] as Map<String, dynamic>? ?? {};
                     final incidentType =
                         data['incidentType'] as String? ?? 'Incident';
                     final resolvedAt = _parseResolvedAt(data);
@@ -1297,9 +1002,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
                       ),
                       subtitle: Text(
                         'Resolved: $resolvedLabel',
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                        ),
+                        style: const TextStyle(fontFamily: 'RobotoCondensed'),
                       ),
                       trailing: const Icon(Icons.info_outline),
                       onTap: () {
@@ -1314,21 +1017,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildBouncyPin({required Widget child}) {
-    return AnimatedBuilder(
-      animation: _pinBounceController,
-      child: child,
-      builder: (context, child) {
-        final eased = Curves.easeInOut.transform(_pinBounceController.value);
-        final offset = sin(eased * pi) * 4;
-        return Transform.translate(
-          offset: Offset(0, -offset),
-          child: child,
-        );
-      },
     );
   }
 
@@ -1350,10 +1038,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
               Color(0xFFFFE6A8),
             ],
           ),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.7),
-            width: 1.2,
-          ),
+          border: Border.all(color: Colors.white.withOpacity(0.7), width: 1.2),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.2),
@@ -1384,8 +1069,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
       right: 16,
       child: GestureDetector(
         onPanUpdate: (details) {
-          _weatherCardOffset.value =
-              _weatherCardOffset.value + details.delta;
+          _weatherCardOffset.value = _weatherCardOffset.value + details.delta;
         },
         onPanEnd: (details) {
           final currentOffset = _weatherCardOffset.value;
@@ -1504,10 +1188,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
             color: const Color(0xFFF4F7FF),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(
-            _weatherIcon(data.state),
-            color: const Color(0xFF2563EB),
-          ),
+          child: Icon(_weatherIcon(data.state), color: const Color(0xFF2563EB)),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -1741,17 +1422,6 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.resq.emergency_app',
                 maxZoom: 19,
-                tileBuilder: (context, tileWidget, tile) {
-                  return ColorFiltered(
-                    colorFilter: const ColorFilter.matrix([
-                      1.05, 0.03, 0.02, 0, 10,
-                      0.03, 1.05, 0.02, 0, 10,
-                      0.03, 0.05, 1.02, 0, 10,
-                      0, 0, 0, 1, 0,
-                    ]),
-                    child: tileWidget,
-                  );
-                },
               ),
 
               CircleLayer(
@@ -1863,53 +1533,61 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
                     horizontal: 16,
                     vertical: 12,
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  child: Stack(
+                    alignment: Alignment.center,
                     children: [
-                      const Text(
-                        'LIVE MAP',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'Roboto',
+                      SizedBox(
+                        height: 34,
+                        child: SvgPicture.asset(
+                          'assets/icons/RES-Q_LOGO.svg',
+                          fit: BoxFit.contain,
+                          colorFilter: const ColorFilter.mode(
+                            Colors.white,
+                            BlendMode.srcIn,
+                          ),
+                          placeholderBuilder: (context) => const Text(
+                            'RES-Q',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontFamily: 'Roboto',
+                              fontWeight: FontWeight.w700,
+                              fontSize: 18,
+                            ),
+                          ),
                         ),
                       ),
-                      Row(
-                        children: [
-                          if (_allowDestinationSelection) ...[
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_allowDestinationSelection) ...[
+                              _buildTopBarAction(
+                                icon: _isTracking ? Icons.stop : Icons.route,
+                                isActive: _isTracking,
+                                onTap: () {
+                                  if (_isTracking) {
+                                    _stopTracking();
+                                  } else if (_routePoints.isNotEmpty) {
+                                    _startTracking();
+                                  } else {
+                                    _showRouteDialog();
+                                  }
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                            ],
                             _buildTopBarAction(
-                              icon: _isTracking ? Icons.stop : Icons.route,
-                              isActive: _isTracking,
-                              onTap: () {
-                                if (_isTracking) {
-                                  _stopTracking();
-                                } else if (_routePoints.isNotEmpty) {
-                                  _startTracking();
-                                } else {
-                                  _showRouteDialog();
-                                }
-                              },
+                              icon: Icons.filter_list,
+                              onTap: _showFilterDialog,
                             ),
                             const SizedBox(width: 8),
+                            _buildTopBarAction(
+                              icon: Icons.refresh,
+                              onTap: _loadReportsFromFirestore,
+                            ),
                           ],
-                          // Filter button
-                          _buildTopBarAction(
-                            icon: Icons.filter_list,
-                            onTap: _showFilterDialog,
-                          ),
-                          const SizedBox(width: 8),
-                          // Refresh button
-                          _buildTopBarAction(
-                            icon: Icons.refresh,
-                            onTap: () {
-                              setState(() {
-                                _incidentMarkers.clear();
-                                _loadReportsFromFirestore();
-                              });
-                            },
-                          ),
-                        ],
+                        ),
                       ),
                     ],
                   ),
@@ -2074,19 +1752,12 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
                 _buildWeatherButton(),
                 const SizedBox(height: 12),
                 FloatingActionButton.small(
-                  heroTag: 'all_reports',
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFFAC1B22),
-                  onPressed: _openAllReportsSheet,
-                  child: const Icon(Icons.list_alt),
-                ),
-                const SizedBox(height: 12),
-                FloatingActionButton.small(
                   heroTag: 'resolved_reports',
                   backgroundColor: Colors.white,
                   foregroundColor: const Color(0xFFAC1B22),
-                  onPressed:
-                      _resolvedReports.isEmpty ? null : _openResolvedReportsSheet,
+                  onPressed: _resolvedReports.isEmpty
+                      ? null
+                      : _openResolvedReportsSheet,
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -2270,13 +1941,14 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
             }) {
               return Container(
                 margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: AppTheme.appRed.withOpacity(0.15),
-                  ),
+                  border: Border.all(color: AppTheme.appRed.withOpacity(0.15)),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.06),
@@ -2294,12 +1966,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
                       fit: BoxFit.contain,
                     ),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        label,
-                        style: AppText.body,
-                      ),
-                    ),
+                    Expanded(child: Text(label, style: AppText.body)),
                     Checkbox(
                       value: value,
                       onChanged: onChanged,
@@ -2356,9 +2023,7 @@ class _MapPageState extends State<MapPage> with TickerProviderStateMixin, Widget
                       assetPath: 'assets/icons/FINAL-EARTHQUAKE-ICON.png',
                       value: showEarthquake,
                       onChanged: (value) {
-                        setDialogState(
-                          () => showEarthquake = value ?? false,
-                        );
+                        setDialogState(() => showEarthquake = value ?? false);
                       },
                     ),
                     buildFilterRow(
@@ -2475,4 +2140,3 @@ class _WeatherData {
   final WeatherState state;
   final String description;
 }
-

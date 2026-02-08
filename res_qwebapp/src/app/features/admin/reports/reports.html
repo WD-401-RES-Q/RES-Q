@@ -239,22 +239,22 @@
         
         <div class="activity-item">
           <span class="activity-label">Responded by:</span>
-          <span class="activity-value">{{ report.respondingBy || report.arrivedBy || report.resolvedBy || report.flaggedBy || '—' }}</span>
+          <span class="activity-value">{{ getActivityResponder(report) }}</span>
         </div>
 
         <div class="activity-item">
-          <span class="activity-label">Time responding:</span>
-          <span class="activity-value">{{ report.respondingAt || '—' }}</span>
+          <span class="activity-label">Time Responding:</span>
+          <span class="activity-value">{{ getActivityTime(report.respondingAt) }}</span>
         </div>
 
         <div class="activity-item">
-          <span class="activity-label">Time on scene:</span>
-          <span class="activity-value">{{ report.arrivedAt || '—' }}</span>
+          <span class="activity-label">Time On Scene:</span>
+          <span class="activity-value">{{ getActivityTime(report.arrivedAt) }}</span>
         </div>
 
         <div class="activity-item">
-          <span class="activity-label">{{ (report.status || '').toUpperCase() === 'FLAGGED' ? 'Time flagged:' : 'Time approved:' }}</span>
-          <span class="activity-value">{{ (report.status || '').toUpperCase() === 'FLAGGED' ? (report.flaggedAt || '—') : (report.resolvedAt || report.approvedAt || '—') }}</span>
+          <span class="activity-label">{{ getFinalActivityLabel(report) }}</span>
+          <span class="activity-value">{{ getFinalActivityTime(report) }}</span>
         </div>
       </div>
 
@@ -339,3 +339,4 @@
     </div>
   </div>
 </section>
+

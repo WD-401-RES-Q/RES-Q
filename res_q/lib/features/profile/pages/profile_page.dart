@@ -7,6 +7,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -58,6 +59,37 @@ class _ProfilePageState extends State<ProfilePage>
   @override
   bool get wantKeepAlive => true;
   static const String _ratingStarAsset = 'assets/icons/rating-star.png';
+
+  Future<void> _updateSemiAdminPresenceOnLogout() async {
+    final userData = UserSession.currentUserData;
+    final role = (userData?['role'] ?? '').toString().toLowerCase();
+    if (!(role == 'semi-admin' ||
+        role == 'semi_admin' ||
+        role == 'responder')) {
+      return;
+    }
+
+    final docId =
+        (userData?['id'] ?? userData?['contactNumber'])?.toString().trim() ??
+        '';
+    if (docId.isEmpty) return;
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('semi_admins')
+          .doc(docId)
+          .set({
+            'isLoggedIn': false,
+            'status': 'offline',
+            'isAvailable': false,
+            'lastSeenAt': FieldValue.serverTimestamp(),
+            'sessionStartedAt': FieldValue.delete(),
+          }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Failed to mark semi-admin offline: $e');
+    }
+  }
+
   static const String _ratingEmptyCircleAsset =
       'assets/icons/rating-empty-circle.png';
 
@@ -262,8 +294,11 @@ class _ProfilePageState extends State<ProfilePage>
                     const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
+                          await _updateSemiAdminPresenceOnLogout();
                           UserSession.clear();
+                          await FirebaseAuth.instance.signOut();
+                          if (!mounted) return;
                           Navigator.of(context).pushAndRemoveUntil(
                             MaterialPageRoute(
                               builder: (_) => const LoginPage(),
