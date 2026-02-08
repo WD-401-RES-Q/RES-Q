@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../../common/services/user_session.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -146,44 +149,99 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Stream<List<_NotificationItem>> _getCombinedNotificationsStream() {
-    // Stream for announcements - we'll combine with reports
-    final announcementsStream = FirebaseFirestore.instance
+    final controller = StreamController<List<_NotificationItem>>();
+    final isResponder = _isResponderSession();
+    final responderDocId = _getResponderDocId();
+
+    List<_NotificationItem> announcements = [];
+    List<_NotificationItem> reports = [];
+
+    void emitCombined() {
+      if (controller.isClosed) return;
+      final combined = [...announcements, ...reports]
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      controller.add(combined);
+    }
+
+    final announcementsSub = FirebaseFirestore.instance
         .collection('announcements')
         .orderBy('createdAt', descending: true)
         .limit(20)
         .snapshots()
-        .map((snapshot) {
-          return snapshot.docs
+        .listen((snapshot) {
+          announcements = snapshot.docs
               .where((doc) {
                 final data = doc.data();
                 return data['isPlaceholder'] != true;
               })
               .map((doc) => _NotificationItem.fromAnnouncement(doc))
               .toList();
-        });
+          emitCombined();
+        }, onError: controller.addError);
 
-    // Combine announcements with reports
-    return announcementsStream.asyncMap((announcements) async {
-      final reportsSnapshot = await FirebaseFirestore.instance
+    Query<Map<String, dynamic>> reportsQuery;
+    if (isResponder && responderDocId != null && responderDocId.isNotEmpty) {
+      reportsQuery = FirebaseFirestore.instance
+          .collection('reports')
+          .where('responderId', isEqualTo: responderDocId)
+          .limit(40);
+    } else if (isResponder) {
+      reportsQuery = FirebaseFirestore.instance
+          .collection('reports')
+          .where('responderId', isEqualTo: '__none__')
+          .limit(1);
+    } else {
+      reportsQuery = FirebaseFirestore.instance
           .collection('reports')
           .orderBy('reportedAt', descending: true)
-          .limit(30)
-          .get();
+          .limit(30);
+    }
 
-      final reports = reportsSnapshot.docs
+    final reportsSub = reportsQuery.snapshots().listen((snapshot) {
+      reports = snapshot.docs
           .where((doc) {
             final data = doc.data();
-            return data['location'] != null;
+            if (isResponder) {
+              return (data['responderId'] as String?)?.trim().isNotEmpty ==
+                  true;
+            }
+            return data['location'] != null ||
+                data['incidentLocation'] != null ||
+                data['reporterLocation'] != null;
           })
-          .map((doc) => _NotificationItem.fromReport(doc))
+          .map(
+            (doc) => _NotificationItem.fromReport(
+              doc,
+              deploymentNotification: isResponder,
+            ),
+          )
           .toList();
+      emitCombined();
+    }, onError: controller.addError);
 
-      // Combine and sort by timestamp
-      final combined = [...announcements, ...reports];
-      combined.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    controller.onCancel = () async {
+      await announcementsSub.cancel();
+      await reportsSub.cancel();
+    };
 
-      return combined;
-    });
+    return controller.stream;
+  }
+
+  bool _isResponderSession() {
+    final role = (UserSession.currentUserData?['role'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    return role == 'semi-admin' || role == 'semi_admin' || role == 'responder';
+  }
+
+  String? _getResponderDocId() {
+    final userData = UserSession.currentUserData;
+    final rawId =
+        (userData?['id'] ?? userData?['contactNumber'])?.toString().trim() ??
+        '';
+    if (rawId.isEmpty) return null;
+    return rawId;
   }
 
   Widget _buildNotificationCard(_NotificationItem notification) {
@@ -754,10 +812,16 @@ class _NotificationItem {
   }
 
   factory _NotificationItem.fromReport(
-    DocumentSnapshot<Map<String, dynamic>> doc,
-  ) {
+    DocumentSnapshot<Map<String, dynamic>> doc, {
+    bool deploymentNotification = false,
+  }) {
     final data = doc.data()!;
-    final ts = data['reportedAt'];
+    final ts = deploymentNotification
+        ? (data['responderAssignedAt'] ??
+              data['deployedAt'] ??
+              data['respondingAt'] ??
+              data['reportedAt'])
+        : data['reportedAt'];
     DateTime timestamp = DateTime.now();
     if (ts is Timestamp) {
       timestamp = ts.toDate();
@@ -767,21 +831,32 @@ class _NotificationItem {
     final reporter = data['name'] as String?;
     final details = data['details'] as String?;
     final barangay = data['barangay'] as String?;
-    final status = data['status'] as String?;
+    final status = deploymentNotification
+        ? (data['responderStatus'] as String? ?? data['status'] as String?)
+        : data['status'] as String?;
+    final title = deploymentNotification
+        ? 'You were deployed to a $incidentType incident'
+        : '$incidentType incident reported';
+    final subtitle = deploymentNotification
+        ? (details?.trim().isNotEmpty == true
+              ? details
+              : 'Open map to view assigned report details.')
+        : details;
 
-    // Check if explicitly marked as new, otherwise use time-based logic (6 hours)
+    // Check if explicitly marked as new, otherwise use time-based logic.
     bool isNew;
     if (data['isNew'] != null) {
       isNew = data['isNew'] as bool;
     } else {
-      isNew = DateTime.now().difference(timestamp).inHours < 6;
+      final thresholdHours = deploymentNotification ? 12 : 6;
+      isNew = DateTime.now().difference(timestamp).inHours < thresholdHours;
     }
 
     return _NotificationItem(
       id: doc.id,
       type: _NotificationType.incident,
-      title: '$incidentType incident reported',
-      subtitle: details,
+      title: title,
+      subtitle: subtitle,
       timestamp: timestamp,
       incidentType: incidentType,
       location: barangay ?? 'Location not specified',

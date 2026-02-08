@@ -7,6 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
@@ -45,6 +46,15 @@ class AdminComment {
 class _AdminMapPageState extends State<AdminMapPage>
     with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   final MapController _mapController = MapController();
+  final FlutterLocalNotificationsPlugin _localNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
+  static const AndroidNotificationChannel _dispatchNotificationChannel =
+      AndroidNotificationChannel(
+        'resq_dispatch',
+        'RES-Q Dispatch',
+        description: 'Deployment and status updates for responders',
+        importance: Importance.high,
+      );
   late final AnimationController _pinBounceController;
   WeatherState _weatherState = WeatherState.none;
   bool _showWeatherCard = false;
@@ -57,6 +67,12 @@ class _AdminMapPageState extends State<AdminMapPage>
   String? _autoAssignedReportId;
   String? _lastPresenceStatus;
   bool? _lastPresenceAvailability;
+  bool _localNotificationsReady = false;
+  final Map<String, String> _lastKnownStatusByReportId = {};
+  bool _showInAppDispatchBubble = false;
+  String _dispatchBubbleTitle = '';
+  String _dispatchBubbleMessage = '';
+  Timer? _dispatchBubbleTimer;
 
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
@@ -110,12 +126,14 @@ class _AdminMapPageState extends State<AdminMapPage>
       duration: const Duration(milliseconds: 1600),
     )..repeat(reverse: true);
     _startResponderLocationSharing();
+    unawaited(_initializeDispatchNotifications());
     unawaited(_syncOwnPresence(status: 'available', isAvailable: true));
   }
 
   @override
   void dispose() {
     _trackingTimer?.cancel();
+    _dispatchBubbleTimer?.cancel();
     _reportsSubscription?.cancel();
     _responderLocationSub?.cancel();
     for (final timer in _resolvedRemovalTimers.values) {
@@ -127,6 +145,141 @@ class _AdminMapPageState extends State<AdminMapPage>
 
   @override
   bool get wantKeepAlive => true;
+
+  Future<void> _initializeDispatchNotifications() async {
+    try {
+      const initializationSettingsAndroid = AndroidInitializationSettings(
+        '@mipmap/ic_launcher',
+      );
+      const initializationSettingsIOS = DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
+      const initializationSettings = InitializationSettings(
+        android: initializationSettingsAndroid,
+        iOS: initializationSettingsIOS,
+      );
+
+      await _localNotificationsPlugin.initialize(initializationSettings);
+      final androidPlugin = _localNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+      await androidPlugin?.createNotificationChannel(
+        _dispatchNotificationChannel,
+      );
+      await androidPlugin?.requestNotificationsPermission();
+      await _localNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin
+          >()
+          ?.requestPermissions(alert: true, badge: true, sound: true);
+
+      _localNotificationsReady = true;
+    } catch (e) {
+      debugPrint('Failed to initialize dispatch notifications: $e');
+    }
+  }
+
+  Future<void> _notifyResponderEvent({
+    required String title,
+    required String message,
+    String? payload,
+  }) async {
+    _showDispatchBubble(title: title, message: message);
+    if (!_localNotificationsReady) return;
+
+    try {
+      const androidDetails = AndroidNotificationDetails(
+        'resq_dispatch',
+        'RES-Q Dispatch',
+        channelDescription: 'Deployment and status updates for responders',
+        importance: Importance.high,
+        priority: Priority.high,
+        playSound: true,
+        icon: '@mipmap/ic_launcher',
+        color: Color(0xFFAC1B22),
+      );
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+      const details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      await _localNotificationsPlugin.show(
+        DateTime.now().millisecondsSinceEpoch.remainder(1 << 31),
+        title,
+        message,
+        details,
+        payload: payload ?? 'dispatch',
+      );
+    } catch (e) {
+      debugPrint('Failed to show dispatch notification: $e');
+    }
+  }
+
+  void _showDispatchBubble({required String title, required String message}) {
+    _dispatchBubbleTimer?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _dispatchBubbleTitle = title;
+      _dispatchBubbleMessage = message;
+      _showInAppDispatchBubble = true;
+    });
+    _dispatchBubbleTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      setState(() {
+        _showInAppDispatchBubble = false;
+      });
+    });
+  }
+
+  void _announceResponderStatusChange({
+    required String reportId,
+    required String statusLabel,
+  }) {
+    _lastKnownStatusByReportId[reportId] = statusLabel;
+    unawaited(
+      _notifyResponderEvent(
+        title: 'Status updated',
+        message: 'Report $reportId is now $statusLabel.',
+        payload: 'status:$reportId:$statusLabel',
+      ),
+    );
+  }
+
+  void _syncAssignedStatusNotifications(
+    Map<String, String> assignedStatusByReportId,
+  ) {
+    final staleReportIds = _lastKnownStatusByReportId.keys
+        .where((id) => !assignedStatusByReportId.containsKey(id))
+        .toList();
+    for (final id in staleReportIds) {
+      _lastKnownStatusByReportId.remove(id);
+    }
+
+    for (final entry in assignedStatusByReportId.entries) {
+      final reportId = entry.key;
+      final nextStatus = entry.value;
+      final previousStatus = _lastKnownStatusByReportId[reportId];
+      if (previousStatus == null) {
+        _lastKnownStatusByReportId[reportId] = nextStatus;
+        continue;
+      }
+      if (previousStatus == nextStatus) {
+        continue;
+      }
+      _announceResponderStatusChange(
+        reportId: reportId,
+        statusLabel: nextStatus,
+      );
+    }
+  }
 
   Widget _buildIncidentMarker({
     required String assetPath,
@@ -202,6 +355,37 @@ class _AdminMapPageState extends State<AdminMapPage>
     _incidentMarkers.clear();
     _reporterMarkers.clear();
     final resolvedReports = <Map<String, dynamic>>[];
+    final userData = UserSession.currentUserData;
+    final responderPhone = _normalizePhoneValue(
+      userData?['contactNumber'] ?? userData?['phoneNumber'],
+    );
+    final responderName = (userData?['fullName'] ?? userData?['username'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final authUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+    final assignedReportIds = <String>{};
+    final assignedStatusByReportId = <String, String>{};
+
+    for (final doc in snapshot.docs) {
+      final data = doc.data();
+      final responderStatus = _normalizeStatusLabel(
+        data['responderStatus'] as String? ?? data['status'] as String? ?? '',
+      );
+      if (_isClosedIncidentStatus(responderStatus)) {
+        continue;
+      }
+      if (_matchesCurrentResponderAssignment(
+        data: data,
+        responderPhone: responderPhone,
+        responderName: responderName,
+        authUid: authUid,
+      )) {
+        assignedReportIds.add(doc.id);
+        assignedStatusByReportId[doc.id] = responderStatus;
+      }
+    }
+
     for (final doc in snapshot.docs) {
       final data = doc.data();
       final incidentPoint =
@@ -210,6 +394,9 @@ class _AdminMapPageState extends State<AdminMapPage>
       if (incidentPoint == null) continue;
 
       final reportId = doc.id;
+      if (!assignedReportIds.contains(reportId)) {
+        continue;
+      }
       final status = (data['status'] as String? ?? '').toLowerCase();
       final incidentType = data['incidentType'] as String? ?? 'Unknown';
       final shouldShowType = _shouldShowIncidentType(incidentType);
@@ -280,6 +467,7 @@ class _AdminMapPageState extends State<AdminMapPage>
         _resolvedReports = resolvedReports;
       });
     }
+    _syncAssignedStatusNotifications(assignedStatusByReportId);
     _syncAutoAssignedReport(snapshot);
     print('Loaded ${snapshot.docs.length} reports from Firestore');
   }
@@ -294,6 +482,35 @@ class _AdminMapPageState extends State<AdminMapPage>
         normalized == 'incident resolved' ||
         normalized == 'flagged' ||
         normalized == 'unverified';
+  }
+
+  bool _matchesCurrentResponderAssignment({
+    required Map<String, dynamic> data,
+    required String responderPhone,
+    required String responderName,
+    required String authUid,
+  }) {
+    final assignedId = (data['responderId'] as String? ?? '').trim();
+    final assignedIdPhone = _normalizePhoneValue(assignedId);
+    final assignedContactPhone = _normalizePhoneValue(
+      data['responderContactNumber'] ?? data['responderPhone'],
+    );
+    final assignedName = (data['responderName'] as String? ?? '')
+        .trim()
+        .toLowerCase();
+
+    final matchesPhone =
+        responderPhone.isNotEmpty &&
+        (assignedIdPhone == responderPhone ||
+            assignedContactPhone == responderPhone);
+    final matchesUid =
+        authUid.isNotEmpty && assignedId.isNotEmpty && assignedId == authUid;
+    final matchesName =
+        responderName.isNotEmpty &&
+        assignedName.isNotEmpty &&
+        assignedName == responderName;
+
+    return matchesPhone || matchesUid || matchesName;
   }
 
   DateTime _parseSortTimestamp(Object? raw) {
@@ -350,15 +567,17 @@ class _AdminMapPageState extends State<AdminMapPage>
         .toString()
         .trim()
         .toLowerCase();
-    final authUid = FirebaseAuth.instance.currentUser?.uid.trim();
+    final authUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
 
-    if ((responderPhone.isEmpty && responderName.isEmpty) &&
-        (authUid == null || authUid.isEmpty)) {
+    if ((responderPhone.isEmpty && responderName.isEmpty) && authUid.isEmpty) {
       return;
     }
 
+    final previousAutoAssignedReportId = _autoAssignedReportId;
     String? matchedReportId;
     LatLng? matchedDestination;
+    String matchedStatusLabel = 'PENDING';
+    String matchedIncidentType = 'incident';
     DateTime latestAssignedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
     for (final doc in snapshot.docs) {
@@ -372,27 +591,12 @@ class _AdminMapPageState extends State<AdminMapPage>
         continue;
       }
 
-      final assignedId = (data['responderId'] as String? ?? '').trim();
-      final assignedIdPhone = _normalizePhoneValue(assignedId);
-      final assignedContactPhone = _normalizePhoneValue(
-        data['responderContactNumber'] ?? data['responderPhone'],
-      );
-      final assignedName = (data['responderName'] as String? ?? '')
-          .trim()
-          .toLowerCase();
-
-      final matchesPhone =
-          responderPhone.isNotEmpty &&
-          (assignedIdPhone == responderPhone ||
-              assignedContactPhone == responderPhone);
-      final matchesUid =
-          authUid != null && authUid.isNotEmpty && assignedId == authUid;
-      final matchesName =
-          responderName.isNotEmpty &&
-          assignedName.isNotEmpty &&
-          assignedName == responderName;
-
-      if (!matchesPhone && !matchesUid && !matchesName) {
+      if (!_matchesCurrentResponderAssignment(
+        data: data,
+        responderPhone: responderPhone,
+        responderName: responderName,
+        authUid: authUid,
+      )) {
         continue;
       }
 
@@ -416,13 +620,42 @@ class _AdminMapPageState extends State<AdminMapPage>
       latestAssignedAt = assignedAt;
       matchedReportId = doc.id;
       matchedDestination = incidentPoint;
+      matchedStatusLabel = _normalizeStatusLabel(
+        data['responderStatus'] as String? ?? data['status'] as String? ?? '',
+      );
+      matchedIncidentType = (data['incidentType'] as String? ?? 'incident')
+          .toString()
+          .trim();
     }
 
     if (matchedReportId == null || matchedDestination == null) {
       _autoAssignedReportId = null;
+      _activeReportId = null;
+      if (mounted) {
+        final hasActiveRoute =
+            _destination != null ||
+            _routePoints.isNotEmpty ||
+            _routeMarkers.isNotEmpty ||
+            _routePolylines.isNotEmpty ||
+            _isTracking;
+        if (hasActiveRoute) {
+          _clearRoute();
+        }
+      } else {
+        _destination = null;
+        _routePoints.clear();
+        _routeMarkers.clear();
+        _routePolylines.clear();
+        _routeInstructions = '';
+        _isTracking = false;
+        _currentStepIndex = 0;
+        _trackingTimer?.cancel();
+      }
       unawaited(_syncOwnPresence(status: 'available', isAvailable: true));
       return;
     }
+
+    final assignmentChanged = previousAutoAssignedReportId != matchedReportId;
 
     final shouldRefreshRoute =
         _autoAssignedReportId != matchedReportId ||
@@ -436,6 +669,17 @@ class _AdminMapPageState extends State<AdminMapPage>
             20;
 
     _autoAssignedReportId = matchedReportId;
+    _lastKnownStatusByReportId[matchedReportId] = matchedStatusLabel;
+    if (assignmentChanged) {
+      unawaited(
+        _notifyResponderEvent(
+          title: 'New deployment',
+          message:
+              'You were deployed to ${matchedIncidentType.toUpperCase()} (Report $matchedReportId).',
+          payload: 'deploy:$matchedReportId',
+        ),
+      );
+    }
     unawaited(_syncOwnPresence(status: 'busy', isAvailable: false));
     if (!shouldRefreshRoute) {
       return;
@@ -1155,6 +1399,10 @@ class _AdminMapPageState extends State<AdminMapPage>
               'responderStatusUpdatedBy': responderName,
             });
         _cancelResolvedRemoval(reportId);
+        _announceResponderStatusChange(
+          reportId: reportId,
+          statusLabel: 'FLAGGED',
+        );
         _scheduleResolvedRemoval(reportId, DateTime.now(), Duration.zero);
         return true;
       }
@@ -1176,6 +1424,10 @@ class _AdminMapPageState extends State<AdminMapPage>
               'flaggedBy': FieldValue.delete(),
             });
         _cancelResolvedRemoval(reportId);
+        _announceResponderStatusChange(
+          reportId: reportId,
+          statusLabel: 'RESPONDING',
+        );
         return true;
       }
 
@@ -1196,6 +1448,10 @@ class _AdminMapPageState extends State<AdminMapPage>
               'flaggedBy': FieldValue.delete(),
             });
         _cancelResolvedRemoval(reportId);
+        _announceResponderStatusChange(
+          reportId: reportId,
+          statusLabel: 'ON SCENE',
+        );
         return true;
       }
 
@@ -1214,6 +1470,10 @@ class _AdminMapPageState extends State<AdminMapPage>
             'flaggedBy': FieldValue.delete(),
           });
       _cancelResolvedRemoval(reportId);
+      _announceResponderStatusChange(
+        reportId: reportId,
+        statusLabel: normalizedStatus,
+      );
       return true;
     } catch (e) {
       if (mounted) {
@@ -1250,6 +1510,10 @@ class _AdminMapPageState extends State<AdminMapPage>
             'responderStatusUpdatedBy': responderName,
           });
       _cancelResolvedRemoval(reportId);
+      _announceResponderStatusChange(
+        reportId: reportId,
+        statusLabel: 'RESOLVED',
+      );
       _scheduleResolvedRemoval(reportId, resolvedTime, Duration.zero);
       if (_activeReportId == reportId) {
         _activeReportId = null;
@@ -2620,6 +2884,92 @@ class _AdminMapPageState extends State<AdminMapPage>
     );
   }
 
+  Widget _buildDispatchBubbleOverlay(BuildContext context) {
+    final routeCardVisible = _routeInstructions.isNotEmpty && !_isRouting;
+    final topOffset =
+        MediaQuery.of(context).padding.top + (routeCardVisible ? 188 : 72);
+    return Positioned(
+      top: topOffset,
+      left: 16,
+      right: 16,
+      child: IgnorePointer(
+        ignoring: true,
+        child: AnimatedSlide(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          offset: _showInAppDispatchBubble
+              ? Offset.zero
+              : const Offset(0, -0.25),
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 220),
+            opacity: _showInAppDispatchBubble ? 1 : 0,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF111827).withOpacity(0.95),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF1F2937)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: Icon(
+                      Icons.notifications_active,
+                      color: Color(0xFFFBBF24),
+                      size: 18,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _dispatchBubbleTitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontFamily: 'Roboto',
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _dispatchBubbleMessage,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFFD1D5DB),
+                            fontSize: 12,
+                            fontFamily: 'Roboto',
+                            fontWeight: FontWeight.w500,
+                            height: 1.2,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -2848,6 +3198,8 @@ class _AdminMapPageState extends State<AdminMapPage>
               ),
             ),
           ),
+
+          _buildDispatchBubbleOverlay(context),
 
           // Responder route information card
           if (_routeInstructions.isNotEmpty && !_isRouting)
