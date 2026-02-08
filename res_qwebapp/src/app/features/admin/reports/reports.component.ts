@@ -21,6 +21,7 @@ interface Report {
   redFlags?: number;
   comments?: number;
   status: 'Pending' | 'Approved' | 'Flagged';
+  incidentStatus?: string;
   sortTimestamp?: number;
   approvedBy?: string;
   approvedAt?: string;
@@ -214,6 +215,40 @@ export class ReportsComponent implements OnInit, OnDestroy {
     }
   }
 
+  private valueOrDash(value?: string | null): string {
+    const normalized = (value ?? '').toString().trim();
+    return normalized.length > 0 ? normalized : '-';
+  }
+
+  getActivityResponder(report: Report): string {
+    return this.valueOrDash(
+      report.respondingBy ??
+          report.arrivedBy ??
+          report.resolvedBy ??
+          report.flaggedBy,
+    );
+  }
+
+  getActivityTime(value?: string): string {
+    return this.valueOrDash(value);
+  }
+
+  getFinalActivityLabel(report: Report): string {
+    const status = (report.incidentStatus ?? report.status ?? '').toUpperCase();
+    return status === 'FLAGGED'
+      ? 'Time Flagged:'
+      : 'Time Approved:';
+  }
+
+  getFinalActivityTime(report: Report): string {
+    const status = (report.incidentStatus ?? report.status ?? '').toUpperCase();
+    const isFlagged = status === 'FLAGGED';
+    if (isFlagged) {
+      return this.valueOrDash(report.flaggedAt);
+    }
+    return this.valueOrDash(report.resolvedAt ?? report.approvedAt);
+  }
+
   ngOnDestroy() {
     this.subscriptions.forEach(sub => sub.unsubscribe());
   }
@@ -299,6 +334,7 @@ export class ReportsComponent implements OnInit, OnDestroy {
       redFlags: doc.redFlags ?? 0,
       comments: doc.comments ?? 0,
       status: status,
+      incidentStatus: (doc.status ?? '').toString().toUpperCase(),
       sortTimestamp,
       approvedBy: doc.approvedBy ?? undefined,
       approvedAt: doc.approvedAt ? this.formatTimestamp(doc.approvedAt) : undefined,

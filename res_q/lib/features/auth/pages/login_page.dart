@@ -53,6 +53,41 @@ class _LoginPageState extends State<LoginPage>
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  Future<void> _updateSemiAdminPresence({
+    required Map<String, dynamic> semiAdminData,
+    required bool isLoggedIn,
+  }) async {
+    try {
+      final docId =
+          (semiAdminData['id'] ?? semiAdminData['contactNumber'])
+              ?.toString()
+              .trim() ??
+          '';
+      if (docId.isEmpty) return;
+
+      final payload = <String, dynamic>{
+        'isLoggedIn': isLoggedIn,
+        'status': isLoggedIn ? 'available' : 'offline',
+        'isAvailable': isLoggedIn,
+        'lastSeenAt': FieldValue.serverTimestamp(),
+      };
+
+      if (isLoggedIn) {
+        payload['lastLoginAt'] = FieldValue.serverTimestamp();
+        payload['sessionStartedAt'] = FieldValue.serverTimestamp();
+      } else {
+        payload['sessionStartedAt'] = FieldValue.delete();
+      }
+
+      await _firestore
+          .collection('semi_admins')
+          .doc(docId)
+          .set(payload, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Failed to update semi-admin presence: $e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -161,6 +196,10 @@ class _LoginPageState extends State<LoginPage>
           ...semiAdminData,
           'id': semiAdminQuery.docs.first.id,
         });
+        await _updateSemiAdminPresence(
+          semiAdminData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
+          isLoggedIn: true,
+        );
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -269,7 +308,12 @@ class _LoginPageState extends State<LoginPage>
       setState(() => _initializing = false);
     }
     // Run Firestore setup in background so local login prefill is instant.
-    unawaited(_seedSemiAdminsIfEmpty());
+    unawaited(_seedAndBackfillSemiAdminPresence());
+  }
+
+  Future<void> _seedAndBackfillSemiAdminPresence() async {
+    await _seedSemiAdminsIfEmpty();
+    await _backfillSemiAdminPresenceDefaults();
   }
 
   Future<void> _loadSavedData() async {
@@ -451,6 +495,10 @@ class _LoginPageState extends State<LoginPage>
           ...semiAdminData,
           'id': semiAdminQuery.docs.first.id,
         });
+        await _updateSemiAdminPresence(
+          semiAdminData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
+          isLoggedIn: true,
+        );
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
@@ -552,6 +600,9 @@ class _LoginPageState extends State<LoginPage>
           'role': 'semi-admin',
           'contactNumber': '+639111111111',
           'pin': '1111',
+          'isLoggedIn': false,
+          'status': 'offline',
+          'isAvailable': false,
         },
         {
           'fullName': 'Semi Admin Two',
@@ -559,6 +610,9 @@ class _LoginPageState extends State<LoginPage>
           'role': 'semi-admin',
           'contactNumber': '+639222222222',
           'pin': '2222',
+          'isLoggedIn': false,
+          'status': 'offline',
+          'isAvailable': false,
         },
         {
           'fullName': 'Semi Admin Three',
@@ -566,6 +620,9 @@ class _LoginPageState extends State<LoginPage>
           'role': 'semi-admin',
           'contactNumber': '+639333333333',
           'pin': '3333',
+          'isLoggedIn': false,
+          'status': 'offline',
+          'isAvailable': false,
         },
         {
           'fullName': 'Semi Admin Four',
@@ -573,6 +630,9 @@ class _LoginPageState extends State<LoginPage>
           'role': 'semi-admin',
           'contactNumber': '+639444444444',
           'pin': '4444',
+          'isLoggedIn': false,
+          'status': 'offline',
+          'isAvailable': false,
         },
         {
           'fullName': 'Semi Admin Five',
@@ -580,6 +640,9 @@ class _LoginPageState extends State<LoginPage>
           'role': 'semi-admin',
           'contactNumber': '+639555555555',
           'pin': '5555',
+          'isLoggedIn': false,
+          'status': 'offline',
+          'isAvailable': false,
         },
       ];
 
@@ -595,6 +658,63 @@ class _LoginPageState extends State<LoginPage>
     } catch (e) {
       debugPrint('❌ Failed to seed semi_admins: $e');
       debugPrint('Stack trace: ${StackTrace.current}');
+    }
+  }
+
+  Future<void> _backfillSemiAdminPresenceDefaults() async {
+    try {
+      final snapshot = await _firestore.collection('semi_admins').get();
+      if (snapshot.docs.isEmpty) return;
+
+      final batch = _firestore.batch();
+      var updateCount = 0;
+
+      for (final snapshotDoc in snapshot.docs) {
+        final data = snapshotDoc.data();
+        final patch = <String, dynamic>{};
+
+        final hasIsLoggedIn = data['isLoggedIn'] is bool;
+        final isLoggedIn = hasIsLoggedIn ? data['isLoggedIn'] as bool : false;
+        final hasIsAvailable = data['isAvailable'] is bool;
+        final statusRaw = (data['status'] as String? ?? '')
+            .trim()
+            .toLowerCase();
+
+        if (!hasIsLoggedIn) {
+          patch['isLoggedIn'] = false;
+        }
+        if (!hasIsAvailable) {
+          patch['isAvailable'] = false;
+        }
+
+        if (!isLoggedIn) {
+          if (statusRaw != 'offline') {
+            patch['status'] = 'offline';
+          }
+          if (data['isAvailable'] != false) {
+            patch['isAvailable'] = false;
+          }
+        } else if (statusRaw != 'busy' && statusRaw != 'available') {
+          patch['status'] = 'available';
+        }
+
+        if (patch.isEmpty) {
+          continue;
+        }
+
+        patch['lastSeenAt'] = FieldValue.serverTimestamp();
+        batch.set(snapshotDoc.reference, patch, SetOptions(merge: true));
+        updateCount++;
+      }
+
+      if (updateCount > 0) {
+        await batch.commit();
+        debugPrint(
+          'Backfilled semi-admin presence defaults for $updateCount responders',
+        );
+      }
+    } catch (e) {
+      debugPrint('Failed to backfill semi-admin presence defaults: $e');
     }
   }
 

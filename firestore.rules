@@ -28,6 +28,22 @@ service cloud.firestore {
           request.resource.data.userPhone.matches('^[0-9]+$');  // Validate phone number format
     }
 
+    // Semi-admin presence updates (online/offline heartbeat)
+    function isValidSemiAdminPresenceUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([
+            'isLoggedIn',
+            'status',
+            'isAvailable',
+            'lastSeenAt',
+            'lastLoginAt',
+            'sessionStartedAt'
+          ]) &&
+          request.resource.data.isLoggedIn is bool &&
+          request.resource.data.isAvailable is bool &&
+          request.resource.data.status in ['online', 'offline', 'available', 'unavailable', 'busy'];
+    }
+
     // Basic comment payload checks for authored content
     function isValidCommentCreate() {
       return request.resource.data.author is string &&
@@ -62,7 +78,8 @@ service cloud.firestore {
     // Semi-admins collection - allow read for mobile login checks
     match /semi_admins/{docId} {
       allow read: if true;
-      allow write: if false; // Only backend scripts
+      allow update: if isValidSemiAdminPresenceUpdate();
+      allow create, delete: if false; // Only backend scripts
     }
 
     // Users collection - authenticated users can only read/write their own
