@@ -21,7 +21,7 @@ import '../../auth/pages/login_page.dart';
 // TODO: Replace with your actual email address for feedback/reports
 // This email will receive all user feedback and problem reports
 // ============================================================================
-const String kFeedbackEmail = 'YOUR_EMAIL_HERE@example.com';
+const String kFeedbackEmail = 'resq42649@gmail.com';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -40,20 +40,316 @@ class _ProfilePageState extends State<ProfilePage>
   Uint8List? _profilePhotoBytes;
   String? _profilePhotoUrl; // URL from Firebase Storage
   bool _isUploadingPhoto = false;
+  static const String _profilePhotoCachePrefix = 'profile_photo_url_';
+
+  bool _hasConfiguredSupportEmail() {
+    final trimmed = kFeedbackEmail.trim();
+    return trimmed.isNotEmpty &&
+        trimmed.contains('@') &&
+        !trimmed.contains('YOUR_EMAIL_HERE');
+  }
+
+  void _showSupportEmailNotConfiguredMessage() {
+    if (!mounted) return;
+    AppSnackBar.show(
+      context,
+      'Support email is not configured yet. Please contact your admin.',
+      type: AppSnackBarType.warning,
+      useRootOverlay: true,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
-    _loadSavedProfilePhoto();
+    _initializeProfilePhoto();
+    _initializeNotificationSettings();
   }
 
-  /// Load the saved profile photo URL from UserSession
-  void _loadSavedProfilePhoto() {
-    final savedUrl = UserSession.currentUserData?['profilePhotoUrl'] as String?;
-    if (savedUrl != null && savedUrl.isNotEmpty) {
+  Future<void> _initializeProfilePhoto() async {
+    await _loadSavedProfilePhoto();
+    await _refreshProfilePhotoFromFirestore();
+  }
+
+  /// Load the saved profile photo URL from UserSession/local cache.
+  Future<void> _loadSavedProfilePhoto() async {
+    final savedUrl = UserSession.currentUserData?['profilePhotoUrl']
+        ?.toString()
+        .trim();
+    if (savedUrl != null && savedUrl.isNotEmpty && mounted) {
       setState(() {
         _profilePhotoUrl = savedUrl;
       });
+      return;
+    }
+
+    final cacheKey = _profilePhotoCacheKey();
+    if (cacheKey == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedUrl = prefs.getString(cacheKey);
+      if (!mounted || cachedUrl == null || cachedUrl.isEmpty) return;
+      setState(() {
+        _profilePhotoUrl = cachedUrl;
+      });
+      UserSession.currentUserData?['profilePhotoUrl'] = cachedUrl;
+    } catch (e) {
+      debugPrint('Failed to load cached profile photo URL: $e');
+    }
+  }
+
+  String? _profilePhotoCacheKey() {
+    final userData = UserSession.currentUserData;
+    final contact = (userData?['contactNumber'] ?? userData?['phoneNumber'])
+        ?.toString()
+        .trim();
+    final docId = (userData?['docId'] ?? userData?['id'])?.toString().trim();
+    final rawKey = (contact != null && contact.isNotEmpty) ? contact : docId;
+    if (rawKey == null || rawKey.isEmpty) return null;
+    final normalized = rawKey.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    if (normalized.isEmpty) return null;
+    return '$_profilePhotoCachePrefix$normalized';
+  }
+
+  Future<void> _saveProfilePhotoUrlToCache(String url) async {
+    final cacheKey = _profilePhotoCacheKey();
+    if (cacheKey == null || url.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(cacheKey, url);
+    } catch (e) {
+      debugPrint('Failed to cache profile photo URL: $e');
+    }
+  }
+
+  bool _isResponderRole() {
+    final role = (UserSession.currentUserData?['role'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    return role == 'semi-admin' || role == 'semi_admin' || role == 'responder';
+  }
+
+  String _currentContactNumber() {
+    return (UserSession.currentUserData?['contactNumber'] ??
+                UserSession.currentUserData?['phoneNumber'])
+            ?.toString()
+            .trim() ??
+        '';
+  }
+
+  String _currentUserDocId() {
+    return (UserSession.currentUserData?['docId'] ??
+                UserSession.currentUserData?['id'])
+            ?.toString()
+            .trim() ??
+        '';
+  }
+
+  Future<bool> _ensureFirebaseAuthSession() async {
+    final user = FirebaseAuth.instance.currentUser;
+    return user != null && !user.isAnonymous;
+  }
+
+  String? _notificationPrefsLocalKeyBase() {
+    final raw = _currentContactNumber().isNotEmpty
+        ? _currentContactNumber()
+        : _currentUserDocId();
+    if (raw.isEmpty) return null;
+    final normalized = raw.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    if (normalized.isEmpty) return null;
+    return 'notif_prefs_$normalized';
+  }
+
+  String? _notificationPrefsDocId() {
+    final contactNumber = _currentContactNumber();
+    if (contactNumber.isNotEmpty) {
+      final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+      if (cleanPhone.isNotEmpty) return cleanPhone;
+    }
+    final docId = _currentUserDocId();
+    if (docId.isNotEmpty) return docId;
+    return null;
+  }
+
+  Future<void> _initializeNotificationSettings() async {
+    final localKeyBase = _notificationPrefsLocalKeyBase();
+    if (localKeyBase != null) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final localPush = prefs.getBool('${localKeyBase}_push');
+        final localSound = prefs.getBool('${localKeyBase}_sound');
+        final localVibration = prefs.getBool('${localKeyBase}_vibration');
+        if (mounted) {
+          setState(() {
+            _pushNotifications = localPush ?? _pushNotifications;
+            _soundEnabled = localSound ?? _soundEnabled;
+            _vibrationEnabled = localVibration ?? _vibrationEnabled;
+          });
+        } else {
+          _pushNotifications = localPush ?? _pushNotifications;
+          _soundEnabled = localSound ?? _soundEnabled;
+          _vibrationEnabled = localVibration ?? _vibrationEnabled;
+        }
+      } catch (e) {
+        debugPrint('Failed to load local notification settings: $e');
+      }
+    }
+
+    final docId = _notificationPrefsDocId();
+    if (docId == null) return;
+    try {
+      if (!await _ensureFirebaseAuthSession()) return;
+      final doc = await FirebaseFirestore.instance
+          .collection('userPreferences')
+          .doc(docId)
+          .get();
+      final data = doc.data();
+      if (data == null) return;
+      final remotePush = data['pushNotifications'] as bool?;
+      final remoteSound = data['soundEnabled'] as bool?;
+      final remoteVibration = data['vibrationEnabled'] as bool?;
+
+      if (mounted) {
+        setState(() {
+          _pushNotifications = remotePush ?? _pushNotifications;
+          _soundEnabled = remoteSound ?? _soundEnabled;
+          _vibrationEnabled = remoteVibration ?? _vibrationEnabled;
+        });
+      } else {
+        _pushNotifications = remotePush ?? _pushNotifications;
+        _soundEnabled = remoteSound ?? _soundEnabled;
+        _vibrationEnabled = remoteVibration ?? _vibrationEnabled;
+      }
+      await _persistNotificationSettings();
+    } catch (e) {
+      debugPrint('Failed to load remote notification settings: $e');
+    }
+  }
+
+  Future<void> _persistNotificationSettings() async {
+    final localKeyBase = _notificationPrefsLocalKeyBase();
+    if (localKeyBase != null) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('${localKeyBase}_push', _pushNotifications);
+        await prefs.setBool('${localKeyBase}_sound', _soundEnabled);
+        await prefs.setBool('${localKeyBase}_vibration', _vibrationEnabled);
+      } catch (e) {
+        debugPrint('Failed to save local notification settings: $e');
+      }
+    }
+
+    final docId = _notificationPrefsDocId();
+    if (docId == null) return;
+    try {
+      if (!await _ensureFirebaseAuthSession()) return;
+      await FirebaseFirestore.instance
+          .collection('userPreferences')
+          .doc(docId)
+          .set({
+            'pushNotifications': _pushNotifications,
+            'soundEnabled': _soundEnabled,
+            'vibrationEnabled': _vibrationEnabled,
+            'notificationPrefsUpdatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Failed to save remote notification settings: $e');
+    }
+  }
+
+  Future<List<DocumentReference<Map<String, dynamic>>>>
+  _resolveCurrentUserDocRefs() async {
+    final refs = <DocumentReference<Map<String, dynamic>>>[];
+    final seenPaths = <String>{};
+    void addRef(DocumentReference<Map<String, dynamic>> ref) {
+      if (seenPaths.add(ref.path)) {
+        refs.add(ref);
+      }
+    }
+
+    final userData = UserSession.currentUserData;
+    final contactNumber =
+        (userData?['contactNumber'] ?? userData?['phoneNumber'])
+            ?.toString()
+            .trim();
+    final docId = (userData?['docId'] ?? userData?['id'])?.toString().trim();
+
+    if (_isResponderRole()) {
+      if (docId != null && docId.isNotEmpty) {
+        addRef(FirebaseFirestore.instance.collection('semi_admins').doc(docId));
+      }
+      if (contactNumber != null && contactNumber.isNotEmpty) {
+        final snapshot = await FirebaseFirestore.instance
+            .collection('semi_admins')
+            .where('contactNumber', isEqualTo: contactNumber)
+            .limit(1)
+            .get();
+        if (snapshot.docs.isNotEmpty) {
+          addRef(snapshot.docs.first.reference);
+        }
+      }
+    } else {
+      if (docId != null && docId.isNotEmpty) {
+        addRef(
+          FirebaseFirestore.instance.collection('approved_users').doc(docId),
+        );
+      }
+      if (contactNumber != null && contactNumber.isNotEmpty) {
+        final snapshot = await FirebaseFirestore.instance
+            .collection('approved_users')
+            .where('contactNumber', isEqualTo: contactNumber)
+            .limit(1)
+            .get();
+        if (snapshot.docs.isNotEmpty) {
+          addRef(snapshot.docs.first.reference);
+        }
+      }
+    }
+
+    if (contactNumber != null && contactNumber.isNotEmpty) {
+      final approvedSnapshot = await FirebaseFirestore.instance
+          .collection('approved_users')
+          .where('contactNumber', isEqualTo: contactNumber)
+          .limit(1)
+          .get();
+      if (approvedSnapshot.docs.isNotEmpty) {
+        addRef(approvedSnapshot.docs.first.reference);
+      }
+      final responderSnapshot = await FirebaseFirestore.instance
+          .collection('semi_admins')
+          .where('contactNumber', isEqualTo: contactNumber)
+          .limit(1)
+          .get();
+      if (responderSnapshot.docs.isNotEmpty) {
+        addRef(responderSnapshot.docs.first.reference);
+      }
+    }
+
+    return refs;
+  }
+
+  Future<void> _refreshProfilePhotoFromFirestore() async {
+    try {
+      final refs = await _resolveCurrentUserDocRefs();
+      if (refs.isEmpty) return;
+      for (final ref in refs) {
+        final snapshot = await ref.get();
+        final data = snapshot.data();
+        final url = data?['profilePhotoUrl']?.toString().trim();
+        if (url != null && url.isNotEmpty) {
+          UserSession.currentUserData?['profilePhotoUrl'] = url;
+          await _saveProfilePhotoUrlToCache(url);
+          if (mounted) {
+            setState(() {
+              _profilePhotoUrl = url;
+            });
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to refresh profile photo URL from Firestore: $e');
     }
   }
 
@@ -299,8 +595,7 @@ class _ProfilePageState extends State<ProfilePage>
                           await _updateSemiAdminPresenceOnLogout();
                           await NotificationService().clearCurrentUserToken();
                           UserSession.clear();
-                          await FirebaseAuth.instance.signOut();
-                          if (!mounted) return;
+                          if (!context.mounted) return;
                           Navigator.of(context).pushAndRemoveUntil(
                             MaterialPageRoute(
                               builder: (_) => const LoginPage(),
@@ -593,18 +888,27 @@ class _ProfilePageState extends State<ProfilePage>
 
   /// Upload profile photo to Firebase Storage and save URL to Firestore
   Future<void> _uploadProfilePhotoToFirebase(String filePath) async {
-    final contactNumber =
-        UserSession.currentUserData?['contactNumber'] as String?;
-    if (contactNumber == null) {
-      debugPrint('❌ Cannot upload profile photo: No contact number found');
+    final userData = UserSession.currentUserData;
+    final identity =
+        (userData?['contactNumber'] ??
+                userData?['phoneNumber'] ??
+                userData?['id'])
+            ?.toString()
+            .trim();
+    if (identity == null || identity.isEmpty) {
+      debugPrint('Cannot upload profile photo: No user identity found');
       return;
     }
 
     setState(() => _isUploadingPhoto = true);
 
     try {
-      // Create a unique filename using contact number
-      final fileName = 'profile_${contactNumber.replaceAll('+', '')}.jpg';
+      // Create a stable filename using the user's identity
+      final sanitizedIdentity = identity.replaceAll(
+        RegExp(r'[^a-zA-Z0-9]'),
+        '',
+      );
+      final fileName = 'profile_$sanitizedIdentity.jpg';
       final storageRef = FirebaseStorage.instance
           .ref()
           .child('profile_photos')
@@ -619,23 +923,24 @@ class _ProfilePageState extends State<ProfilePage>
 
       // Get the download URL
       final downloadUrl = await uploadTask.ref.getDownloadURL();
-      debugPrint('✅ Profile photo uploaded: $downloadUrl');
+      debugPrint('Profile photo uploaded: $downloadUrl');
+      final refs = await _resolveCurrentUserDocRefs();
+      if (refs.isEmpty) {
+        debugPrint('No user document found for saving profile photo URL');
+      } else {
+        await Future.wait(
+          refs.map(
+            (ref) => ref.set({
+              'profilePhotoUrl': downloadUrl,
+            }, SetOptions(merge: true)),
+          ),
+        );
+        debugPrint('Profile photo URL saved to Firestore');
+      }
 
-      // Save URL to Firestore in approved_users collection
-      final userQuery = await FirebaseFirestore.instance
-          .collection('approved_users')
-          .where('contactNumber', isEqualTo: contactNumber)
-          .limit(1)
-          .get();
-
-      if (userQuery.docs.isNotEmpty) {
-        await userQuery.docs.first.reference.update({
-          'profilePhotoUrl': downloadUrl,
-        });
-        debugPrint('✅ Profile photo URL saved to Firestore');
-
-        // Update local UserSession data
-        UserSession.currentUserData?['profilePhotoUrl'] = downloadUrl;
+      await _saveProfilePhotoUrlToCache(downloadUrl);
+      UserSession.currentUserData?['profilePhotoUrl'] = downloadUrl;
+      if (mounted) {
         setState(() {
           _profilePhotoUrl = downloadUrl;
         });
@@ -650,7 +955,7 @@ class _ProfilePageState extends State<ProfilePage>
         );
       }
     } catch (e) {
-      debugPrint('❌ Failed to upload profile photo: $e');
+      debugPrint('Failed to upload profile photo: $e');
       if (mounted) {
         AppSnackBar.show(
           context,
@@ -851,9 +1156,9 @@ class _ProfilePageState extends State<ProfilePage>
     final addressCtl = TextEditingController(
       text: userData['address']?.toString() ?? '',
     );
-    final phoneNumber = userData['contactNumber']?.toString() ?? '';
-    // Get the Firestore document ID (set during login)
-    final docId = userData['docId']?.toString() ?? '';
+    final phoneNumber =
+        (userData['contactNumber'] ?? userData['phoneNumber'])?.toString() ??
+        '';
     bool isEditing = false;
     bool isSaving = false;
     String? errorMessage;
@@ -1010,40 +1315,46 @@ class _ProfilePageState extends State<ProfilePage>
                                     return;
                                   }
 
-                                  // Check if we have a valid document ID
-                                  if (docId.isEmpty) {
-                                    setModalState(() {
-                                      errorMessage =
-                                          'User session error. Please log out and log in again.';
-                                    });
-                                    return;
-                                  }
-
                                   setModalState(() {
                                     isSaving = true;
                                     errorMessage = null;
                                   });
 
                                   try {
-                                    // Use set with merge to handle both create and update
-                                    await FirebaseFirestore.instance
-                                        .collection('approved_users')
-                                        .doc(docId)
-                                        .set({
-                                          'fullName': newFullName,
-                                          'email': newEmail.isEmpty
-                                              ? null
-                                              : newEmail,
-                                          'address': newAddress,
-                                          'updatedAt':
-                                              FieldValue.serverTimestamp(),
-                                        }, SetOptions(merge: true));
+                                    final refs =
+                                        await _resolveCurrentUserDocRefs();
+                                    if (refs.isEmpty) {
+                                      setModalState(() {
+                                        isSaving = false;
+                                        errorMessage =
+                                            'Unable to locate your profile record. Please log in again.';
+                                      });
+                                      return;
+                                    }
+
+                                    final payload = <String, dynamic>{
+                                      'fullName': newFullName,
+                                      'email': newEmail.isEmpty
+                                          ? null
+                                          : newEmail,
+                                      'address': newAddress,
+                                      'updatedAt': FieldValue.serverTimestamp(),
+                                    };
+
+                                    await Future.wait(
+                                      refs.map(
+                                        (ref) => ref.set(
+                                          payload,
+                                          SetOptions(merge: true),
+                                        ),
+                                      ),
+                                    );
 
                                     // Update local session
                                     UserSession.currentUserData?['fullName'] =
                                         newFullName;
                                     UserSession.currentUserData?['email'] =
-                                        newEmail;
+                                        newEmail.isEmpty ? null : newEmail;
                                     UserSession.currentUserData?['address'] =
                                         newAddress;
 
@@ -1052,16 +1363,15 @@ class _ProfilePageState extends State<ProfilePage>
                                       isSaving = false;
                                     });
 
-                                    if (mounted) {
-                                      AppSnackBar.show(
-                                        context,
-                                        'Profile updated successfully!',
-                                        type: AppSnackBarType.success,
-                                        useRootOverlay: true,
-                                      );
-                                      // Refresh the main page
-                                      setState(() {});
-                                    }
+                                    if (!context.mounted) return;
+                                    AppSnackBar.show(
+                                      context,
+                                      'Profile updated successfully!',
+                                      type: AppSnackBarType.success,
+                                      useRootOverlay: true,
+                                    );
+                                    // Refresh the main page
+                                    setState(() {});
                                   } on FirebaseException catch (e) {
                                     debugPrint(
                                       'Firebase error updating profile: ${e.code} - ${e.message}',
@@ -1254,8 +1564,10 @@ class _ProfilePageState extends State<ProfilePage>
 
   Widget _buildAccountSecurityContent() {
     final userData = UserSession.currentUserData ?? {};
-    final docId = userData['docId']?.toString() ?? '';
-    final contactNumber = userData['contactNumber']?.toString() ?? '';
+    final docId = (userData['docId'] ?? userData['id'])?.toString() ?? '';
+    final contactNumber =
+        (userData['contactNumber'] ?? userData['phoneNumber'])?.toString() ??
+        '';
 
     return StatefulBuilder(
       builder: (context, setModalState) {
@@ -1329,21 +1641,20 @@ class _ProfilePageState extends State<ProfilePage>
                                   ? (value) async {
                                       await _setBiometricsEnabled(value);
                                       setModalState(() {});
-                                      if (mounted) {
-                                        AppSnackBar.show(
-                                          context,
-                                          value
-                                              ? 'Biometric login enabled'
-                                              : 'Biometric login disabled',
-                                          type: value
-                                              ? AppSnackBarType.success
-                                              : AppSnackBarType.info,
-                                          useRootOverlay: true,
-                                        );
-                                      }
+                                      if (!context.mounted) return;
+                                      AppSnackBar.show(
+                                        context,
+                                        value
+                                            ? 'Biometric login enabled'
+                                            : 'Biometric login disabled',
+                                        type: value
+                                            ? AppSnackBarType.success
+                                            : AppSnackBarType.info,
+                                        useRootOverlay: true,
+                                      );
                                     }
                                   : null,
-                              activeColor: const Color(0xFFAC1B22),
+                              activeThumbColor: const Color(0xFFAC1B22),
                             ),
                           ],
                         ),
@@ -1393,7 +1704,7 @@ class _ProfilePageState extends State<ProfilePage>
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    'Update your 6-digit security PIN',
+                                    'Update your 4-digit security PIN',
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: Colors.grey[600],
@@ -1410,6 +1721,16 @@ class _ProfilePageState extends State<ProfilePage>
                           height: 44,
                           child: ElevatedButton(
                             onPressed: () {
+                              if (contactNumber.trim().isEmpty &&
+                                  docId.trim().isEmpty) {
+                                AppSnackBar.show(
+                                  context,
+                                  'No account identity found for this account.',
+                                  type: AppSnackBarType.warning,
+                                  useRootOverlay: true,
+                                );
+                                return;
+                              }
                               Navigator.pop(context);
                               _showChangePinDialog(docId, contactNumber);
                             },
@@ -1485,12 +1806,18 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Future<bool> _getBiometricsEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
     try {
-      final contactNumber =
-          UserSession.currentUserData?['contactNumber'] as String?;
-      if (contactNumber == null) return false;
+      final contactNumber = _currentContactNumber();
+      if (contactNumber.isEmpty) return false;
 
       final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+      final localEnabled = prefs.getBool('biometrics_enabled') ?? false;
+      final localPhone = prefs.getString('biometrics_phone') ?? '';
+
+      if (!await _ensureFirebaseAuthSession()) {
+        return localEnabled && localPhone == cleanPhone;
+      }
 
       // First check Firestore for persistent preference
       final doc = await FirebaseFirestore.instance
@@ -1501,29 +1828,28 @@ class _ProfilePageState extends State<ProfilePage>
       if (doc.exists) {
         final firestoreEnabled =
             doc.data()?['biometricsEnabled'] as bool? ?? false;
-        if (firestoreEnabled) {
-          // Sync to local SharedPreferences
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setBool('biometrics_enabled', true);
-          await prefs.setString('biometrics_phone', cleanPhone);
-          return true;
-        }
+        // Always sync local cache with latest remote value.
+        await prefs.setBool('biometrics_enabled', firestoreEnabled);
+        await prefs.setString('biometrics_phone', cleanPhone);
+        return firestoreEnabled;
       }
 
-      // Fall back to SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getBool('biometrics_enabled') ?? false;
+      // Fall back to SharedPreferences, but only for this exact phone.
+      return localEnabled && localPhone == cleanPhone;
     } catch (e) {
       debugPrint('Error getting biometrics setting: $e');
-      return false;
+      final contactNumber = _currentContactNumber();
+      final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+      final localEnabled = prefs.getBool('biometrics_enabled') ?? false;
+      final localPhone = prefs.getString('biometrics_phone') ?? '';
+      return localEnabled && localPhone == cleanPhone;
     }
   }
 
   Future<void> _setBiometricsEnabled(bool enabled) async {
     try {
-      final contactNumber =
-          UserSession.currentUserData?['contactNumber'] as String?;
-      if (contactNumber == null) return;
+      final contactNumber = _currentContactNumber();
+      if (contactNumber.isEmpty) return;
 
       final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
 
@@ -1531,6 +1857,13 @@ class _ProfilePageState extends State<ProfilePage>
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('biometrics_enabled', enabled);
       await prefs.setString('biometrics_phone', cleanPhone);
+
+      if (!await _ensureFirebaseAuthSession()) {
+        debugPrint(
+          'Biometrics preference saved locally only (no Firebase auth session).',
+        );
+        return;
+      }
 
       // Save to Firestore for persistence across devices (like votes)
       await FirebaseFirestore.instance
@@ -1548,18 +1881,28 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   void _showChangePinDialog(String docId, String contactNumber) {
+    final collectionName = _isResponderRole()
+        ? 'semi_admins'
+        : 'approved_users';
+    final resolvedDocId = docId.trim().isNotEmpty
+        ? docId.trim()
+        : _currentUserDocId();
+    final resolvedContactNumber = contactNumber.trim().isNotEmpty
+        ? contactNumber.trim()
+        : _currentContactNumber();
+
     final currentPinControllers = List.generate(
-      6,
+      4,
       (_) => TextEditingController(),
     );
-    final newPinControllers = List.generate(6, (_) => TextEditingController());
+    final newPinControllers = List.generate(4, (_) => TextEditingController());
     final confirmPinControllers = List.generate(
-      6,
+      4,
       (_) => TextEditingController(),
     );
-    final currentPinFocusNodes = List.generate(6, (_) => FocusNode());
-    final newPinFocusNodes = List.generate(6, (_) => FocusNode());
-    final confirmPinFocusNodes = List.generate(6, (_) => FocusNode());
+    final currentPinFocusNodes = List.generate(4, (_) => FocusNode());
+    final newPinFocusNodes = List.generate(4, (_) => FocusNode());
+    final confirmPinFocusNodes = List.generate(4, (_) => FocusNode());
 
     int step = 1; // 1: current PIN, 2: new PIN, 3: confirm PIN
     String? errorMessage;
@@ -1589,9 +1932,9 @@ class _ProfilePageState extends State<ProfilePage>
             String getSubtitle() {
               switch (step) {
                 case 1:
-                  return 'Enter your current 6-digit PIN';
+                  return 'Enter your current 4-digit PIN';
                 case 2:
-                  return 'Create a new 6-digit PIN';
+                  return 'Create a new 4-digit PIN';
                 case 3:
                   return 'Re-enter your new PIN to confirm';
                 default:
@@ -1723,7 +2066,7 @@ class _ProfilePageState extends State<ProfilePage>
                     // PIN Input Fields
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(6, (index) {
+                      children: List.generate(4, (index) {
                         return Container(
                           width: 40,
                           height: 48,
@@ -1764,7 +2107,7 @@ class _ProfilePageState extends State<ProfilePage>
                               ),
                             ),
                             onChanged: (value) {
-                              if (value.isNotEmpty && index < 5) {
+                              if (value.isNotEmpty && index < 3) {
                                 getFocusNodes()[index + 1].requestFocus();
                               }
                               if (value.isEmpty && index > 0) {
@@ -1820,10 +2163,10 @@ class _ProfilePageState extends State<ProfilePage>
                                     .map((c) => c.text)
                                     .join();
 
-                                if (pin.length != 6) {
+                                if (pin.length != 4) {
                                   setDialogState(
                                     () => errorMessage =
-                                        'Please enter all 6 digits',
+                                        'Please enter all 4 digits',
                                   );
                                   return;
                                 }
@@ -1832,18 +2175,32 @@ class _ProfilePageState extends State<ProfilePage>
                                   // Verify current PIN
                                   setDialogState(() => isLoading = true);
                                   try {
-                                    final query = await FirebaseFirestore
-                                        .instance
-                                        .collection('approved_users')
-                                        .where(
-                                          'contactNumber',
-                                          isEqualTo: contactNumber,
-                                        )
-                                        .where('pin', isEqualTo: pin)
-                                        .limit(1)
-                                        .get();
+                                    bool hasMatchingPin = false;
+                                    if (resolvedContactNumber.isNotEmpty) {
+                                      final query = await FirebaseFirestore
+                                          .instance
+                                          .collection(collectionName)
+                                          .where(
+                                            'contactNumber',
+                                            isEqualTo: resolvedContactNumber,
+                                          )
+                                          .where('pin', isEqualTo: pin)
+                                          .limit(1)
+                                          .get();
+                                      hasMatchingPin = query.docs.isNotEmpty;
+                                    } else if (resolvedDocId.isNotEmpty) {
+                                      final snapshot = await FirebaseFirestore
+                                          .instance
+                                          .collection(collectionName)
+                                          .doc(resolvedDocId)
+                                          .get();
+                                      final existingPin =
+                                          snapshot.data()?['pin']?.toString() ??
+                                          '';
+                                      hasMatchingPin = existingPin == pin;
+                                    }
 
-                                    if (query.docs.isEmpty) {
+                                    if (!hasMatchingPin) {
                                       setDialogState(() {
                                         isLoading = false;
                                         errorMessage = 'Incorrect PIN';
@@ -1901,25 +2258,54 @@ class _ProfilePageState extends State<ProfilePage>
                                   // Update PIN in Firestore
                                   setDialogState(() => isLoading = true);
                                   try {
-                                    await FirebaseFirestore.instance
-                                        .collection('approved_users')
-                                        .doc(docId)
-                                        .update({'pin': newPinEntered});
+                                    if (resolvedDocId.isNotEmpty) {
+                                      await FirebaseFirestore.instance
+                                          .collection(collectionName)
+                                          .doc(resolvedDocId)
+                                          .set({
+                                            'pin': newPinEntered,
+                                          }, SetOptions(merge: true));
+                                    } else if (resolvedContactNumber
+                                        .isNotEmpty) {
+                                      final query = await FirebaseFirestore
+                                          .instance
+                                          .collection(collectionName)
+                                          .where(
+                                            'contactNumber',
+                                            isEqualTo: resolvedContactNumber,
+                                          )
+                                          .limit(1)
+                                          .get();
+                                      if (query.docs.isEmpty) {
+                                        throw Exception(
+                                          'Account record not found',
+                                        );
+                                      }
+                                      await query.docs.first.reference.set({
+                                        'pin': newPinEntered,
+                                      }, SetOptions(merge: true));
+                                    } else {
+                                      throw Exception(
+                                        'No account identity found for PIN update',
+                                      );
+                                    }
 
                                     // Update local session
                                     UserSession.currentUserData?['pin'] =
                                         newPinEntered;
 
                                     // Close dialog
-                                    if (mounted) {
-                                      Navigator.pop(dialogContext);
-                                      AppSnackBar.show(
-                                        context,
-                                        'PIN changed successfully!',
-                                        type: AppSnackBarType.success,
-                                        useRootOverlay: true,
-                                      );
+                                    if (!dialogContext.mounted ||
+                                        !context.mounted) {
+                                      return;
                                     }
+                                    Navigator.pop(dialogContext);
+                                    AppSnackBar.show(
+                                      context,
+                                      'PIN changed successfully!',
+                                      type: AppSnackBarType.success,
+                                      useRootOverlay: true,
+                                    );
                                   } catch (e) {
                                     debugPrint('Error updating PIN: $e');
                                     setDialogState(() {
@@ -2002,15 +2388,16 @@ class _ProfilePageState extends State<ProfilePage>
     );
   }
 
-  void _updateNotificationSetting(
+  Future<void> _updateNotificationSetting(
     StateSetter setDialogState,
     VoidCallback updateValue,
-  ) {
+  ) async {
     updateValue();
     if (mounted) {
       setState(() {});
     }
     setDialogState(() {});
+    await _persistNotificationSettings();
   }
 
   Widget _buildNotificationToggle(
@@ -2046,7 +2433,7 @@ class _ProfilePageState extends State<ProfilePage>
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: const Color(0xFFAC1B22),
+            activeThumbColor: const Color(0xFFAC1B22),
           ),
         ],
       ),
@@ -2076,6 +2463,10 @@ class _ProfilePageState extends State<ProfilePage>
             'Contact Support',
             'Get in touch with our team',
             onTap: () async {
+              if (!_hasConfiguredSupportEmail()) {
+                _showSupportEmailNotConfiguredMessage();
+                return;
+              }
               final Uri emailUri = Uri(
                 scheme: 'mailto',
                 path: kFeedbackEmail,
@@ -2263,6 +2654,14 @@ class _ProfilePageState extends State<ProfilePage>
                           final displayName =
                               userData['fullName']?.toString() ?? 'User';
                           final email = userData['email']?.toString() ?? '';
+                          if (!_hasConfiguredSupportEmail()) {
+                            setModalState(() {
+                              isSubmitting = false;
+                              errorMessage =
+                                  'Support email is not configured yet.';
+                            });
+                            return;
+                          }
 
                           final Uri emailUri = Uri(
                             scheme: 'mailto',
@@ -2280,15 +2679,14 @@ class _ProfilePageState extends State<ProfilePage>
                           try {
                             if (await canLaunchUrl(emailUri)) {
                               await launchUrl(emailUri);
-                              if (mounted) {
-                                Navigator.pop(context);
-                                AppSnackBar.show(
-                                  context,
-                                  'Email app opened. Please send your report.',
-                                  type: AppSnackBarType.success,
-                                  useRootOverlay: true,
-                                );
-                              }
+                              if (!context.mounted) return;
+                              Navigator.pop(context);
+                              AppSnackBar.show(
+                                context,
+                                'Email app opened. Please send your report.',
+                                type: AppSnackBarType.success,
+                                useRootOverlay: true,
+                              );
                             } else {
                               setModalState(() {
                                 isSubmitting = false;
@@ -2442,6 +2840,15 @@ class _ProfilePageState extends State<ProfilePage>
                               'User';
                           final email = userData['email']?.toString() ?? '';
 
+                          if (!_hasConfiguredSupportEmail()) {
+                            setModalState(() {
+                              isSubmitting = false;
+                              errorMessage =
+                                  'Support email is not configured yet.';
+                            });
+                            return;
+                          }
+
                           final ratingStars =
                               '★' * feedbackRating + '☆' * (5 - feedbackRating);
 
@@ -2461,15 +2868,14 @@ class _ProfilePageState extends State<ProfilePage>
                           try {
                             if (await canLaunchUrl(emailUri)) {
                               await launchUrl(emailUri);
-                              if (mounted) {
-                                Navigator.pop(context);
-                                AppSnackBar.show(
-                                  context,
-                                  'Email app opened. Thank you for your feedback!',
-                                  type: AppSnackBarType.success,
-                                  useRootOverlay: true,
-                                );
-                              }
+                              if (!context.mounted) return;
+                              Navigator.pop(context);
+                              AppSnackBar.show(
+                                context,
+                                'Email app opened. Thank you for your feedback!',
+                                type: AppSnackBarType.success,
+                                useRootOverlay: true,
+                              );
                             } else {
                               setModalState(() {
                                 isSubmitting = false;
@@ -2534,7 +2940,7 @@ class _ProfilePageState extends State<ProfilePage>
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -2733,7 +3139,7 @@ class _ProfilePageState extends State<ProfilePage>
                       borderRadius: BorderRadius.circular(18),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.12),
+                          color: Colors.black.withValues(alpha: 0.12),
                           blurRadius: 12,
                           spreadRadius: 1,
                           offset: const Offset(0, 6),
