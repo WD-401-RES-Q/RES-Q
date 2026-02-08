@@ -191,6 +191,11 @@ class _LoginPageState extends State<LoginPage>
         debugPrint('✅ Semi-admin biometric login successful!');
         // Persist phone locally for faster next login.
         await RegistrationPrefs.savePhoneNumber(phoneInput);
+        try {
+          await _ensureFirebaseAuthSession();
+        } catch (authError) {
+          debugPrint('Semi-admin anonymous sign-in failed: $authError');
+        }
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
         UserSession.setUserData({
@@ -333,6 +338,13 @@ class _LoginPageState extends State<LoginPage>
     }
 
     await NotificationService().setUserId(tokenOwnerId, role: role);
+  }
+
+  Future<void> _ensureFirebaseAuthSession() async {
+    if (FirebaseAuth.instance.currentUser != null) {
+      return;
+    }
+    await FirebaseAuth.instance.signInAnonymously();
   }
 
   @override
@@ -536,6 +548,11 @@ class _LoginPageState extends State<LoginPage>
         debugPrint('✅ Semi-admin login successful via PIN!');
         // Persist phone locally for faster next login.
         await RegistrationPrefs.savePhoneNumber(phoneInput);
+        try {
+          await _ensureFirebaseAuthSession();
+        } catch (authError) {
+          debugPrint('Semi-admin anonymous sign-in failed: $authError');
+        }
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
         UserSession.setUserData({

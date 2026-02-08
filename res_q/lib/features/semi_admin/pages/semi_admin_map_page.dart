@@ -118,6 +118,7 @@ class _AdminMapPageState extends State<AdminMapPage>
   void initState() {
     super.initState();
     _subscribeToReportsRealtime();
+    unawaited(_ensureFirestoreAuthSession());
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
     _syncUserLocation();
@@ -128,6 +129,19 @@ class _AdminMapPageState extends State<AdminMapPage>
     _startResponderLocationSharing();
     unawaited(_initializeDispatchNotifications());
     unawaited(_syncOwnPresence(status: 'available', isAvailable: true));
+  }
+
+  Future<bool> _ensureFirestoreAuthSession() async {
+    if (FirebaseAuth.instance.currentUser != null) {
+      return true;
+    }
+    try {
+      final credential = await FirebaseAuth.instance.signInAnonymously();
+      return credential.user != null;
+    } catch (e) {
+      debugPrint('Failed to create Firebase Auth session for responder: $e');
+      return false;
+    }
   }
 
   @override
@@ -297,9 +311,12 @@ class _AdminMapPageState extends State<AdminMapPage>
     final marker = _buildBouncyPin(
       child: GestureDetector(
         onTap: () {
-          _activeReportId = reportId;
-          _destination = position;
-          _calculateRoute();
+          unawaited(
+            _navigateToReportDestination(
+              reportId: reportId,
+              position: position,
+            ),
+          );
           _showIncidentInfo(data, reportId, position);
         },
         child: Container(
@@ -1296,6 +1313,18 @@ class _AdminMapPageState extends State<AdminMapPage>
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    final hasAuth = await _ensureFirestoreAuthSession();
+    if (!hasAuth) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please sign in again to post comments.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
     final commentAuthor = author?.trim().isNotEmpty == true
         ? author!.trim()
         : (UserSession.currentUserData?['fullName'] as String? ??
@@ -1303,7 +1332,7 @@ class _AdminMapPageState extends State<AdminMapPage>
               'Responder');
 
     try {
-      final commentPayload = {
+      final commentPayload = <String, dynamic>{
         'text': trimmed,
         'author': commentAuthor,
         'type': 'admin',
@@ -1316,12 +1345,21 @@ class _AdminMapPageState extends State<AdminMapPage>
           .collection('comments')
           .add(commentPayload);
 
-      await FirebaseFirestore.instance
-          .collection('reports')
-          .doc(reportId)
-          .update({
-            'responderComments': FieldValue.arrayUnion([commentPayload]),
-          });
+      // Keep legacy report-level mirror fields best-effort only.
+      // Primary source of truth is reports/{reportId}/comments.
+      try {
+        await FirebaseFirestore.instance
+            .collection('reports')
+            .doc(reportId)
+            .update({
+              'responderComments': FieldValue.arrayUnion([commentPayload]),
+              'latestResponderCommentText': trimmed,
+              'latestResponderCommentBy': commentAuthor,
+              'latestResponderCommentAt': commentPayload['timestamp'],
+            });
+      } catch (mirrorError) {
+        debugPrint('Failed to mirror responder comment on report: $mirrorError');
+      }
 
       if (!mounted) return;
       setState(() {
@@ -1388,6 +1426,14 @@ class _AdminMapPageState extends State<AdminMapPage>
 
   Future<bool> _updateIncidentStatus(String reportId, String status) async {
     try {
+      final hasAuth = await _ensureFirestoreAuthSession();
+      if (!hasAuth) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+          message: 'Responder is not authenticated. Please sign in again.',
+        );
+      }
       final statusLower = status.trim().toLowerCase();
       final now = Timestamp.now();
       final responderName =
@@ -1560,6 +1606,14 @@ class _AdminMapPageState extends State<AdminMapPage>
         UserSession.currentUserData?['username'] as String? ??
         'Semi-Admin';
     try {
+      final hasAuth = await _ensureFirestoreAuthSession();
+      if (!hasAuth) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'permission-denied',
+          message: 'Responder is not authenticated. Please sign in again.',
+        );
+      }
       await FirebaseFirestore.instance
           .collection('reports')
           .doc(reportId)
@@ -1621,16 +1675,28 @@ class _AdminMapPageState extends State<AdminMapPage>
           });
           final reportId = _activeReportId;
           if (reportId == null) return;
-          FirebaseFirestore.instance
-              .collection('reports')
-              .doc(reportId)
-              .update({
-                'responderLocation': GeoPoint(point.latitude, point.longitude),
-                'responderLocationLat': point.latitude,
-                'responderLocationLng': point.longitude,
-                'responderLocationUpdatedAt': Timestamp.now(),
-              });
+          unawaited(_syncResponderLocationForActiveReport(reportId, point));
         });
+  }
+
+  Future<void> _syncResponderLocationForActiveReport(
+    String reportId,
+    LatLng point,
+  ) async {
+    final hasAuth = await _ensureFirestoreAuthSession();
+    if (!hasAuth) {
+      return;
+    }
+    try {
+      await FirebaseFirestore.instance.collection('reports').doc(reportId).update({
+        'responderLocation': GeoPoint(point.latitude, point.longitude),
+        'responderLocationLat': point.latitude,
+        'responderLocationLng': point.longitude,
+        'responderLocationUpdatedAt': Timestamp.now(),
+      });
+    } catch (e) {
+      debugPrint('Failed to sync responder location for $reportId: $e');
+    }
   }
 
   void _subscribeToReportsRealtime() {
@@ -2257,10 +2323,12 @@ class _AdminMapPageState extends State<AdminMapPage>
                           children: [
                             Expanded(
                               child: OutlinedButton(
-                                onPressed: () {
+                                onPressed: () async {
                                   Navigator.pop(context);
-                                  _destination = position;
-                                  _calculateRoute();
+                                  await _navigateToReportDestination(
+                                    reportId: reportId,
+                                    position: position,
+                                  );
                                 },
                                 style: OutlinedButton.styleFrom(
                                   side: const BorderSide(
@@ -2433,19 +2501,120 @@ class _AdminMapPageState extends State<AdminMapPage>
     _calculateRoute();
   }
 
+  Future<void> _navigateToReportDestination({
+    required String reportId,
+    required LatLng position,
+  }) async {
+    if (mounted) {
+      setState(() {
+        _activeReportId = reportId;
+        _destination = position;
+      });
+    } else {
+      _activeReportId = reportId;
+      _destination = position;
+    }
+
+    _mapController.move(position, 16.0);
+    try {
+      await _calculateRoute();
+    } catch (e) {
+      debugPrint('Failed to calculate route for $reportId: $e');
+      _ensureDirectRouteFallback(position);
+    }
+
+    if ((_routePoints.isEmpty || _routeMarkers.isEmpty) &&
+        mounted &&
+        _destination != null) {
+      _ensureDirectRouteFallback(_destination!);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Unable to build route right now. Showing destination pin.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   Future<void> _syncUserLocation() async {
-    final position = await LocationService.getCurrentPosition();
-    if (position == null) return;
-    if (!mounted) return;
-    setState(() {
-      _userLocation = LatLng(position.latitude, position.longitude);
-    });
+    try {
+      final position = await LocationService.getCurrentPosition();
+      if (position == null) return;
+      if (!mounted) return;
+      setState(() {
+        _userLocation = LatLng(position.latitude, position.longitude);
+      });
+    } catch (e) {
+      debugPrint('Failed to get responder location for routing: $e');
+    }
+  }
+
+  void _ensureDirectRouteFallback(LatLng destination) {
+    void applyFallback() {
+      final origin = _userLocation ?? _initialCenter;
+      _routePoints = [origin, destination];
+      _routeMarkers
+        ..clear()
+        ..addAll([
+          Marker(
+            point: origin,
+            width: 40,
+            height: 40,
+            child: const Icon(Icons.location_on, color: Colors.blue, size: 40),
+          ),
+          Marker(
+            point: destination,
+            width: 40,
+            height: 40,
+            child: const Icon(Icons.flag, color: Colors.red, size: 40),
+          ),
+        ]);
+      _routePolylines
+        ..clear()
+        ..addAll([
+          Polyline(
+            points: _routePoints,
+            color: AppColors.appOffWhite.withOpacity(0.9),
+            strokeWidth: 8.0,
+            strokeCap: StrokeCap.round,
+            strokeJoin: StrokeJoin.round,
+          ),
+          Polyline(
+            points: _routePoints,
+            color: AppColors.appGreen.withOpacity(0.95),
+            strokeWidth: 4.5,
+            strokeCap: StrokeCap.round,
+            strokeJoin: StrokeJoin.round,
+          ),
+        ]);
+      final fallbackDistance = _calculateDistance(_routePoints);
+      _estimatedDistance = fallbackDistance;
+      _estimatedTime = _calculateEstimatedTime(fallbackDistance);
+      _generateRouteInstructions();
+    }
+
+    if (mounted) {
+      setState(applyFallback);
+    } else {
+      applyFallback();
+    }
+    _zoomToRoute();
   }
 
   Future<void> _calculateRoute() async {
     if (_destination == null) return;
     await _syncUserLocation();
-    if (_userLocation == null) return;
+    final origin = _userLocation ?? _initialCenter;
+    final destination = _destination!;
+    if (_userLocation == null && mounted) {
+      setState(() {
+        _userLocation = origin;
+      });
+    } else if (_userLocation == null) {
+      _userLocation = origin;
+    }
 
     setState(() {
       _isRouting = true;
@@ -2456,16 +2625,20 @@ class _AdminMapPageState extends State<AdminMapPage>
     });
 
     try {
-      final osrmRoute = await _fetchRouteFromOsrm(
-        _userLocation!,
-        _destination!,
-      );
+      final osrmRoute = await _fetchRouteFromOsrm(origin, destination);
       if (osrmRoute != null && osrmRoute.points.isNotEmpty) {
         _routePoints = osrmRoute.points;
         _estimatedDistance = osrmRoute.distanceMeters / 1000;
         _estimatedTime = _formatDurationFromSeconds(osrmRoute.durationSeconds);
       } else {
-        _routePoints = _generateSimulatedRoute(_userLocation!, _destination!);
+        _routePoints = _generateSimulatedRoute(origin, destination);
+        final distance = _calculateDistance(_routePoints);
+        _estimatedDistance = distance;
+        _estimatedTime = _calculateEstimatedTime(distance);
+      }
+
+      if (_routePoints.isEmpty) {
+        _routePoints = [origin, destination];
         final distance = _calculateDistance(_routePoints);
         _estimatedDistance = distance;
         _estimatedTime = _calculateEstimatedTime(distance);
@@ -2474,13 +2647,13 @@ class _AdminMapPageState extends State<AdminMapPage>
       // Add markers
       _routeMarkers.addAll([
         Marker(
-          point: _userLocation!,
+          point: origin,
           width: 40,
           height: 40,
           child: const Icon(Icons.location_on, color: Colors.blue, size: 40),
         ),
         Marker(
-          point: _destination!,
+          point: destination,
           width: 40,
           height: 40,
           child: const Icon(Icons.flag, color: Colors.red, size: 40),
@@ -2512,7 +2685,42 @@ class _AdminMapPageState extends State<AdminMapPage>
       _zoomToRoute();
     } catch (e) {
       print('Error calculating route: $e');
-      _routeInstructions = 'Failed to calculate route';
+      _routePoints = _generateSimulatedRoute(origin, destination);
+      if (_routePoints.isEmpty) {
+        _routePoints = [origin, destination];
+      }
+      final distance = _calculateDistance(_routePoints);
+      _estimatedDistance = distance;
+      _estimatedTime = _calculateEstimatedTime(distance);
+      _routeMarkers
+        ..clear()
+        ..addAll([
+          Marker(
+            point: origin,
+            width: 40,
+            height: 40,
+            child: const Icon(Icons.location_on, color: Colors.blue, size: 40),
+          ),
+          Marker(
+            point: destination,
+            width: 40,
+            height: 40,
+            child: const Icon(Icons.flag, color: Colors.red, size: 40),
+          ),
+        ]);
+      _routePolylines
+        ..clear()
+        ..add(
+          Polyline(
+            points: _routePoints,
+            color: AppColors.appGreen.withOpacity(0.95),
+            strokeWidth: 4.5,
+            strokeCap: StrokeCap.round,
+            strokeJoin: StrokeJoin.round,
+          ),
+        );
+      _generateRouteInstructions();
+      _zoomToRoute();
     } finally {
       setState(() {
         _isRouting = false;
@@ -3399,41 +3607,6 @@ class _AdminMapPageState extends State<AdminMapPage>
             child: Column(
               children: [
                 _buildWeatherButton(),
-                const SizedBox(height: 12),
-                FloatingActionButton.small(
-                  heroTag: 'admin_resolved_reports',
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFFAC1B22),
-                  onPressed: _resolvedReports.isEmpty
-                      ? null
-                      : _openResolvedReportsSheet,
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      const Icon(Icons.history),
-                      if (_resolvedReports.isNotEmpty)
-                        Positioned(
-                          right: -6,
-                          top: -6,
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFAC1B22),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Text(
-                              '${_resolvedReports.length}',
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
                 const SizedBox(height: 12),
                 FloatingActionButton.small(
                   backgroundColor: Colors.white,

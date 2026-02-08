@@ -1752,41 +1752,6 @@ class _MapPageState extends State<MapPage> {
                 _buildWeatherButton(),
                 const SizedBox(height: 12),
                 FloatingActionButton.small(
-                  heroTag: 'resolved_reports',
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFFAC1B22),
-                  onPressed: _resolvedReports.isEmpty
-                      ? null
-                      : _openResolvedReportsSheet,
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      const Icon(Icons.history),
-                      if (_resolvedReports.isNotEmpty)
-                        Positioned(
-                          right: -6,
-                          top: -6,
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFAC1B22),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Text(
-                              '${_resolvedReports.length}',
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                FloatingActionButton.small(
                   backgroundColor: const Color(0xFFAC1B22),
                   onPressed: _goToCurrentLocation,
                   child: const Icon(Icons.my_location, color: Colors.white),
