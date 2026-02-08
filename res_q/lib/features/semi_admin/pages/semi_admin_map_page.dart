@@ -296,7 +296,12 @@ class _AdminMapPageState extends State<AdminMapPage>
     final badge = _buildStatusBadge(statusLower, size);
     final marker = _buildBouncyPin(
       child: GestureDetector(
-        onTap: () => _showIncidentInfo(data, reportId, position),
+        onTap: () {
+          _activeReportId = reportId;
+          _destination = position;
+          _calculateRoute();
+          _showIncidentInfo(data, reportId, position);
+        },
         child: Container(
           decoration: const BoxDecoration(shape: BoxShape.circle),
           child: Opacity(
@@ -1286,14 +1291,21 @@ class _AdminMapPageState extends State<AdminMapPage>
     required String reportId,
     required String text,
     required LatLng position,
+    String? author,
+    bool showSuccessToast = true,
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    final commentAuthor = author?.trim().isNotEmpty == true
+        ? author!.trim()
+        : (UserSession.currentUserData?['fullName'] as String? ??
+              UserSession.currentUserData?['username'] as String? ??
+              'Responder');
 
     try {
       final commentPayload = {
         'text': trimmed,
-        'author': 'Admin User',
+        'author': commentAuthor,
         'type': 'admin',
         'role': 'responder',
         'timestamp': Timestamp.now(),
@@ -1317,7 +1329,7 @@ class _AdminMapPageState extends State<AdminMapPage>
           AdminComment(
             id: DateTime.now().millisecondsSinceEpoch.toString(),
             text: trimmed,
-            author: 'Admin User',
+            author: commentAuthor,
             timestamp: DateTime.now(),
             position: position,
             reportId: reportId,
@@ -1325,42 +1337,44 @@ class _AdminMapPageState extends State<AdminMapPage>
         );
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          duration: const Duration(seconds: 2),
-          content: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFAC1B22),
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.2),
-                  blurRadius: 8,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.check_circle, color: Colors.white, size: 18),
-                SizedBox(width: 8),
-                Text(
-                  'Comment posted on this incident',
-                  style: TextStyle(
-                    fontFamily: 'RobotoCondensed',
-                    fontWeight: FontWeight.w400,
-                    color: Colors.white,
+      if (showSuccessToast) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            duration: const Duration(seconds: 2),
+            content: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFAC1B22),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.2),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
                   ),
-                ),
-              ],
+                ],
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.white, size: 18),
+                  SizedBox(width: 8),
+                  Text(
+                    'Comment posted on this incident',
+                    style: TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontWeight: FontWeight.w400,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-      );
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1428,6 +1442,11 @@ class _AdminMapPageState extends State<AdminMapPage>
           reportId: reportId,
           statusLabel: 'RESPONDING',
         );
+        await _postStatusUpdateComment(
+          reportId: reportId,
+          statusLabel: 'RESPONDING',
+          responderName: responderName,
+        );
         return true;
       }
 
@@ -1486,6 +1505,51 @@ class _AdminMapPageState extends State<AdminMapPage>
       }
       return false;
     }
+  }
+
+  LatLng _resolveReportPosition(String reportId) {
+    final snapshot = _latestReportSnapshot;
+    if (snapshot != null) {
+      for (final doc in snapshot.docs) {
+        if (doc.id != reportId) continue;
+        final data = doc.data();
+        final incidentPoint =
+            _latLngFromDynamic(data['incidentLocation']) ??
+            _latLngFromDynamic(data['location']);
+        if (incidentPoint != null) {
+          return incidentPoint;
+        }
+      }
+    }
+    return _destination ?? _userLocation ?? _initialCenter;
+  }
+
+  Future<void> _postStatusUpdateComment({
+    required String reportId,
+    required String statusLabel,
+    required String responderName,
+  }) async {
+    final normalized = statusLabel.trim().toUpperCase();
+    String? message;
+    if (normalized == 'RESPONDING') {
+      message =
+          '$responderName is now responding and heading to your location.';
+    } else if (normalized == 'ON SCENE') {
+      message = '$responderName has arrived on scene.';
+    } else if (normalized == 'RESOLVED') {
+      message = '$responderName marked this report as resolved.';
+    }
+    if (message == null) {
+      return;
+    }
+
+    await _postAdminComment(
+      reportId: reportId,
+      text: message,
+      position: _resolveReportPosition(reportId),
+      author: responderName,
+      showSuccessToast: false,
+    );
   }
 
   Future<bool> _markIncidentResolved(String reportId) async {

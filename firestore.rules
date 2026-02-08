@@ -135,6 +135,14 @@ service cloud.firestore {
       }
     }
 
+    // FCM token registry for push notifications
+    // NOTE: userId is app-level (phone/docId), not Firebase Auth uid.
+    match /user_tokens/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if false;
+    }
+
     // User votes (verify/report selections per user)
     // Using phone number as document ID for easier tracking
     match /userVotes/{phoneNumber} {

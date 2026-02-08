@@ -378,12 +378,14 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       const payload: Record<string, unknown> = {
         responderId: this.selectedResponder.id,
         responderName: this.selectedResponder.fullName,
-        responderStatus: 'RESPONDING',
-        status: 'RESPONDING',
+        responderStatus: 'PENDING',
+        status: 'PENDING',
         deployedAt: serverTimestamp(),
-        respondingAt: serverTimestamp(),
+        respondingAt: null,
         responderAssignedAt: serverTimestamp(),
         deployedBy: this.getCurrentAdminName(),
+        responderStatusUpdatedAt: serverTimestamp(),
+        responderStatusUpdatedBy: this.getCurrentAdminName(),
         updatedAt: serverTimestamp(),
       };
 

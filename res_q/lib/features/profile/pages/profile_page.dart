@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/services/notification_service.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../auth/pages/login_page.dart';
 
@@ -296,6 +297,7 @@ class _ProfilePageState extends State<ProfilePage>
                       child: ElevatedButton(
                         onPressed: () async {
                           await _updateSemiAdminPresenceOnLogout();
+                          await NotificationService().clearCurrentUserToken();
                           UserSession.clear();
                           await FirebaseAuth.instance.signOut();
                           if (!mounted) return;

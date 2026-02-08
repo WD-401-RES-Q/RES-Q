@@ -152,6 +152,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final controller = StreamController<List<_NotificationItem>>();
     final isResponder = _isResponderSession();
     final responderDocId = _getResponderDocId();
+    final reportOwnerId = _getCurrentUserReportOwnerId();
 
     List<_NotificationItem> announcements = [];
     List<_NotificationItem> reports = [];
@@ -191,10 +192,17 @@ class _NotificationsPageState extends State<NotificationsPage> {
           .where('responderId', isEqualTo: '__none__')
           .limit(1);
     } else {
-      reportsQuery = FirebaseFirestore.instance
-          .collection('reports')
-          .orderBy('reportedAt', descending: true)
-          .limit(30);
+      if (reportOwnerId != null && reportOwnerId.isNotEmpty) {
+        reportsQuery = FirebaseFirestore.instance
+            .collection('reports')
+            .where('userId', isEqualTo: reportOwnerId)
+            .limit(40);
+      } else {
+        reportsQuery = FirebaseFirestore.instance
+            .collection('reports')
+            .orderBy('reportedAt', descending: true)
+            .limit(30);
+      }
     }
 
     final reportsSub = reportsQuery.snapshots().listen((snapshot) {
@@ -204,6 +212,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
             if (isResponder) {
               return (data['responderId'] as String?)?.trim().isNotEmpty ==
                   true;
+            }
+            if (reportOwnerId != null && reportOwnerId.isNotEmpty) {
+              return true;
             }
             return data['location'] != null ||
                 data['incidentLocation'] != null ||
@@ -242,6 +253,20 @@ class _NotificationsPageState extends State<NotificationsPage> {
         '';
     if (rawId.isEmpty) return null;
     return rawId;
+  }
+
+  String? _getCurrentUserReportOwnerId() {
+    final userData = UserSession.currentUserData;
+    final raw =
+        (userData?['userId'] ??
+                userData?['contactNumber'] ??
+                userData?['phoneNumber'] ??
+                userData?['id'])
+            ?.toString() ??
+        '';
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return null;
+    return digits;
   }
 
   Widget _buildNotificationCard(_NotificationItem notification) {
@@ -816,39 +841,86 @@ class _NotificationItem {
     bool deploymentNotification = false,
   }) {
     final data = doc.data()!;
-    final ts = deploymentNotification
-        ? (data['responderAssignedAt'] ??
-              data['deployedAt'] ??
-              data['respondingAt'] ??
-              data['reportedAt'])
-        : data['reportedAt'];
-    DateTime timestamp = DateTime.now();
-    if (ts is Timestamp) {
-      timestamp = ts.toDate();
-    }
-
     final incidentType = data['incidentType'] as String? ?? 'Incident';
     final reporter = data['name'] as String?;
     final details = data['details'] as String?;
     final barangay = data['barangay'] as String?;
-    final status = deploymentNotification
-        ? (data['responderStatus'] as String? ?? data['status'] as String?)
-        : data['status'] as String?;
-    final title = deploymentNotification
-        ? 'You were deployed to a $incidentType incident'
-        : '$incidentType incident reported';
-    final subtitle = deploymentNotification
-        ? (details?.trim().isNotEmpty == true
-              ? details
-              : 'Open map to view assigned report details.')
-        : details;
+    final status =
+        data['responderStatus'] as String? ?? data['status'] as String?;
+    final statusLower = (status ?? '').trim().toLowerCase();
+    final responderNameRaw = (data['responderName'] as String? ?? '').trim();
+    final safeResponderName = responderNameRaw.isEmpty
+        ? 'Responder'
+        : responderNameRaw;
+    final latestComment = _extractLatestResponderComment(
+      data['responderComments'],
+    );
+    final latestCommentText = (latestComment?['text'] as String? ?? '').trim();
+    final latestCommentAt = latestComment?['timestamp'] as DateTime?;
+
+    Object? ts;
+    String title;
+    String? subtitle;
+
+    if (deploymentNotification) {
+      ts =
+          data['responderAssignedAt'] ??
+          data['deployedAt'] ??
+          data['respondingAt'] ??
+          data['reportedAt'];
+      title = 'You were deployed to a $incidentType incident';
+      subtitle = details?.trim().isNotEmpty == true
+          ? details
+          : 'Open map to view assigned report details.';
+    } else {
+      final hasAssignment =
+          (data['responderId'] as String? ?? '').trim().isNotEmpty ||
+          (responderNameRaw.isNotEmpty &&
+              responderNameRaw.toLowerCase() != 'unknown' &&
+              responderNameRaw.toLowerCase() != 'responder') ||
+          data['responderAssignedAt'] != null ||
+          data['deployedAt'] != null;
+
+      if (statusLower == 'responding') {
+        ts =
+            data['respondingAt'] ??
+            data['responderStatusUpdatedAt'] ??
+            data['responderAssignedAt'] ??
+            data['deployedAt'] ??
+            data['reportedAt'];
+        title = '$safeResponderName is responding to your report';
+        subtitle = latestCommentText.isNotEmpty
+            ? latestCommentText
+            : 'Responder is on the way to your location.';
+      } else if (hasAssignment) {
+        ts =
+            data['responderAssignedAt'] ??
+            data['deployedAt'] ??
+            data['reportedAt'];
+        title = '$safeResponderName was deployed to your report';
+        subtitle = latestCommentText.isNotEmpty
+            ? latestCommentText
+            : 'Status stays pending until responder taps responding.';
+      } else {
+        ts = data['reportedAt'];
+        title = '$incidentType incident reported';
+        subtitle = details;
+      }
+
+      if (latestCommentAt != null &&
+          latestCommentAt.isAfter(_parseTimestamp(ts))) {
+        ts = latestCommentAt;
+      }
+    }
+
+    final timestamp = _parseTimestamp(ts);
 
     // Check if explicitly marked as new, otherwise use time-based logic.
     bool isNew;
     if (data['isNew'] != null) {
       isNew = data['isNew'] as bool;
     } else {
-      final thresholdHours = deploymentNotification ? 12 : 6;
+      final thresholdHours = deploymentNotification ? 12 : 24;
       isNew = DateTime.now().difference(timestamp).inHours < thresholdHours;
     }
 
@@ -864,5 +936,46 @@ class _NotificationItem {
       status: status,
       isNew: isNew,
     );
+  }
+
+  static DateTime _parseTimestamp(Object? raw) {
+    if (raw is Timestamp) {
+      return raw.toDate();
+    }
+    if (raw is DateTime) {
+      return raw;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  static Map<String, Object?>? _extractLatestResponderComment(
+    Object? rawComments,
+  ) {
+    if (rawComments is! List) {
+      return null;
+    }
+
+    Map<String, Object?>? latest;
+    for (final entry in rawComments) {
+      if (entry is! Map) continue;
+      final comment = Map<String, dynamic>.from(entry);
+      final text = (comment['text'] as String? ?? '').trim();
+      if (text.isEmpty) continue;
+
+      final type = (comment['type'] as String?)?.toLowerCase();
+      final role = (comment['role'] as String?)?.toLowerCase();
+      final isResponderComment =
+          type == 'admin' ||
+          role == 'responder' ||
+          (type != 'user' && type != null);
+      if (!isResponderComment) continue;
+
+      final commentTimestamp = _parseTimestamp(comment['timestamp']);
+      if (latest == null ||
+          commentTimestamp.isAfter(latest['timestamp'] as DateTime)) {
+        latest = {'text': text, 'timestamp': commentTimestamp};
+      }
+    }
+    return latest;
   }
 }

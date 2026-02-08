@@ -5,7 +5,6 @@ import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
@@ -80,6 +79,7 @@ class _ReportMapPageState extends State<ReportMapPage>
   LatLng? _responderLocation;
   bool _resolvedDialogShown = false;
   bool _flaggedDialogShown = false;
+  bool _reportUpdatesInitialized = false;
   List<Polyline> _responderRoutePolylines = [];
   Timer? _routeDebounce;
   LatLng? _lastRouteOrigin;
@@ -604,14 +604,14 @@ class _ReportMapPageState extends State<ReportMapPage>
 
   String _formatDurationFromMinutes(int minutes) {
     if (minutes < 60) {
-      return '${minutes} min';
+      return '$minutes min';
     }
     final hours = minutes ~/ 60;
     final remaining = minutes % 60;
     if (remaining == 0) {
-      return '${hours} hr';
+      return '$hours hr';
     }
-    return '${hours} hr ${remaining} min';
+    return '$hours hr $remaining min';
   }
 
   void _subscribeToReportUpdates() {
@@ -623,6 +623,9 @@ class _ReportMapPageState extends State<ReportMapPage>
         .listen((snapshot) {
           final data = snapshot.data();
           if (data == null) return;
+          final previousData = _liveReportData == null
+              ? null
+              : Map<String, dynamic>.from(_liveReportData!);
           final incidentLocation =
               _latLngFromDynamic(data['incidentLocation']) ??
               _latLngFromDynamic(data['location']);
@@ -682,6 +685,10 @@ class _ReportMapPageState extends State<ReportMapPage>
             }
           }
           final status = (data['status'] as String? ?? '').toLowerCase();
+          _handleRealtimeReportNotification(
+            previousData: previousData,
+            currentData: data,
+          );
           if ((status == 'resolved' || status == 'incident resolved') &&
               !_resolvedDialogShown) {
             _resolvedDialogShown = true;
@@ -704,6 +711,145 @@ class _ReportMapPageState extends State<ReportMapPage>
         });
   }
 
+  DateTime? _dateFromDynamic(Object? raw) {
+    if (raw is Timestamp) {
+      return raw.toDate();
+    }
+    if (raw is DateTime) {
+      return raw;
+    }
+    return null;
+  }
+
+  bool _hasResponderAssignment(Map<String, dynamic>? data) {
+    if (data == null) return false;
+    final responderId = (data['responderId'] as String? ?? '').trim();
+    final responderContact =
+        (data['responderContactNumber'] as String? ??
+                data['responderPhone'] as String? ??
+                '')
+            .trim();
+    final responderName = (data['responderName'] as String? ?? '')
+        .trim()
+        .toLowerCase();
+    final assignedAt = _dateFromDynamic(
+      data['responderAssignedAt'] ?? data['deployedAt'],
+    );
+
+    return responderId.isNotEmpty ||
+        responderContact.isNotEmpty ||
+        (responderName.isNotEmpty &&
+            responderName != 'unknown' &&
+            responderName != 'responder') ||
+        assignedAt != null;
+  }
+
+  String _normalizedResponderStatus(Map<String, dynamic>? data) {
+    if (data == null) return '';
+    final raw =
+        (data['responderStatus'] as String? ?? data['status'] as String? ?? '')
+            .trim();
+    if (raw.isEmpty) return '';
+    return _normalizeStatusLabel(raw).toLowerCase();
+  }
+
+  String _responderName(Map<String, dynamic> data) {
+    final value =
+        (data['responderName'] as String? ??
+                data['respondingBy'] as String? ??
+                'Responder')
+            .trim();
+    return value.isEmpty ? 'Responder' : value;
+  }
+
+  void _showRealtimeNotification({
+    required String message,
+    IconData icon = Icons.notifications_active,
+  }) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        duration: const Duration(seconds: 3),
+        content: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFAC1B22),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  message,
+                  style: const TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontWeight: FontWeight.w400,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _handleRealtimeReportNotification({
+    required Map<String, dynamic>? previousData,
+    required Map<String, dynamic> currentData,
+  }) {
+    if (!_reportUpdatesInitialized) {
+      _reportUpdatesInitialized = true;
+      return;
+    }
+
+    final hadAssignment = _hasResponderAssignment(previousData);
+    final hasAssignment = _hasResponderAssignment(currentData);
+    final previousAssignedAt = _dateFromDynamic(
+      previousData?['responderAssignedAt'] ?? previousData?['deployedAt'],
+    );
+    final currentAssignedAt = _dateFromDynamic(
+      currentData['responderAssignedAt'] ?? currentData['deployedAt'],
+    );
+
+    final assignmentTimestampChanged =
+        currentAssignedAt != null &&
+        (previousAssignedAt == null ||
+            !currentAssignedAt.isAtSameMomentAs(previousAssignedAt));
+
+    if (hasAssignment && (!hadAssignment || assignmentTimestampChanged)) {
+      final responder = _responderName(currentData);
+      _showRealtimeNotification(
+        icon: Icons.local_shipping_outlined,
+        message:
+            '$responder was deployed. Status stays pending until they tap responding.',
+      );
+    }
+
+    final previousStatus = _normalizedResponderStatus(previousData);
+    final currentStatus = _normalizedResponderStatus(currentData);
+    if (currentStatus == 'responding' && previousStatus != 'responding') {
+      final responder = _responderName(currentData);
+      _showRealtimeNotification(
+        icon: Icons.directions_car_filled_outlined,
+        message: '$responder is now responding to your report.',
+      );
+    }
+  }
+
   void _subscribeToResponderComments() {
     _commentsSubscription?.cancel();
     _commentsSubscription = FirebaseFirestore.instance
@@ -718,55 +864,47 @@ class _ReportMapPageState extends State<ReportMapPage>
             return;
           }
           if (snapshot.docChanges.isEmpty) return;
+          String? latestCommentText;
+          DateTime? latestCommentAt;
           final hasNew = snapshot.docChanges.any((change) {
             if (change.type != DocumentChangeType.added) return false;
             final data = change.doc.data();
             if (data == null) return false;
             final type = (data['type'] as String?)?.toLowerCase();
             final role = (data['role'] as String?)?.toLowerCase();
-            return type == 'admin' ||
+            final isResponderComment =
+                type == 'admin' ||
                 role == 'responder' ||
                 (type != 'user' && type != null);
+            if (!isResponderComment) return false;
+            final text = (data['text'] as String? ?? '').trim();
+            if (text.isNotEmpty) {
+              final commentAt =
+                  _dateFromDynamic(data['timestamp']) ??
+                  DateTime.fromMillisecondsSinceEpoch(0);
+              if (latestCommentAt == null ||
+                  commentAt.isAfter(latestCommentAt!)) {
+                latestCommentAt = commentAt;
+                latestCommentText = text;
+              }
+            }
+            return true;
           });
           if (!hasNew || !mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.transparent,
-              elevation: 0,
-              duration: const Duration(seconds: 2),
-              content: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFAC1B22),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.notifications, color: Colors.white, size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Responder posted an update',
-                      style: TextStyle(
-                        fontFamily: 'RobotoCondensed',
-                        fontWeight: FontWeight.w400,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          final comment = latestCommentText;
+          if (comment != null && comment.isNotEmpty) {
+            final preview = comment.length > 100
+                ? '${comment.substring(0, 100)}...'
+                : comment;
+            _showRealtimeNotification(
+              icon: Icons.chat_bubble_outline,
+              message: 'Responder update: $preview',
+            );
+            return;
+          }
+          _showRealtimeNotification(
+            icon: Icons.notifications,
+            message: 'Responder posted an update.',
           );
         });
   }
@@ -1601,8 +1739,8 @@ class _ReportMapPageState extends State<ReportMapPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Report image/media
-                  if (widget.reportData['mediaUrl'] != null &&
-                      (widget.reportData['mediaUrl'] as String).isNotEmpty)
+                  if (reportData['mediaUrl'] != null &&
+                      (reportData['mediaUrl'] as String).isNotEmpty)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: CachedNetworkImage(
@@ -1631,8 +1769,8 @@ class _ReportMapPageState extends State<ReportMapPage>
                         },
                       ),
                     ),
-                  if (widget.reportData['mediaUrl'] != null &&
-                      (widget.reportData['mediaUrl'] as String).isNotEmpty)
+                  if (reportData['mediaUrl'] != null &&
+                      (reportData['mediaUrl'] as String).isNotEmpty)
                     const SizedBox(height: 16),
 
                   // Incident type badge
@@ -1808,8 +1946,8 @@ class _ReportMapPageState extends State<ReportMapPage>
                   _buildResponderCommentsSection(),
 
                   // Annotations
-                  if (widget.reportData['annotations'] != null &&
-                      (widget.reportData['annotations'] as String).isNotEmpty)
+                  if (reportData['annotations'] != null &&
+                      (reportData['annotations'] as String).isNotEmpty)
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1843,7 +1981,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  widget.reportData['annotations'],
+                                  reportData['annotations'],
                                   style: TextStyle(
                                     fontSize: 14,
                                     color: Colors.grey,
@@ -1859,8 +1997,8 @@ class _ReportMapPageState extends State<ReportMapPage>
                     ),
 
                   // Description
-                  if (widget.reportData['details'] != null &&
-                      (widget.reportData['details'] as String).isNotEmpty)
+                  if (reportData['details'] != null &&
+                      (reportData['details'] as String).isNotEmpty)
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1874,7 +2012,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          widget.reportData['details'],
+                          reportData['details'],
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey,
