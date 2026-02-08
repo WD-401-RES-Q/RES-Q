@@ -97,6 +97,8 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
   private resizeHandler?: () => void;
   private resizeObserver?: ResizeObserver;
   private routeRefreshTimer?: ReturnType<typeof setTimeout>;
+  private reportsRetryTimer?: ReturnType<typeof setTimeout>;
+  private respondersRetryTimer?: ReturnType<typeof setTimeout>;
   private routeRequestId = 0;
 
   private readonly angelesCenter = { lat: 15.145, lng: 120.5887 };
@@ -146,6 +148,12 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     }
     if (this.routeRefreshTimer) {
       clearTimeout(this.routeRefreshTimer);
+    }
+    if (this.reportsRetryTimer) {
+      clearTimeout(this.reportsRetryTimer);
+    }
+    if (this.respondersRetryTimer) {
+      clearTimeout(this.respondersRetryTimer);
     }
     this.clearSelectedRoute();
     if (this.map) {
@@ -599,9 +607,18 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
   }
 
   private startRealtimeTracking(): void {
+    if (this.reportsUnsubscribe) {
+      this.reportsUnsubscribe();
+      this.reportsUnsubscribe = undefined;
+    }
+    if (this.reportsRetryTimer) {
+      clearTimeout(this.reportsRetryTimer);
+      this.reportsRetryTimer = undefined;
+    }
     const reportsRef = collection(db, 'reports');
     this.reportsUnsubscribe = onSnapshot(
       reportsRef,
+      { includeMetadataChanges: true },
       (snapshot) => {
         const nextReports: ResponderTrack[] = [];
 
@@ -669,7 +686,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
           this.reports = nextReports;
           this.syncDerivedState();
           this.isLoading = false;
-          this.isListening = true;
+          this.isListening = !snapshot.metadata.fromCache;
           this.updateMarkers();
           this.scheduleRouteRefresh();
         });
@@ -680,14 +697,24 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
           this.isListening = false;
           this.isLoading = false;
         });
+        this.reportsRetryTimer = setTimeout(() => this.startRealtimeTracking(), 2000);
       },
     );
   }
 
   private startResponderRoster(): void {
+    if (this.respondersUnsubscribe) {
+      this.respondersUnsubscribe();
+      this.respondersUnsubscribe = undefined;
+    }
+    if (this.respondersRetryTimer) {
+      clearTimeout(this.respondersRetryTimer);
+      this.respondersRetryTimer = undefined;
+    }
     const respondersRef = collection(db, 'semi_admins');
     this.respondersUnsubscribe = onSnapshot(
       respondersRef,
+      { includeMetadataChanges: true },
       (snapshot) => {
         const nextResponders: ResponderProfile[] = snapshot.docs.map((snapshotDoc) => {
           const data = snapshotDoc.data() as any;
@@ -719,13 +746,16 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
 
         this.ngZone.run(() => {
           this.respondersRaw = nextResponders;
+          this.isListening = !snapshot.metadata.fromCache;
           this.syncDerivedState();
         });
       },
       () => {
         this.ngZone.run(() => {
           this.mapLoadError = 'Unable to load responder roster.';
+          this.isListening = false;
         });
+        this.respondersRetryTimer = setTimeout(() => this.startResponderRoster(), 2000);
       },
     );
   }
