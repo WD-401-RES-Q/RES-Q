@@ -910,7 +910,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   // Back button + logo row
                   Row(
                     children: [
-                      const ResqBackButton.outline(),
+                      const ResqBackButton(),
                       Expanded(
                         child: GestureDetector(
                           onTap: () => Navigator.pop(context),

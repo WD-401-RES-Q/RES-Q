@@ -28,6 +28,28 @@ service cloud.firestore {
           request.resource.data.userPhone.matches('^[0-9]+$');  // Validate phone number format
     }
 
+    // Basic comment payload checks for authored content
+    function isValidCommentCreate() {
+      return request.resource.data.author is string &&
+          request.resource.data.author.size() > 0 &&
+          request.resource.data.text is string &&
+          request.resource.data.text.size() > 0 &&
+          request.resource.data.text.size() <= 256 &&
+          request.resource.data.timestamp is timestamp;
+    }
+
+    // Basic reply payload checks for authored content
+    function isValidReplyCreate() {
+      return request.resource.data.author is string &&
+          request.resource.data.author.size() > 0 &&
+          request.resource.data.text is string &&
+          request.resource.data.text.size() > 0 &&
+          request.resource.data.text.size() <= 256 &&
+          request.resource.data.timestamp is timestamp &&
+          request.resource.data.parentCommentId is string &&
+          request.resource.data.parentCommentId.size() > 0;
+    }
+
     // Admins collection - open read for admin login (no Firebase Auth)
     match /admins/{docId} {
       allow read: if true;
@@ -82,15 +104,15 @@ service cloud.firestore {
       // Nested comments subcollection
       match /comments/{commentId} {
         allow read: if true;
-        allow create: if true;
-        allow update: if true;
+        allow create: if isAuthenticated() && isValidCommentCreate();
+        allow update: if isAuthenticated();
         allow delete: if false;
 
         // Nested replies under report comments
         match /replies/{replyId} {
           allow read: if true;
-          allow create: if true;
-          allow update: if true;
+          allow create: if isAuthenticated() && isValidReplyCreate();
+          allow update: if isAuthenticated();
           allow delete: if false;
         }
       }
