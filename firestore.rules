@@ -20,11 +20,6 @@ service cloud.firestore {
           request.resource.data.votes.values().hasOnly(['green', 'red', 'none']);
     }
 
-    // Helper function to check if string is a phone number (digits only)
-    function isPhoneNumber(str) {
-      return str.matches('^[0-9]+$');
-    }
-
     // Helper function to validate vote record data
     function isValidVoteRecord() {
       return request.resource.data.keys().hasOnly(['reportDocId', 'reportId', 'reportTitle', 'userPhone', 'voteType', 'timestamp']) &&
@@ -90,6 +85,14 @@ service cloud.firestore {
         allow create: if true;
         allow update: if true;
         allow delete: if false;
+
+        // Nested replies under report comments
+        match /replies/{replyId} {
+          allow read: if true;
+          allow create: if true;
+          allow update: if true;
+          allow delete: if false;
+        }
       }
     }
 
@@ -121,14 +124,6 @@ service cloud.firestore {
       
       // Vote records are immutable once created
       allow update: if false;
-      allow delete: if false;
-    }
-
-    // Root-level comments collection
-    match /comments/{commentId} {
-      allow read: if true;
-      allow create: if true;
-      allow update: if true;
       allow delete: if false;
     }
 
