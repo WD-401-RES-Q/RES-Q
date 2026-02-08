@@ -13,6 +13,7 @@ import '../../home/pages/home_page.dart';
 import '../../semi_admin/pages/semi_admin_main_page.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/registration_prefs.dart';
+import '../../../common/services/notification_service.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 class LoginPage extends StatefulWidget {
@@ -196,6 +197,10 @@ class _LoginPageState extends State<LoginPage>
           ...semiAdminData,
           'id': semiAdminQuery.docs.first.id,
         });
+        await _bindSessionPushNotifications(
+          userData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
+          explicitUserId: semiAdminQuery.docs.first.id,
+        );
         await _updateSemiAdminPresence(
           semiAdminData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
           isLoggedIn: true,
@@ -261,6 +266,10 @@ class _LoginPageState extends State<LoginPage>
         debugPrint('⚠️ No phone number found in userData');
         debugPrint('   Available fields: ${userData.keys.toList()}');
       }
+      await _bindSessionPushNotifications(
+        userData: userData,
+        explicitUserId: phoneNumber,
+      );
       _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
@@ -286,6 +295,44 @@ class _LoginPageState extends State<LoginPage>
     if (mounted) {
       AppSnackBar.show(context, message, type: AppSnackBarType.error);
     }
+  }
+
+  String _normalizeDigits(Object? value) {
+    return (value?.toString() ?? '').replaceAll(RegExp(r'\D'), '');
+  }
+
+  Future<void> _bindSessionPushNotifications({
+    required Map<String, dynamic> userData,
+    String? explicitUserId,
+  }) async {
+    final role = (userData['role'] ?? '').toString().trim().toLowerCase();
+    final isResponder =
+        role == 'semi-admin' || role == 'semi_admin' || role == 'responder';
+
+    String tokenOwnerId = (explicitUserId ?? '').trim();
+    if (tokenOwnerId.isEmpty) {
+      if (isResponder) {
+        tokenOwnerId =
+            (userData['id'] ?? userData['contactNumber'])?.toString().trim() ??
+            '';
+      } else {
+        tokenOwnerId = _normalizeDigits(
+          userData['userId'] ??
+              userData['contactNumber'] ??
+              userData['phoneNumber'],
+        );
+      }
+    }
+
+    if (tokenOwnerId.isEmpty) {
+      return;
+    }
+
+    if (FirebaseAuth.instance.currentUser == null) {
+      return;
+    }
+
+    await NotificationService().setUserId(tokenOwnerId, role: role);
   }
 
   @override
@@ -495,6 +542,10 @@ class _LoginPageState extends State<LoginPage>
           ...semiAdminData,
           'id': semiAdminQuery.docs.first.id,
         });
+        await _bindSessionPushNotifications(
+          userData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
+          explicitUserId: semiAdminQuery.docs.first.id,
+        );
         await _updateSemiAdminPresence(
           semiAdminData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
           isLoggedIn: true,
@@ -561,6 +612,10 @@ class _LoginPageState extends State<LoginPage>
         debugPrint('⚠️ No phone number found in userData');
         debugPrint('   Available fields: ${userData.keys.toList()}');
       }
+      await _bindSessionPushNotifications(
+        userData: userData,
+        explicitUserId: phoneNumber,
+      );
       _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {

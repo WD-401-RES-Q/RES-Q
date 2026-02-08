@@ -5,6 +5,7 @@ import * as crypto from 'crypto';
 admin.initializeApp();
 
 const db = admin.firestore();
+const messaging = admin.messaging();
 
 // PII fields that should be encrypted
 const PII_FIELDS = [
@@ -14,6 +15,107 @@ const PII_FIELDS = [
   'dateOfBirth',
   'contactNumber'
 ];
+
+const INVALID_TOKEN_ERROR_CODES = new Set<string>([
+  'messaging/invalid-registration-token',
+  'messaging/registration-token-not-registered',
+]);
+
+function normalizeDigits(value: unknown): string {
+  return String(value ?? '').replace(/\D/g, '');
+}
+
+function normalizeStatus(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function toDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof (value as {toDate?: () => Date}).toDate === 'function') {
+    return (value as {toDate: () => Date}).toDate();
+  }
+  return null;
+}
+
+async function getUserTokens(userId: string): Promise<string[]> {
+  if (!userId) return [];
+  const tokenDoc = await db.collection('user_tokens').doc(userId).get();
+  if (!tokenDoc.exists) return [];
+
+  const data = tokenDoc.data() as Record<string, unknown> | undefined;
+  if (!data) return [];
+
+  const tokensFromArray = Array.isArray(data.tokens)
+    ? (data.tokens as unknown[])
+        .map((entry) => String(entry ?? '').trim())
+        .filter((entry) => entry.length > 0)
+    : [];
+
+  const singleToken = String(data.fcmToken ?? '').trim();
+  if (singleToken.length > 0 && !tokensFromArray.includes(singleToken)) {
+    tokensFromArray.push(singleToken);
+  }
+
+  return tokensFromArray;
+}
+
+async function removeInvalidTokens(userId: string, tokens: string[]): Promise<void> {
+  if (!userId || tokens.length === 0) return;
+  await db.collection('user_tokens').doc(userId).set({
+    tokens: admin.firestore.FieldValue.arrayRemove(...tokens),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, {merge: true});
+}
+
+async function sendPushToUser(params: {
+  userId: string;
+  title: string;
+  body: string;
+  data: Record<string, string>;
+}): Promise<void> {
+  const {userId, title, body, data} = params;
+  if (!userId) return;
+
+  const tokens = await getUserTokens(userId);
+  if (tokens.length === 0) {
+    return;
+  }
+
+  const response = await messaging.sendEachForMulticast({
+    tokens,
+    notification: {title, body},
+    data,
+    android: {
+      priority: 'high',
+      notification: {
+        channelId: 'resq_dispatch_updates',
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default',
+          badge: 1,
+        },
+      },
+    },
+  });
+
+  const invalidTokens: string[] = [];
+  response.responses.forEach((result, index) => {
+    if (!result.success && result.error) {
+      const code = result.error.code;
+      if (INVALID_TOKEN_ERROR_CODES.has(code)) {
+        invalidTokens.push(tokens[index]);
+      }
+    }
+  });
+
+  if (invalidTokens.length > 0) {
+    await removeInvalidTokens(userId, invalidTokens);
+  }
+}
 
 /**
  * AES-256-GCM Encryption using Node.js crypto
@@ -332,6 +434,165 @@ export const migrateToEncrypted = functions
         'Migration failed'
       );
     }
+  });
+
+/**
+ * Sends push notifications to the civilian report owner when:
+ * - a responder is deployed
+ * - responder status changes (e.g., responding, on scene, resolved)
+ */
+export const notifyReportLifecycleUpdates = functions
+  .region('asia-east2')
+  .firestore
+  .document('reports/{reportId}')
+  .onUpdate(async (change, context) => {
+    const before = change.before.data() as Record<string, unknown>;
+    const after = change.after.data() as Record<string, unknown>;
+    const reportId = String(context.params.reportId ?? '').trim();
+    if (!reportId) {
+      return null;
+    }
+
+    const ownerUserId = normalizeDigits(after.userId ?? after.contactNumber);
+    if (!ownerUserId) {
+      return null;
+    }
+
+    const responderNameRaw = String(
+      after.responderName ?? after.respondingBy ?? 'Responder',
+    ).trim();
+    const responderName = responderNameRaw || 'Responder';
+
+    const beforeAssignedAt = toDate(
+      before.responderAssignedAt ?? before.deployedAt,
+    );
+    const afterAssignedAt = toDate(
+      after.responderAssignedAt ?? after.deployedAt,
+    );
+    const deploymentChanged = Boolean(
+      afterAssignedAt &&
+        (!beforeAssignedAt ||
+          afterAssignedAt.getTime() !== beforeAssignedAt.getTime()),
+    );
+
+    const beforeStatus = normalizeStatus(
+      before.responderStatus ?? before.status,
+    );
+    const afterStatus = normalizeStatus(
+      after.responderStatus ?? after.status,
+    );
+    const statusChanged = afterStatus.length > 0 && afterStatus !== beforeStatus;
+
+    if (deploymentChanged) {
+      await sendPushToUser({
+        userId: ownerUserId,
+        title: 'Responder Deployed',
+        body:
+          `${responderName} was deployed to your report. ` +
+          'Status stays pending until responder taps responding.',
+        data: {
+          type: 'report_deployed',
+          reportId,
+          status: 'pending',
+        },
+      });
+    }
+
+    if (statusChanged) {
+      let title = 'Report Status Updated';
+      let body = `${responderName} updated your report status to ${afterStatus.toUpperCase()}.`;
+
+      if (afterStatus === 'responding') {
+        title = 'Responder Is On The Way';
+        body = `${responderName} is now responding to your report.`;
+      } else if (
+        afterStatus === 'on scene' ||
+        afterStatus === 'on-scene' ||
+        afterStatus === 'on_scene'
+      ) {
+        title = 'Responder Arrived';
+        body = `${responderName} has arrived on scene.`;
+      } else if (
+        afterStatus === 'resolved' ||
+        afterStatus === 'incident resolved'
+      ) {
+        title = 'Incident Resolved';
+        body = `${responderName} marked your report as resolved.`;
+      } else if (afterStatus === 'flagged' || afterStatus === 'unverified') {
+        title = 'Report Flagged';
+        body = 'Your report was flagged by the responder team.';
+      }
+
+      await sendPushToUser({
+        userId: ownerUserId,
+        title,
+        body,
+        data: {
+          type: 'report_status',
+          reportId,
+          status: afterStatus,
+        },
+      });
+    }
+
+    return null;
+  });
+
+/**
+ * Sends push notifications to the civilian report owner when a responder/admin
+ * posts a comment update inside reports/{reportId}/comments.
+ */
+export const notifyResponderCommentUpdates = functions
+  .region('asia-east2')
+  .firestore
+  .document('reports/{reportId}/comments/{commentId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data() as Record<string, unknown>;
+    const reportId = String(context.params.reportId ?? '').trim();
+    if (!reportId) {
+      return null;
+    }
+
+    const type = normalizeStatus(data.type);
+    const role = normalizeStatus(data.role);
+    const isResponderComment =
+      type === 'admin' || role === 'responder' || (type !== 'user' && type !== '');
+    if (!isResponderComment) {
+      return null;
+    }
+
+    const reportDoc = await db.collection('reports').doc(reportId).get();
+    if (!reportDoc.exists) {
+      return null;
+    }
+    const reportData = reportDoc.data() as Record<string, unknown>;
+    const ownerUserId = normalizeDigits(
+      reportData.userId ?? reportData.contactNumber,
+    );
+    if (!ownerUserId) {
+      return null;
+    }
+
+    const authorRaw = String(data.author ?? reportData.responderName ?? 'Responder').trim();
+    const author = authorRaw || 'Responder';
+    const textRaw = String(data.text ?? '').trim();
+    if (!textRaw) {
+      return null;
+    }
+    const textPreview =
+      textRaw.length > 140 ? `${textRaw.slice(0, 140)}...` : textRaw;
+
+    await sendPushToUser({
+      userId: ownerUserId,
+      title: 'Responder Update',
+      body: `${author}: ${textPreview}`,
+      data: {
+        type: 'report_comment',
+        reportId,
+      },
+    });
+
+    return null;
   });
 
 /**
