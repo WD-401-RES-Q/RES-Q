@@ -14,10 +14,26 @@ import '../../../common/services/user_session.dart';
 import '../../../common/services/location_service.dart';
 import '../../../common/utils/phone_utils.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
+import '../../../common/widgets/app_buttons.dart';
+import '../../../common/widgets/app_snackbar.dart';
 import '../../home/pages/home_page.dart';
 import '../../emergency/pages/emergency_call_screen.dart';
 
 enum LocationSelectionMode { current, pin }
+
+enum CapturedMediaType { photo, video }
+
+class _VehicleInvolved {
+  _VehicleInvolved();
+
+  final TextEditingController plateController = TextEditingController();
+  String? bodyType;
+  String? color;
+
+  void dispose() {
+    plateController.dispose();
+  }
+}
 
 class ReportFormScreen extends StatefulWidget {
   final String incidentType;
@@ -30,39 +46,48 @@ class ReportFormScreen extends StatefulWidget {
 
 class _ReportFormScreenState extends State<ReportFormScreen> {
   final TextEditingController _informationController = TextEditingController();
-  final TextEditingController _plateNumberController = TextEditingController();
   final TextEditingController _barangayController = TextEditingController();
   final TextEditingController _otherIncidentController =
       TextEditingController();
   String? _fullName;
   String? _contactNumber;
   late final String _reportDate;
-  String? _vehicleBodyType;
-  String? _vehicleColor;
   String? _mediaError;
   String? _otherIncidentError;
+  String? _barangayError;
+  String? _fireTypeError;
+  String? _fireType;
 
   LocationSelectionMode _locationMode = LocationSelectionMode.current;
   LatLng? _selectedLocation;
   bool _locationLoading = false;
   XFile? _capturedMedia;
+  CapturedMediaType? _capturedMediaType;
   final ImagePicker _picker = ImagePicker();
   bool _submitting = false;
   int _navIndex = 0;
+  int _injuredCount = 0;
+  bool _needsAmbulance = false;
+  final List<_VehicleInvolved> _vehicles = <_VehicleInvolved>[];
 
   @override
   void initState() {
     super.initState();
     _reportDate = _formatDate(DateTime.now());
     _loadUserInfo();
+    if (_isVehicularIncident()) {
+      _vehicles.add(_VehicleInvolved());
+    }
   }
 
   @override
   void dispose() {
     _informationController.dispose();
-    _plateNumberController.dispose();
     _barangayController.dispose();
     _otherIncidentController.dispose();
+    for (final vehicle in _vehicles) {
+      vehicle.dispose();
+    }
     super.dispose();
   }
 
@@ -78,31 +103,78 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     return '$month/$day/${date.year}';
   }
 
+  bool _isLikelyVideoPath(String path) {
+    final lower = path.toLowerCase();
+    return lower.endsWith('.mp4') ||
+        lower.endsWith('.mov') ||
+        lower.endsWith('.m4v') ||
+        lower.endsWith('.3gp') ||
+        lower.endsWith('.webm');
+  }
+
+  String _capturedMediaDisplayText() {
+    if (_capturedMedia == null) return 'CAPTURE PHOTO/VIDEO *';
+    final fallbackName = _fileNameFromPath(_capturedMedia!.path);
+    final fileName = (_capturedMedia!.name).isNotEmpty
+        ? _capturedMedia!.name
+        : fallbackName;
+    final isVideo =
+        _capturedMediaType == CapturedMediaType.video ||
+        _isLikelyVideoPath(_capturedMedia!.path);
+    final typeLabel = isVideo ? 'Video' : 'Photo';
+    return '✓ $typeLabel captured: $fileName';
+  }
+
+  String _fileNameFromPath(String path) {
+    final segments = path.split(RegExp(r'[\\/]'));
+    return segments.isEmpty ? path : segments.last;
+  }
+
   Future<void> _capturePhoto() async {
-    final XFile? photo = await _picker.pickImage(
-      source: ImageSource.camera,
-      imageQuality: 60,
-      maxWidth: 1024,
-      maxHeight: 1024,
-    );
-    if (photo != null) {
-      setState(() {
-        _capturedMedia = photo;
-        _mediaError = null;
-      });
+    try {
+      final XFile? photo = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 60,
+        maxWidth: 1024,
+        maxHeight: 1024,
+      );
+      if (photo != null) {
+        setState(() {
+          _capturedMedia = photo;
+          _capturedMediaType = CapturedMediaType.photo;
+          _mediaError = null;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Failed to capture photo: $e',
+        type: AppSnackBarType.error,
+      );
     }
   }
 
   Future<void> _captureVideo() async {
-    final XFile? video = await _picker.pickVideo(
-      source: ImageSource.camera,
-      maxDuration: const Duration(seconds: 30),
-    );
-    if (video != null) {
-      setState(() {
-        _capturedMedia = video;
-        _mediaError = null;
-      });
+    try {
+      final XFile? video = await _picker.pickVideo(
+        source: ImageSource.camera,
+        maxDuration: const Duration(seconds: 10),
+      );
+      if (video != null) {
+        setState(() {
+          _capturedMedia = video;
+          _capturedMediaType = CapturedMediaType.video;
+          _mediaError = null;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Failed to capture video: $e',
+        type: AppSnackBarType.error,
+      );
     }
   }
 
@@ -183,7 +255,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                               elevation: 2,
                             ),
                             child: const Text(
-                              'CAPTURE A VIDEO',
+                              'CAPTURE A VIDEO (10s max)',
                               style: TextStyle(
                                 fontFamily: 'RobotoCondensed',
                                 fontSize: 12,
@@ -210,33 +282,57 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     setState(() {
       _mediaError = null;
       _otherIncidentError = null;
+      _barangayError = null;
+      _fireTypeError = null;
     });
 
     if (_isVehicularIncident()) {
-      final plateNumber = _plateNumberController.text.trim();
-      if (plateNumber.isEmpty ||
-          _vehicleBodyType == null ||
-          _vehicleColor == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please complete all vehicle details.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
+      if (_vehicles.isEmpty) {
+        _vehicles.add(_VehicleInvolved());
+      }
+      for (int i = 0; i < _vehicles.length; i++) {
+        final vehicle = _vehicles[i];
+        final plateNumber = vehicle.plateController.text.trim();
+        final plateLimit = _plateLimitForBodyType(vehicle.bodyType);
+        if (plateNumber.isEmpty ||
+            vehicle.bodyType == null ||
+            vehicle.color == null) {
+          AppSnackBar.show(
+            context,
+            'Please complete all details for vehicle ${i + 1}.',
+            type: AppSnackBarType.error,
+          );
+          return;
+        }
+        if (plateNumber.length > plateLimit) {
+          AppSnackBar.show(
+            context,
+            'Vehicle ${i + 1} plate number exceeds the limit of $plateLimit characters.',
+            type: AppSnackBarType.error,
+          );
+          return;
+        }
       }
     }
-    if (_isFireOrFloodIncident()) {
-      final barangay = _barangayController.text.trim();
-      if (barangay.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please enter the barangay.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
+
+    if (_isFireIncident() && (_fireType == null || _fireType!.trim().isEmpty)) {
+      setState(() => _fireTypeError = 'Type of fire is required');
+      AppSnackBar.show(
+        context,
+        'Please select the type of fire.',
+        type: AppSnackBarType.error,
+      );
+      return;
+    }
+    final barangay = _barangayController.text.trim();
+    if (barangay.isEmpty) {
+      setState(() => _barangayError = 'Barangay is required');
+      AppSnackBar.show(
+        context,
+        'Please enter the barangay.',
+        type: AppSnackBarType.error,
+      );
+      return;
     }
     if (_isOthersIncident()) {
       final otherIncident = _otherIncidentController.text.trim();
@@ -265,59 +361,76 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     setState(() => _submitting = true);
 
     try {
-      print('📝 Starting report submission...');
+      debugPrint('Starting report submission...');
       final now = DateTime.now();
 
       String? mediaUrl;
       String? mediaType;
 
-      // Upload media only if captured (optional)
+      // Upload media only if captured (required by validation above)
       if (_capturedMedia != null) {
         final rawName = (_capturedMedia?.name ?? '').isNotEmpty
             ? _capturedMedia!.name
-            : (_capturedMedia!.path.split('/').last);
+            : _fileNameFromPath(_capturedMedia!.path);
+        final isVideo =
+            _capturedMediaType == CapturedMediaType.video ||
+            _isLikelyVideoPath(_capturedMedia!.path);
+        final defaultExt = isVideo ? '.mp4' : '.jpg';
         final safeName = rawName.isNotEmpty
             ? rawName
-            : 'report_${now.millisecondsSinceEpoch}';
+            : 'report_${now.millisecondsSinceEpoch}$defaultExt';
         final lowerName = safeName.toLowerCase();
         final storageRef = FirebaseStorage.instance
             .ref()
             .child('reports')
             .child('${now.millisecondsSinceEpoch}_$safeName');
 
-        final isVideo =
-            lowerName.endsWith('.mp4') ||
-            lowerName.endsWith('.mov') ||
-            lowerName.endsWith('.m4v');
-        final contentType = isVideo ? 'video/mp4' : 'image/jpeg';
+        final contentType = isVideo
+            ? (lowerName.endsWith('.mov') ? 'video/quicktime' : 'video/mp4')
+            : 'image/jpeg';
+        final metadata = SettableMetadata(contentType: contentType);
 
-        print('📤 Reading media file...');
+        debugPrint(
+          'Uploading ${isVideo ? 'video' : 'photo'} to Firebase Storage...',
+        );
         final data = await _capturedMedia!.readAsBytes();
-        print('📤 Uploading ${data.length} bytes to Firebase Storage...');
-
+        final uploadTimeout = isVideo
+            ? const Duration(seconds: 120)
+            : const Duration(seconds: 60);
         final uploadSnapshot = await storageRef
-            .putData(data, SettableMetadata(contentType: contentType))
-            .timeout(const Duration(seconds: 60));
+            .putData(data, metadata)
+            .timeout(uploadTimeout);
 
-        print('🔗 Getting download URL...');
         mediaUrl = await uploadSnapshot.ref.getDownloadURL().timeout(
-          const Duration(seconds: 15),
+          const Duration(seconds: 20),
         );
         mediaType = isVideo ? 'video' : 'photo';
-        print('✅ Media uploaded: $mediaUrl');
+
+        // Verify that the object exists in Storage and is readable.
+        await uploadSnapshot.ref.getMetadata().timeout(
+          const Duration(seconds: 10),
+        );
+        debugPrint('Media uploaded successfully: $mediaUrl');
       } else {
-        print('⏭️ Skipping media upload (no media captured)');
+        debugPrint('Skipping media upload (no media captured)');
       }
 
-      print('💾 Saving to Firestore...');
+      debugPrint('Saving report to Firestore...');
 
       // Generate a unique report ID for easier tracking
       final reportId = _generateReportId();
-      print('🆔 Generated Report ID: $reportId');
+      debugPrint('Generated Report ID: $reportId');
+      final incidentTypeValue = _incidentTypeForStorage();
+      final vehiclesPayload = _isVehicularIncident()
+          ? _buildVehiclesPayload()
+          : <Map<String, dynamic>>[];
+      final firstVehicle = _isVehicularIncident() && vehiclesPayload.isNotEmpty
+          ? vehiclesPayload.first
+          : null;
 
       // Get user ID safely
       final userId = UserSession.getUserId();
-      if (userId == null || userId.isEmpty) {
+      if (userId.isEmpty) {
         throw Exception(
           'Phone number is required to submit a report. Please update your profile.',
         );
@@ -355,16 +468,21 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             'userId': userId, // User ID for tracking
             'name': _fullName ?? 'Unknown',
             'contactNumber': _contactNumber ?? 'Unknown',
-            'incidentType': widget.incidentType,
+            'incidentType': incidentTypeValue,
             'details': _informationController.text.trim(),
             if (_isVehicularIncident()) ...{
-              'vehiclePlateNumber': _plateNumberController.text.trim(),
-              'vehicleBodyType': _vehicleBodyType,
-              'vehicleColor': _vehicleColor,
+              // Legacy first-vehicle fields for backward compatibility.
+              'vehiclePlateNumber': firstVehicle?['plateNumber'],
+              'vehicleBodyType': firstVehicle?['bodyType'],
+              'vehicleColor': firstVehicle?['color'],
+              // New multi-vehicle fields.
+              'vehicleCount': vehiclesPayload.length,
+              'vehicles': vehiclesPayload,
             },
-            if (_isFireOrFloodIncident()) ...{
-              'barangay': _barangayController.text.trim(),
-            },
+            if (_isFireIncident()) 'fireType': _fireType,
+            'barangay': _barangayController.text.trim(),
+            'injuredCount': _injuredCount,
+            'needsAmbulance': _isFloodIncident() ? false : _needsAmbulance,
             if (_isOthersIncident()) ...{
               'otherIncidentType': _otherIncidentController.text.trim(),
             },
@@ -375,14 +493,24 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 : 'pin',
             'mediaUrl': mediaUrl,
             'mediaType': mediaType,
+            // Keep incident pin immutable for maps/admin even when user shares
+            // live location updates later.
             'location': GeoPoint(location.latitude, location.longitude),
+            'incidentLocation': GeoPoint(location.latitude, location.longitude),
+            if (_locationMode == LocationSelectionMode.current) ...{
+              'reporterLocation': GeoPoint(
+                location.latitude,
+                location.longitude,
+              ),
+              'reporterLocationUpdatedAt': Timestamp.fromDate(now),
+            },
             'status': 'Pending',
             'greenFlags': 0,
             'redFlags': 0,
           })
           .timeout(const Duration(seconds: 15));
 
-      print('✅ Report saved with ID: ${docRef.id}');
+      debugPrint('Report saved with ID: ${docRef.id}');
 
       if (!mounted) return;
 
@@ -423,16 +551,21 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 final reportData = {
                   'name': _fullName ?? 'Unknown',
                   'contactNumber': _contactNumber ?? 'Unknown',
-                  'incidentType': widget.incidentType,
+                  'incidentType': incidentTypeValue,
                   'details': _informationController.text.trim(),
                   if (_isVehicularIncident()) ...{
-                    'vehiclePlateNumber': _plateNumberController.text.trim(),
-                    'vehicleBodyType': _vehicleBodyType,
-                    'vehicleColor': _vehicleColor,
+                    'vehiclePlateNumber': firstVehicle?['plateNumber'],
+                    'vehicleBodyType': firstVehicle?['bodyType'],
+                    'vehicleColor': firstVehicle?['color'],
+                    'vehicleCount': vehiclesPayload.length,
+                    'vehicles': vehiclesPayload,
                   },
-                  if (_isFireOrFloodIncident()) ...{
-                    'barangay': _barangayController.text.trim(),
-                  },
+                  if (_isFireIncident()) 'fireType': _fireType,
+                  'barangay': _barangayController.text.trim(),
+                  'injuredCount': _injuredCount,
+                  'needsAmbulance': _isFloodIncident()
+                      ? false
+                      : _needsAmbulance,
                   if (_isOthersIncident()) ...{
                     'otherIncidentType': _otherIncidentController.text.trim(),
                   },
@@ -443,6 +576,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                       _locationMode == LocationSelectionMode.current
                       ? 'current'
                       : 'pin',
+                  if (_locationMode == LocationSelectionMode.current) ...{
+                    'reporterLocationLat': location.latitude,
+                    'reporterLocationLng': location.longitude,
+                  },
+                  'incidentLocationLat': location.latitude,
+                  'incidentLocationLng': location.longitude,
                   'locationLat': location.latitude,
                   'locationLng': location.longitude,
                 };
@@ -474,21 +613,27 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           ],
         ),
       );
-    } on TimeoutException catch (e) {
+    } on TimeoutException {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Upload timed out: ${e.message ?? ''}'.trim()),
-          backgroundColor: Colors.red,
-        ),
+      AppSnackBar.show(
+        context,
+        'Media upload timed out. Please retry with a shorter/clearer capture.',
+        type: AppSnackBarType.error,
+      );
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Firebase Storage upload failed (${e.code}). '
+        'Please check your connection and Storage rules/quota.',
+        type: AppSnackBarType.error,
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to submit report: $e'),
-          backgroundColor: Colors.red,
-        ),
+      AppSnackBar.show(
+        context,
+        'Failed to submit report: $e',
+        type: AppSnackBarType.error,
       );
     } finally {
       if (mounted) setState(() => _submitting = false);
@@ -765,13 +910,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   // Back button + logo row
                   Row(
                     children: [
-                      IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(
-                          Icons.arrow_back_ios_new,
-                          color: Color(0xFFAC1B22),
-                        ),
-                      ),
+                      const ResqBackButton(),
                       Expanded(
                         child: GestureDetector(
                           onTap: () => Navigator.pop(context),
@@ -793,7 +932,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 48),
+                      const SizedBox(width: 44),
                     ],
                   ),
 
@@ -845,9 +984,36 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
                   if (_isVehicularIncident()) const SizedBox(height: 16),
 
-                  if (_isFireOrFloodIncident()) _buildBarangayField(),
+                  _buildBarangayField(),
+                  if (_barangayError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          _barangayError!,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 12,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ),
+                    ),
 
-                  if (_isFireOrFloodIncident()) const SizedBox(height: 16),
+                  const SizedBox(height: 16),
+
+                  if (_isFireIncident()) _buildFireTypeField(),
+
+                  if (_isFireIncident()) const SizedBox(height: 16),
+
+                  _buildInjuredCounterField(),
+
+                  const SizedBox(height: 16),
+
+                  if (!_isFloodIncident()) _buildAmbulanceField(),
+
+                  if (!_isFloodIncident()) const SizedBox(height: 16),
 
                   if (_isOthersIncident()) _buildOtherIncidentField(),
 
@@ -919,9 +1085,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                               ),
                               child: Center(
                                 child: Text(
-                                  _capturedMedia == null
-                                      ? "CAPTURE PHOTO/VIDEO *"
-                                      : "✓ Media captured",
+                                  _capturedMediaDisplayText(),
                                   style: TextStyle(
                                     fontFamily: 'RobotoCondensed',
                                     fontSize: 14,
@@ -932,6 +1096,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                                               : Colors.black)
                                         : const Color(0xFF22C55E),
                                   ),
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                             ),
@@ -1139,7 +1306,6 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                     ),
                     child: ElevatedButton(
                       onPressed: () {
-                        print("Emergency call button pressed");
                         Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -1232,17 +1398,243 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     return 'RPT-$dateStr-$uuid';
   }
 
+  static const List<String> _vehicleBodies = [
+    'Sedan',
+    'SUV',
+    'Hatchback',
+    'Pickup',
+    'Van',
+    'Motorcycle',
+    'Bus',
+    'Truck',
+    'Other',
+  ];
+
+  static const List<String> _vehicleColors = [
+    'Black',
+    'White',
+    'Gray',
+    'Red',
+    'Orange',
+    'Yellow',
+    'Green',
+    'Blue',
+    'Purple',
+  ];
+
+  static const Map<String, Color> _colorSwatches = {
+    'Black': Colors.black,
+    'White': Colors.white,
+    'Gray': Color(0xFF9CA3AF),
+    'Red': Color(0xFFDC2626),
+    'Orange': Color(0xFFF97316),
+    'Yellow': Color(0xFFFACC15),
+    'Green': Color(0xFF22C55E),
+    'Blue': Color(0xFF2563EB),
+    'Purple': Color(0xFF7C3AED),
+  };
+
   bool _isVehicularIncident() {
-    return widget.incidentType.toUpperCase() == 'VEHICULAR';
+    final incident = widget.incidentType.toUpperCase().trim();
+    return incident == 'VEHICULAR' ||
+        incident == 'ROAD CRASH' ||
+        incident == 'ROADCRASH';
   }
 
-  bool _isFireOrFloodIncident() {
-    final incident = widget.incidentType.toUpperCase();
-    return incident == 'FIRE' || incident == 'FLOOD';
+  bool _isFireIncident() {
+    return widget.incidentType.toUpperCase().trim() == 'FIRE';
+  }
+
+  String _incidentTypeForStorage() {
+    if (_isVehicularIncident()) return 'VEHICULAR';
+    return widget.incidentType;
+  }
+
+  bool _isFloodIncident() {
+    return widget.incidentType.toUpperCase() == 'FLOOD';
   }
 
   bool _isOthersIncident() {
     return widget.incidentType.toUpperCase() == 'OTHERS';
+  }
+
+  Widget _buildInjuredCounterField() {
+    return _buildLabeledField(
+      label: 'How many injured? *',
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: _injuredCount > 0
+                ? () => setState(() => _injuredCount -= 1)
+                : null,
+            icon: const Icon(Icons.remove_circle_outline),
+            color: const Color(0xFFAC1B22),
+          ),
+          Expanded(
+            child: Text(
+              _injuredCount.toString(),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.black,
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: _injuredCount < 999
+                ? () => setState(() => _injuredCount += 1)
+                : null,
+            icon: const Icon(Icons.add_circle_outline),
+            color: const Color(0xFFAC1B22),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAmbulanceField() {
+    return _buildLabeledField(
+      label: 'Need ambulance?',
+      child: CheckboxListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        value: _needsAmbulance,
+        onChanged: (value) {
+          setState(() => _needsAmbulance = value ?? false);
+        },
+        activeColor: const Color(0xFFAC1B22),
+        title: const Text(
+          'Request ambulance response',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontSize: 12,
+            color: Colors.black,
+          ),
+        ),
+        controlAffinity: ListTileControlAffinity.leading,
+      ),
+    );
+  }
+
+  bool _isMotorcycleBodyType(String? bodyType) {
+    if (bodyType == null) return false;
+    return bodyType.toLowerCase().contains('motorcycle');
+  }
+
+  int _plateLimitForBodyType(String? bodyType) {
+    return _isMotorcycleBodyType(bodyType) ? 6 : 7;
+  }
+
+  String _plateHintForBodyType(String? bodyType) {
+    return _isMotorcycleBodyType(bodyType)
+        ? 'Max 6 chars (motorcycle)'
+        : 'Max 7 chars (car old/new)';
+  }
+
+  void _addVehicle() {
+    setState(() => _vehicles.add(_VehicleInvolved()));
+  }
+
+  void _removeVehicleAt(int index) {
+    if (_vehicles.length <= 1) return;
+    final removed = _vehicles.removeAt(index);
+    removed.dispose();
+    setState(() {});
+  }
+
+  List<Map<String, dynamic>> _buildVehiclesPayload() {
+    return _vehicles
+        .map(
+          (vehicle) => {
+            'plateNumber': vehicle.plateController.text.trim(),
+            'bodyType': vehicle.bodyType,
+            'color': vehicle.color,
+            'vehicleClass': _isMotorcycleBodyType(vehicle.bodyType)
+                ? 'motorcycle'
+                : 'car',
+          },
+        )
+        .toList();
+  }
+
+  Widget _buildFireTypeField() {
+    const fireTypes = [
+      'Residential Fire',
+      'Grass Fire',
+      'Electrical Fire',
+      'Vehicular Fire',
+      'Commercial Fire',
+      'Industrial Fire',
+      'Forest Fire',
+      'Other Fire Type',
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildLabeledField(
+          label: 'Type of Fire *',
+          borderColor: _fireTypeError != null ? Colors.red : Colors.black,
+          child: DropdownButtonHideUnderline(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: DropdownButton<String>(
+                value: _fireType,
+                hint: const Text(
+                  'Select fire type',
+                  style: TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontSize: 12,
+                    color: Colors.black54,
+                  ),
+                ),
+                isExpanded: true,
+                isDense: true,
+                icon: const Icon(
+                  Icons.keyboard_arrow_down,
+                  color: Color(0xFFAC1B22),
+                ),
+                items: fireTypes
+                    .map(
+                      (value) => DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(
+                          value,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 12,
+                            color: Colors.black,
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _fireType = value;
+                    _fireTypeError = null;
+                  });
+                },
+              ),
+            ),
+          ),
+        ),
+        if (_fireTypeError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              _fireTypeError!,
+              style: const TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontSize: 12,
+                color: Colors.red,
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   Widget _buildOtherIncidentField() {
@@ -1300,193 +1692,264 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   Widget _buildVehicleDetailsRow() {
-    const vehicleBodies = [
-      'Sedan',
-      'SUV',
-      'Hatchback',
-      'Pickup',
-      'Van',
-      'Motorcycle',
-      'Bus',
-      'Truck',
-      'Other',
-    ];
-    const vehicleColors = [
-      'Black',
-      'White',
-      'Gray',
-      'Red',
-      'Orange',
-      'Yellow',
-      'Green',
-      'Blue',
-      'Purple',
-    ];
-    const colorSwatches = {
-      'Black': Colors.black,
-      'White': Colors.white,
-      'Gray': Color(0xFF9CA3AF),
-      'Red': Color(0xFFDC2626),
-      'Orange': Color(0xFFF97316),
-      'Yellow': Color(0xFFFACC15),
-      'Green': Color(0xFF22C55E),
-      'Blue': Color(0xFF2563EB),
-      'Purple': Color(0xFF7C3AED),
-    };
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: _buildLabeledField(
-            label: 'Plate Number *',
-            child: TextField(
-              controller: _plateNumberController,
-              textCapitalization: TextCapitalization.characters,
-              textAlignVertical: TextAlignVertical.center,
-              style: const TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontSize: 12,
-                fontWeight: FontWeight.w400,
-                color: Colors.black,
-              ),
-              decoration: const InputDecoration(
-                hintText: 'ABC123',
-                hintStyle: TextStyle(
-                  fontFamily: 'RobotoCondensed',
-                  fontSize: 12,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.black54,
-                ),
-                border: InputBorder.none,
-                isCollapsed: true,
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 14,
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildLabeledField(
-            label: 'Body Type *',
-            child: DropdownButtonHideUnderline(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: DropdownButton<String>(
-                  value: _vehicleBodyType,
-                  hint: const Text(
-                    'Select',
-                    style: TextStyle(
-                      fontFamily: 'RobotoCondensed',
-                      fontSize: 12,
-                      color: Colors.black54,
+        ...List.generate(_vehicles.length, (index) {
+          final vehicle = _vehicles[index];
+          final plateLimit = _plateLimitForBodyType(vehicle.bodyType);
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (_vehicles.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    'Vehicle ${index + 1}',
+                    style: const TextStyle(
+                      fontFamily: 'Roboto',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFFAC1B22),
                     ),
                   ),
-                  isExpanded: true,
-                  isDense: true,
-                  icon: Icon(
-                    Icons.keyboard_arrow_down,
-                    color: Color(0xFFAC1B22),
-                  ),
-                  dropdownColor: Colors.white,
-                  items: vehicleBodies
-                      .map(
-                        (value) => DropdownMenuItem<String>(
-                          value: value,
-                          child: Text(
-                            value,
-                            style: const TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 12,
-                              color: Colors.black,
-                            ),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) {
-                    setState(() => _vehicleBodyType = value);
-                  },
                 ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _buildLabeledField(
-            label: 'Color *',
-            child: DropdownButtonHideUnderline(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: DropdownButton<String>(
-                  value: _vehicleColor,
-                  hint: const Text(
-                    'Select',
-                    style: TextStyle(
-                      fontFamily: 'RobotoCondensed',
-                      fontSize: 12,
-                      color: Colors.black54,
-                    ),
-                  ),
-                  isExpanded: true,
-                  isDense: true,
-                  icon: Icon(
-                    Icons.keyboard_arrow_down,
-                    color: Color(0xFFAC1B22),
-                  ),
-                  selectedItemBuilder: (context) {
-                    return vehicleColors.map((value) {
-                      final color = colorSwatches[value] ?? Colors.transparent;
-                      return Row(
-                        children: [
-                          _buildColorSwatch(color),
-                          const SizedBox(width: 8),
-                          Text(
-                            value,
-                            style: const TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 12,
-                              color: Colors.black,
-                            ),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildLabeledField(
+                      label: 'Plate Number *',
+                      child: TextField(
+                        controller: vehicle.plateController,
+                        textCapitalization: TextCapitalization.characters,
+                        textAlignVertical: TextAlignVertical.center,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r'[A-Za-z0-9-]'),
                           ),
+                          LengthLimitingTextInputFormatter(plateLimit),
                         ],
-                      );
-                    }).toList();
-                  },
-                  items: vehicleColors
-                      .map(
-                        (value) => DropdownMenuItem<String>(
-                          value: value,
-                          child: Row(
-                            children: [
-                              _buildColorSwatch(
-                                colorSwatches[value] ?? Colors.transparent,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                value,
-                                style: const TextStyle(
-                                  fontFamily: 'RobotoCondensed',
-                                  fontSize: 12,
-                                  color: Colors.black,
-                                ),
-                              ),
-                            ],
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w400,
+                          color: Colors.black,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: _plateHintForBodyType(vehicle.bodyType),
+                          hintStyle: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 11,
+                            fontWeight: FontWeight.w400,
+                            color: Colors.black54,
+                          ),
+                          border: InputBorder.none,
+                          isCollapsed: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 14,
                           ),
                         ),
-                      )
-                      .toList(),
-                  onChanged: (value) {
-                    setState(() => _vehicleColor = value);
-                  },
-                ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildLabeledField(
+                      label: 'Body Type *',
+                      child: DropdownButtonHideUnderline(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: DropdownButton<String>(
+                            value: vehicle.bodyType,
+                            hint: const Text(
+                              'Select',
+                              style: TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontSize: 12,
+                                color: Colors.black54,
+                              ),
+                            ),
+                            isExpanded: true,
+                            isDense: true,
+                            icon: const Icon(
+                              Icons.keyboard_arrow_down,
+                              color: Color(0xFFAC1B22),
+                            ),
+                            dropdownColor: Colors.white,
+                            items: _vehicleBodies
+                                .map(
+                                  (value) => DropdownMenuItem<String>(
+                                    value: value,
+                                    child: Text(
+                                      value,
+                                      style: const TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontSize: 12,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) {
+                              setState(() {
+                                vehicle.bodyType = value;
+                                final limit = _plateLimitForBodyType(value);
+                                final text = vehicle.plateController.text;
+                                if (text.length > limit) {
+                                  vehicle.plateController.text = text.substring(
+                                    0,
+                                    limit,
+                                  );
+                                  vehicle
+                                      .plateController
+                                      .selection = TextSelection.collapsed(
+                                    offset: vehicle.plateController.text.length,
+                                  );
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildLabeledField(
+                      label: 'Color *',
+                      child: DropdownButtonHideUnderline(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: DropdownButton<String>(
+                            value: vehicle.color,
+                            hint: const Text(
+                              'Select',
+                              style: TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontSize: 12,
+                                color: Colors.black54,
+                              ),
+                            ),
+                            isExpanded: true,
+                            isDense: true,
+                            icon: const Icon(
+                              Icons.keyboard_arrow_down,
+                              color: Color(0xFFAC1B22),
+                            ),
+                            selectedItemBuilder: (context) {
+                              return _vehicleColors.map((value) {
+                                final color =
+                                    _colorSwatches[value] ?? Colors.transparent;
+                                return Row(
+                                  children: [
+                                    _buildColorSwatch(color),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      value,
+                                      style: const TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontSize: 12,
+                                        color: Colors.black,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              }).toList();
+                            },
+                            items: _vehicleColors
+                                .map(
+                                  (value) => DropdownMenuItem<String>(
+                                    value: value,
+                                    child: Row(
+                                      children: [
+                                        _buildColorSwatch(
+                                          _colorSwatches[value] ??
+                                              Colors.transparent,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          value,
+                                          style: const TextStyle(
+                                            fontFamily: 'RobotoCondensed',
+                                            fontSize: 12,
+                                            color: Colors.black,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) {
+                              setState(() => vehicle.color = value);
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
+              if (index != _vehicles.length - 1) const SizedBox(height: 12),
+            ],
+          );
+        }),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            children: [
+              if (_vehicles.length > 1)
+                _buildVehicleActionButton(
+                  label: 'Remove Vehicle',
+                  icon: Icons.remove_circle_outline,
+                  onPressed: () => _removeVehicleAt(_vehicles.length - 1),
+                  destructive: true,
+                ),
+              _buildVehicleActionButton(
+                label: 'Add Another Vehicle',
+                icon: Icons.add,
+                onPressed: _addVehicle,
+              ),
+            ],
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildVehicleActionButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback onPressed,
+    bool destructive = false,
+  }) {
+    final color = destructive
+        ? const Color(0xFFD32F2F)
+        : const Color(0xFFAC1B22);
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(
+        label,
+        style: const TextStyle(
+          fontFamily: 'RobotoCondensed',
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: color,
+        side: BorderSide(color: color, width: 1.2),
+        backgroundColor: color.withValues(alpha: 0.06),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+      ),
     );
   }
 
@@ -1542,6 +2005,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     ];
     return _buildLabeledField(
       label: 'Barangay *',
+      borderColor: _barangayError != null ? Colors.red : Colors.black,
       child: Autocomplete<String>(
         initialValue: TextEditingValue(text: _barangayController.text),
         optionsBuilder: (TextEditingValue value) {
@@ -1555,6 +2019,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         },
         onSelected: (selection) {
           _barangayController.text = selection;
+          if (_barangayError != null) {
+            setState(() => _barangayError = null);
+          }
         },
         fieldViewBuilder:
             (context, textEditingController, focusNode, onFieldSubmitted) {
@@ -1562,7 +2029,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 controller: textEditingController,
                 focusNode: focusNode,
                 textCapitalization: TextCapitalization.words,
-                onChanged: (value) => _barangayController.text = value,
+                onChanged: (value) {
+                  _barangayController.text = value;
+                  if (_barangayError != null && value.trim().isNotEmpty) {
+                    setState(() => _barangayError = null);
+                  }
+                },
                 style: const TextStyle(
                   fontFamily: 'RobotoCondensed',
                   fontSize: 12,

@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
@@ -49,6 +49,7 @@ class _AdminMapPageState extends State<AdminMapPage>
   bool _isWeatherLoading = false;
   String? _weatherError;
   _WeatherData? _weatherData;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
   StreamSubscription<Position>? _responderLocationSub;
   String? _activeReportId;
 
@@ -60,6 +61,7 @@ class _AdminMapPageState extends State<AdminMapPage>
 
   // Sample incident markers
   final List<Marker> _incidentMarkers = [];
+  final List<Marker> _reporterMarkers = [];
   static const Duration _resolvedRetention = Duration(hours: 1);
   final Map<String, Timer> _resolvedRemovalTimers = {};
   List<Map<String, dynamic>> _resolvedReports = [];
@@ -94,7 +96,7 @@ class _AdminMapPageState extends State<AdminMapPage>
   @override
   void initState() {
     super.initState();
-    _loadReportsFromFirestore();
+    _subscribeToReportsRealtime();
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
     _syncUserLocation();
@@ -108,6 +110,7 @@ class _AdminMapPageState extends State<AdminMapPage>
   @override
   void dispose() {
     _trackingTimer?.cancel();
+    _reportsSubscription?.cancel();
     _responderLocationSub?.cancel();
     for (final timer in _resolvedRemovalTimers.values) {
       timer.cancel();
@@ -128,8 +131,9 @@ class _AdminMapPageState extends State<AdminMapPage>
     double size = 72,
     double opacity = 1,
   }) {
-    final statusLower =
-        (data['status'] as String? ?? '').toString().toLowerCase();
+    final statusLower = (data['status'] as String? ?? '')
+        .toString()
+        .toLowerCase();
     final badge = _buildStatusBadge(statusLower, size);
     final marker = _buildBouncyPin(
       child: GestureDetector(
@@ -147,12 +151,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                   height: size,
                   fit: BoxFit.contain,
                 ),
-                if (badge != null)
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: badge,
-                  ),
+                if (badge != null) Positioned(right: -2, top: -2, child: badge),
               ],
             ),
           ),
@@ -167,11 +166,24 @@ class _AdminMapPageState extends State<AdminMapPage>
     return IgnorePointer(ignoring: true, child: marker);
   }
 
+  LatLng? _latLngFromDynamic(Object? raw) {
+    if (raw is GeoPoint) {
+      return LatLng(raw.latitude, raw.longitude);
+    }
+    if (raw is Map) {
+      final lat = raw['latitude'] ?? raw['lat'];
+      final lng = raw['longitude'] ?? raw['lng'];
+      if (lat is num && lng is num) {
+        return LatLng(lat.toDouble(), lng.toDouble());
+      }
+    }
+    return null;
+  }
+
   Future<void> _loadReportsFromFirestore() async {
     try {
       final snapshot = await FirebaseFirestore.instance
           .collection('reports')
-          .where('location', isNotEqualTo: null)
           .get();
       _applyReportSnapshot(snapshot);
     } catch (e) {
@@ -182,11 +194,14 @@ class _AdminMapPageState extends State<AdminMapPage>
   void _applyReportSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
     _latestReportSnapshot = snapshot;
     _incidentMarkers.clear();
+    _reporterMarkers.clear();
     final resolvedReports = <Map<String, dynamic>>[];
     for (final doc in snapshot.docs) {
       final data = doc.data();
-      final location = data['location'] as GeoPoint?;
-      if (location == null) continue;
+      final incidentPoint =
+          _latLngFromDynamic(data['incidentLocation']) ??
+          _latLngFromDynamic(data['location']);
+      if (incidentPoint == null) continue;
 
       final reportId = doc.id;
       final status = (data['status'] as String? ?? '').toLowerCase();
@@ -214,25 +229,44 @@ class _AdminMapPageState extends State<AdminMapPage>
         continue;
       }
 
-      final point = LatLng(location.latitude, location.longitude);
       final markerSize = isInactive ? 56.0 : 72.0;
       _incidentMarkers.add(
         Marker(
           key: ValueKey('incident-$reportId'),
-          point: point,
+          point: incidentPoint,
           width: markerSize,
           height: markerSize,
           child: _buildIncidentMarker(
             assetPath: _getMarkerAssetForIncidentType(incidentType),
             data: data,
             reportId: reportId,
-            position: point,
+            position: incidentPoint,
             interactive: !isInactive,
             size: markerSize,
             opacity: isInactive ? 0.45 : 1,
           ),
         ),
       );
+
+      final reporterPoint = _latLngFromDynamic(data['reporterLocation']);
+      if (reporterPoint != null) {
+        _reporterMarkers.add(
+          Marker(
+            key: ValueKey('reporter-$reportId'),
+            point: reporterPoint,
+            width: 44,
+            height: 44,
+            child: GestureDetector(
+              onTap: () => _showIncidentInfo(data, reportId, incidentPoint),
+              child: const Icon(
+                Icons.person_pin_circle,
+                color: Color(0xFF2563EB),
+                size: 30,
+              ),
+            ),
+          ),
+        );
+      }
     }
 
     if (mounted) {
@@ -333,11 +367,11 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   Widget? _buildStatusBadge(String statusLower, double markerSize) {
-    final isResolved = statusLower == 'resolved' ||
-        statusLower == 'incident resolved';
-    final isFlagged =
-        statusLower == 'flagged' || statusLower == 'unverified';
-    final isAttention = statusLower == 'pending' ||
+    final isResolved =
+        statusLower == 'resolved' || statusLower == 'incident resolved';
+    final isFlagged = statusLower == 'flagged' || statusLower == 'unverified';
+    final isAttention =
+        statusLower == 'pending' ||
         statusLower == 'on scene' ||
         statusLower == 'responding';
 
@@ -348,13 +382,13 @@ class _AdminMapPageState extends State<AdminMapPage>
     final color = isResolved
         ? const Color(0xFF00A458)
         : isFlagged
-            ? const Color(0xFFDC2626)
-            : const Color(0xFFAC1B22);
+        ? const Color(0xFFDC2626)
+        : const Color(0xFFAC1B22);
     final icon = isResolved
         ? Icons.check
         : isFlagged
-            ? Icons.close
-            : Icons.priority_high;
+        ? Icons.close
+        : Icons.priority_high;
 
     return Container(
       width: badgeSize,
@@ -418,8 +452,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                   itemBuilder: (context, index) {
                     final entry = _resolvedReports[index];
                     final reportId = entry['id']?.toString() ?? '';
-                    final data =
-                        entry['data'] as Map<String, dynamic>? ?? {};
+                    final data = entry['data'] as Map<String, dynamic>? ?? {};
                     final incidentType =
                         data['incidentType'] as String? ?? 'Incident';
                     final resolvedAt = _parseResolvedAt(data);
@@ -437,9 +470,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                       ),
                       subtitle: Text(
                         'Resolved: $resolvedLabel',
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                        ),
+                        style: const TextStyle(fontFamily: 'RobotoCondensed'),
                       ),
                       trailing: const Icon(Icons.info_outline),
                       onTap: () {
@@ -477,10 +508,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       builder: (context, child) {
         final eased = Curves.easeInOut.transform(_pinBounceController.value);
         final offset = sin(eased * pi) * 4;
-        return Transform.translate(
-          offset: Offset(0, -offset),
-          child: child,
-        );
+        return Transform.translate(offset: Offset(0, -offset), child: child);
       },
     );
   }
@@ -558,10 +586,7 @@ class _AdminMapPageState extends State<AdminMapPage>
               Color(0xFFFFE6A8),
             ],
           ),
-          border: Border.all(
-            color: Colors.white.withOpacity(0.7),
-            width: 1.2,
-          ),
+          border: Border.all(color: Colors.white.withOpacity(0.7), width: 1.2),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.2),
@@ -596,9 +621,7 @@ class _AdminMapPageState extends State<AdminMapPage>
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.7),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: Colors.white.withOpacity(0.35),
-              ),
+              border: Border.all(color: Colors.white.withOpacity(0.35)),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.12),
@@ -665,10 +688,7 @@ class _AdminMapPageState extends State<AdminMapPage>
             color: const Color(0xFFF4F7FF),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(
-            _weatherIcon(data.state),
-            color: const Color(0xFF2563EB),
-          ),
+          child: Icon(_weatherIcon(data.state), color: const Color(0xFF2563EB)),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -867,8 +887,8 @@ class _AdminMapPageState extends State<AdminMapPage>
           .collection('reports')
           .doc(reportId)
           .update({
-        'responderComments': FieldValue.arrayUnion([commentPayload]),
-      });
+            'responderComments': FieldValue.arrayUnion([commentPayload]),
+          });
 
       if (!mounted) return;
       setState(() {
@@ -931,15 +951,12 @@ class _AdminMapPageState extends State<AdminMapPage>
     }
   }
 
-  Future<void> _updateIncidentStatus(
-    String reportId,
-    String status,
-  ) async {
+  Future<void> _updateIncidentStatus(String reportId, String status) async {
     try {
       print('🔵 _updateIncidentStatus called');
       print('  reportId: $reportId');
       print('  status param: $status');
-      
+
       if (status.toLowerCase() == 'resolved' ||
           status.toLowerCase() == 'incident resolved') {
         print('  → Handling RESOLVED');
@@ -956,66 +973,61 @@ class _AdminMapPageState extends State<AdminMapPage>
             .collection('reports')
             .doc(reportId)
             .update({
-          'status': 'FLAGGED',
-          'responderStatus': 'FLAGGED',
-          'flaggedAt': Timestamp.now(),
-          'flaggedBy': responderName,
-          'resolvedAt': FieldValue.delete(),
-        });
+              'status': 'FLAGGED',
+              'responderStatus': 'FLAGGED',
+              'flaggedAt': Timestamp.now(),
+              'resolvedAt': FieldValue.delete(),
+            });
         print('  ✓ FLAGGED written to Firestore');
         _cancelResolvedRemoval(reportId);
         _scheduleResolvedRemoval(reportId, DateTime.now(), Duration.zero);
         return;
       }
-      
+
       // Handle responding and on scene - only update timestamps, keep status as Pending
       if (status.toLowerCase() == 'responding') {
         print('  → Handling RESPONDING');
-        print('  Writing: respondingAt + responderStatus only, NOT changing status field');
-        final responderName = UserSession.currentUserData?['fullName'] as String? ??
-            UserSession.currentUserData?['username'] as String? ??
-            'Semi-Admin';
+        print(
+          '  Writing: respondingAt + responderStatus only, NOT changing status field',
+        );
         await FirebaseFirestore.instance
             .collection('reports')
             .doc(reportId)
             .update({
-          'respondingAt': Timestamp.now(),
-          'respondingBy': responderName,
-          'responderStatus': 'RESPONDING',
-        });
+              'respondingAt': Timestamp.now(),
+              'responderStatus': 'RESPONDING',
+            });
         print('  ✓ RESPONDING written to Firestore (status field NOT changed)');
         return;
       }
-      
+
       if (status.toLowerCase() == 'on scene') {
         print('  → Handling ON SCENE');
-        print('  Writing: arrivedAt + responderStatus only, NOT changing status field');
-        final responderName = UserSession.currentUserData?['fullName'] as String? ??
-            UserSession.currentUserData?['username'] as String? ??
-            'Semi-Admin';
+        print(
+          '  Writing: arrivedAt + responderStatus only, NOT changing status field',
+        );
         await FirebaseFirestore.instance
             .collection('reports')
             .doc(reportId)
             .update({
-          'arrivedAt': Timestamp.now(),
-          'arrivedBy': responderName,
-          'responderStatus': 'ON SCENE',
-        });
+              'arrivedAt': Timestamp.now(),
+              'responderStatus': 'ON SCENE',
+            });
         print('  ✓ ON SCENE written to Firestore (status field NOT changed)');
         return;
       }
-      
+
       // For any other status, update normally
       print('  → Handling other status: $status');
       await FirebaseFirestore.instance
           .collection('reports')
           .doc(reportId)
           .update({
-        'status': status,
-        'responderStatus': status,
-        'resolvedAt': FieldValue.delete(),
-        'flaggedAt': FieldValue.delete(),
-      });
+            'status': status,
+            'responderStatus': status,
+            'resolvedAt': FieldValue.delete(),
+            'flaggedAt': FieldValue.delete(),
+          });
       _cancelResolvedRemoval(reportId);
     } catch (e) {
       if (!mounted) return;
@@ -1038,12 +1050,11 @@ class _AdminMapPageState extends State<AdminMapPage>
           .collection('reports')
           .doc(reportId)
           .update({
-        'status': 'RESOLVED',
-        'responderStatus': 'RESOLVED',
-        'resolvedAt': Timestamp.fromDate(resolvedTime),
-        'resolvedBy': responderName,
-        'flaggedAt': FieldValue.delete(),
-      });
+            'status': 'RESOLVED',
+            'responderStatus': 'RESOLVED',
+            'resolvedAt': Timestamp.fromDate(resolvedTime),
+            'flaggedAt': FieldValue.delete(),
+          });
       _cancelResolvedRemoval(reportId);
       _scheduleResolvedRemoval(reportId, resolvedTime, Duration.zero);
       if (_activeReportId == reportId) {
@@ -1070,26 +1081,44 @@ class _AdminMapPageState extends State<AdminMapPage>
     _cancelResolvedRemoval(reportId);
   }
 
-
   Future<void> _startResponderLocationSharing() async {
     final hasPermission = await LocationService.requestLocationPermission();
     if (!hasPermission) return;
     _responderLocationSub?.cancel();
-    _responderLocationSub = LocationService.getPositionStream(
-      distanceFilterMeters: 5,
-    ).listen((position) {
-      final point = LatLng(position.latitude, position.longitude);
-      if (!mounted) return;
-      setState(() {
-        _userLocation = point;
-      });
-      final reportId = _activeReportId;
-      if (reportId == null) return;
-      FirebaseFirestore.instance.collection('reports').doc(reportId).update({
-        'responderLocation': GeoPoint(point.latitude, point.longitude),
-        'responderLocationUpdatedAt': Timestamp.now(),
-      });
-    });
+    _responderLocationSub =
+        LocationService.getPositionStream(distanceFilterMeters: 5).listen((
+          position,
+        ) {
+          final point = LatLng(position.latitude, position.longitude);
+          if (!mounted) return;
+          setState(() {
+            _userLocation = point;
+          });
+          final reportId = _activeReportId;
+          if (reportId == null) return;
+          FirebaseFirestore.instance
+              .collection('reports')
+              .doc(reportId)
+              .update({
+                'responderLocation': GeoPoint(point.latitude, point.longitude),
+                'responderLocationLat': point.latitude,
+                'responderLocationLng': point.longitude,
+                'responderLocationUpdatedAt': Timestamp.now(),
+              });
+        });
+  }
+
+  void _subscribeToReportsRealtime() {
+    _reportsSubscription?.cancel();
+    _reportsSubscription = FirebaseFirestore.instance
+        .collection('reports')
+        .snapshots()
+        .listen(
+          _applyReportSnapshot,
+          onError: (error) {
+            debugPrint('❌ Failed to subscribe to report updates: $error');
+          },
+        );
   }
 
   void _showIncidentCommentDialog(String reportId, LatLng position) {
@@ -1162,9 +1191,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                   onPressed: () {
                     if (commentController.text.trim().isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Please enter a comment'),
-                        ),
+                        const SnackBar(content: Text('Please enter a comment')),
                       );
                       return;
                     }
@@ -1217,7 +1244,8 @@ class _AdminMapPageState extends State<AdminMapPage>
 
     final incidentType = activeData['incidentType'] as String? ?? 'Unknown';
     final reporter = activeData['name'] as String? ?? 'Unknown';
-    final description = activeData['details'] as String? ??
+    final description =
+        activeData['details'] as String? ??
         activeData['description'] as String? ??
         '';
     final contactNumber = activeData['contactNumber'] as String? ?? 'Unknown';
@@ -1228,6 +1256,14 @@ class _AdminMapPageState extends State<AdminMapPage>
     final vehicleColor =
         activeData['vehicleColor'] as String? ?? 'Not provided';
     final barangay = activeData['barangay'] as String? ?? 'Not provided';
+    final incidentLocation =
+        _latLngFromDynamic(activeData['incidentLocation']) ??
+        _latLngFromDynamic(activeData['location']) ??
+        position;
+    final reporterLocation = _latLngFromDynamic(activeData['reporterLocation']);
+    final responderLocation = _latLngFromDynamic(
+      activeData['responderLocation'],
+    );
     final reportedAt = activeData['reportedAt'];
     String? reportedAtLabel;
     if (reportedAt is Timestamp) {
@@ -1246,10 +1282,9 @@ class _AdminMapPageState extends State<AdminMapPage>
       activeData['status'] as String? ?? 'Unverified',
     );
     await _loadAdminComments(reportId, position);
-    final incidentComments = _adminComments
-        .where((comment) => comment.reportId == reportId)
-        .toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final incidentComments =
+        _adminComments.where((comment) => comment.reportId == reportId).toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
 
     String status = initialStatus;
     showDialog(
@@ -1266,10 +1301,13 @@ class _AdminMapPageState extends State<AdminMapPage>
 
           return Dialog(
             backgroundColor: Colors.white,
-            insetPadding:
-                const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            insetPadding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 24,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: ConstrainedBox(
@@ -1282,350 +1320,400 @@ class _AdminMapPageState extends State<AdminMapPage>
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                      Row(
-                        children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFAC1B22),
-                          borderRadius: BorderRadius.circular(10),
+                        Row(
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFAC1B22),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(
+                                Icons.report,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                incidentType.toUpperCase(),
+                                style: const TextStyle(
+                                  fontFamily: 'Roboto',
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFFAC1B22),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(Icons.close, size: 20),
+                            ),
+                          ],
                         ),
-                        child: const Icon(
-                          Icons.report,
-                          color: Colors.white,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          incidentType.toUpperCase(),
-                          style: const TextStyle(
-                            fontFamily: 'Roboto',
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFFAC1B22),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFFF3F3),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFAC1B22)),
+                          ),
+                          child: Text(
+                            'Status: $status',
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFFAC1B22),
+                            ),
                           ),
                         ),
-                      ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close, size: 20),
-                      ),
+                        const SizedBox(height: 10),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Center(
+                            child: SizedBox(
+                              width: 260,
+                              child: Wrap(
+                                alignment: WrapAlignment.center,
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: statusOptions.map((option) {
+                                  final isActive = status == option;
+                                  return SizedBox(
+                                    width: 126,
+                                    child: OutlinedButton(
+                                      onPressed: () async {
+                                        final confirm =
+                                            await _confirmStatusChange(option);
+                                        if (confirm != true) return;
+                                        setDialogState(() {
+                                          status = option;
+                                        });
+                                        await _updateIncidentStatus(
+                                          reportId,
+                                          option,
+                                        );
+                                      },
+                                      style: OutlinedButton.styleFrom(
+                                        side: BorderSide(
+                                          color: isActive
+                                              ? const Color(0xFFAC1B22)
+                                              : const Color(0xFFE5E7EB),
+                                        ),
+                                        backgroundColor: isActive
+                                            ? const Color(0xFFFFF3F3)
+                                            : Colors.white,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 6,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        option,
+                                        style: TextStyle(
+                                          fontFamily: 'Roboto',
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: isActive
+                                              ? const Color(0xFFAC1B22)
+                                              : const Color(0xFF4B5563),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Report Details',
+                          style: TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1F2933),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Reported by $reporter',
+                          style: const TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFF1F2933),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Contact: $contactNumber',
+                          style: const TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 12,
+                            color: Color(0xFF4B5563),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Report location: ${incidentLocation.latitude.toStringAsFixed(5)}, ${incidentLocation.longitude.toStringAsFixed(5)}',
+                          style: const TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 12,
+                            color: Color(0xFF4B5563),
+                          ),
+                        ),
+                        if (reporterLocation != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            'Reporter location: ${reporterLocation.latitude.toStringAsFixed(5)}, ${reporterLocation.longitude.toStringAsFixed(5)}',
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 12,
+                              color: Color(0xFF4B5563),
+                            ),
+                          ),
                         ],
-                      ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF3F3),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFFAC1B22)),
-                    ),
-                    child: Text(
-                      'Status: $status',
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFFAC1B22),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Center(
-                      child: SizedBox(
-                        width: 260,
-                        child: Wrap(
-                          alignment: WrapAlignment.center,
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: statusOptions.map((option) {
-                            final isActive = status == option;
-                            return SizedBox(
-                              width: 126,
+                        if (responderLocation != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            'Responder location: ${responderLocation.latitude.toStringAsFixed(5)}, ${responderLocation.longitude.toStringAsFixed(5)}',
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 12,
+                              color: Color(0xFF4B5563),
+                            ),
+                          ),
+                        ],
+                        if (isVehicular) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            'Plate Number: $vehiclePlateNumber',
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 12,
+                              color: Color(0xFF4B5563),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Body Type: $vehicleBodyType',
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 12,
+                              color: Color(0xFF4B5563),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Color: $vehicleColor',
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 12,
+                              color: Color(0xFF4B5563),
+                            ),
+                          ),
+                        ],
+                        if (isFireOrFlood) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            'Barangay: $barangay',
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 12,
+                              color: Color(0xFF4B5563),
+                            ),
+                          ),
+                        ],
+                        if (reportedAtLabel != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            'Reported at: $reportedAtLabel',
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 12,
+                              color: Color(0xFF4B5563),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        if (description.isNotEmpty)
+                          Text(
+                            description,
+                            style: const TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 13,
+                              height: 1.4,
+                              color: Color(0xFF4B5563),
+                            ),
+                          ),
+                        if (mediaUrl != null && mediaUrl.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: mediaType == 'photo'
+                                ? Image.network(
+                                    mediaUrl,
+                                    height: 200,
+                                    width: double.infinity,
+                                    fit: BoxFit.cover,
+                                  )
+                                : Container(
+                                    height: 200,
+                                    width: double.infinity,
+                                    color: const Color(0xFFF3F4F6),
+                                    child: const Center(
+                                      child: Text(
+                                        'Video attached',
+                                        style: TextStyle(
+                                          fontFamily: 'Roboto',
+                                          fontSize: 12,
+                                          color: Color(0xFF6B7280),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Admin Comments',
+                          style: TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1F2933),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        if (incidentComments.isEmpty)
+                          const Text(
+                            'No comments yet.',
+                            style: TextStyle(
+                              fontFamily: 'Roboto',
+                              fontSize: 12,
+                              color: Color(0xFF6B7280),
+                            ),
+                          )
+                        else
+                          ...incidentComments
+                              .take(3)
+                              .map(
+                                (comment) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF8F8F8),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: const Color(0xFFE5E7EB),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          comment.text,
+                                          style: const TextStyle(
+                                            fontFamily: 'Roboto',
+                                            fontSize: 12,
+                                            color: Color(0xFF374151),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          '${comment.author} • ${_getTimeAgo(comment.timestamp)}',
+                                          style: const TextStyle(
+                                            fontFamily: 'Roboto',
+                                            fontSize: 11,
+                                            color: Color(0xFF6B7280),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
                               child: OutlinedButton(
-                                onPressed: () async {
-                                  final confirm =
-                                      await _confirmStatusChange(option);
-                                  if (confirm != true) return;
-                                  setDialogState(() {
-                                    status = option;
-                                  });
-                                  await _updateIncidentStatus(reportId, option);
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  _destination = position;
+                                  _calculateRoute();
                                 },
                                 style: OutlinedButton.styleFrom(
-                                  side: BorderSide(
-                                    color: isActive
-                                        ? const Color(0xFFAC1B22)
-                                        : const Color(0xFFE5E7EB),
+                                  side: const BorderSide(
+                                    color: Color(0xFFAC1B22),
                                   ),
-                                  backgroundColor: isActive
-                                      ? const Color(0xFFFFF3F3)
-                                      : Colors.white,
                                   padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
+                                    vertical: 12,
                                   ),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(10),
                                   ),
                                 ),
-                                child: Text(
-                                  option,
+                                child: const Text(
+                                  'NAVIGATE',
                                   style: TextStyle(
                                     fontFamily: 'Roboto',
-                                    fontSize: 11,
+                                    color: Color(0xFFAC1B22),
                                     fontWeight: FontWeight.w700,
-                                    color: isActive
-                                        ? const Color(0xFFAC1B22)
-                                        : const Color(0xFF4B5563),
                                   ),
                                 ),
                               ),
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Report Details',
-                    style: TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF1F2933),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Reported by $reporter',
-                    style: const TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: Color(0xFF1F2933),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Contact: $contactNumber',
-                    style: const TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 12,
-                      color: Color(0xFF4B5563),
-                    ),
-                  ),
-                  if (isVehicular) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Plate Number: $vehiclePlateNumber',
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 12,
-                        color: Color(0xFF4B5563),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Body Type: $vehicleBodyType',
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 12,
-                        color: Color(0xFF4B5563),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Color: $vehicleColor',
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 12,
-                        color: Color(0xFF4B5563),
-                      ),
-                    ),
-                  ],
-                  if (isFireOrFlood) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Barangay: $barangay',
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 12,
-                        color: Color(0xFF4B5563),
-                      ),
-                    ),
-                  ],
-                  if (reportedAtLabel != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Reported at: $reportedAtLabel',
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 12,
-                        color: Color(0xFF4B5563),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  if (description.isNotEmpty)
-                    Text(
-                      description,
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 13,
-                        height: 1.4,
-                        color: Color(0xFF4B5563),
-                      ),
-                    ),
-                  if (mediaUrl != null && mediaUrl.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: mediaType == 'photo'
-                          ? Image.network(
-                              mediaUrl,
-                              height: 200,
-                              width: double.infinity,
-                              fit: BoxFit.cover,
-                            )
-                          : Container(
-                              height: 200,
-                              width: double.infinity,
-                              color: const Color(0xFFF3F4F6),
-                              child: const Center(
-                                child: Text(
-                                  'Video attached',
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  _showIncidentCommentDialog(
+                                    reportId,
+                                    position,
+                                  );
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFFAC1B22),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'ADD COMMENT',
                                   style: TextStyle(
                                     fontFamily: 'Roboto',
-                                    fontSize: 12,
-                                    color: Color(0xFF6B7280),
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
                               ),
                             ),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Admin Comments',
-                    style: TextStyle(
-                      fontFamily: 'Roboto',
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF1F2933),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (incidentComments.isEmpty)
-                    const Text(
-                      'No comments yet.',
-                      style: TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 12,
-                        color: Color(0xFF6B7280),
-                      ),
-                    )
-                  else
-                    ...incidentComments.take(3).map(
-                      (comment) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF8F8F8),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: const Color(0xFFE5E7EB)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                comment.text,
-                                style: const TextStyle(
-                                  fontFamily: 'Roboto',
-                                  fontSize: 12,
-                                  color: Color(0xFF374151),
-                                ),
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                '${comment.author} • ${_getTimeAgo(comment.timestamp)}',
-                                style: const TextStyle(
-                                  fontFamily: 'Roboto',
-                                  fontSize: 11,
-                                  color: Color(0xFF6B7280),
-                                ),
-                              ),
-                            ],
-                          ),
+                          ],
                         ),
-                      ),
+                      ],
                     ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _destination = position;
-                            _calculateRoute();
-                          },
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFFAC1B22)),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          child: const Text(
-                            'NAVIGATE',
-                            style: TextStyle(
-                              fontFamily: 'Roboto',
-                              color: Color(0xFFAC1B22),
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            Navigator.pop(context);
-                            _showIncidentCommentDialog(reportId, position);
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFAC1B22),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          child: const Text(
-                            'ADD COMMENT',
-                            style: TextStyle(
-                              fontFamily: 'Roboto',
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                    ],
-                  ),
                   ),
                 ),
               ),
@@ -1644,26 +1732,29 @@ class _AdminMapPageState extends State<AdminMapPage>
           .collection('comments')
           .orderBy('timestamp', descending: true)
           .get();
-      final comments = snapshot.docs.map((doc) {
-        final data = doc.data();
-        final type = (data['type'] as String?)?.toLowerCase();
-        final role = (data['role'] as String?)?.toLowerCase();
-        if (type != null && type == 'user') {
-          return null;
-        }
-        if (role != null && role != 'responder' && type != 'admin') {
-          return null;
-        }
-        final timestamp = data['timestamp'] as Timestamp?;
-        return AdminComment(
-          id: doc.id,
-          text: data['text'] as String? ?? '',
-          author: data['author'] as String? ?? 'Admin',
-          timestamp: timestamp?.toDate() ?? DateTime.now(),
-          position: position,
-          reportId: reportId,
-        );
-      }).whereType<AdminComment>().toList();
+      final comments = snapshot.docs
+          .map((doc) {
+            final data = doc.data();
+            final type = (data['type'] as String?)?.toLowerCase();
+            final role = (data['role'] as String?)?.toLowerCase();
+            if (type != null && type == 'user') {
+              return null;
+            }
+            if (role != null && role != 'responder' && type != 'admin') {
+              return null;
+            }
+            final timestamp = data['timestamp'] as Timestamp?;
+            return AdminComment(
+              id: doc.id,
+              text: data['text'] as String? ?? '',
+              author: data['author'] as String? ?? 'Admin',
+              timestamp: timestamp?.toDate() ?? DateTime.now(),
+              position: position,
+              reportId: reportId,
+            );
+          })
+          .whereType<AdminComment>()
+          .toList();
       if (!mounted) return;
       setState(() {
         _adminComments
@@ -1691,10 +1782,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Update Status', style: AppText.subheading),
-        content: Text(
-          'Set incident status to $status?',
-          style: AppText.body,
-        ),
+        content: Text('Set incident status to $status?', style: AppText.body),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -1760,13 +1848,14 @@ class _AdminMapPageState extends State<AdminMapPage>
     });
 
     try {
-      final osrmRoute =
-          await _fetchRouteFromOsrm(_userLocation!, _destination!);
+      final osrmRoute = await _fetchRouteFromOsrm(
+        _userLocation!,
+        _destination!,
+      );
       if (osrmRoute != null && osrmRoute.points.isNotEmpty) {
         _routePoints = osrmRoute.points;
         _estimatedDistance = osrmRoute.distanceMeters / 1000;
-        _estimatedTime =
-            _formatDurationFromSeconds(osrmRoute.durationSeconds);
+        _estimatedTime = _formatDurationFromSeconds(osrmRoute.durationSeconds);
       } else {
         _routePoints = _generateSimulatedRoute(_userLocation!, _destination!);
         final distance = _calculateDistance(_routePoints);
@@ -1841,10 +1930,7 @@ class _AdminMapPageState extends State<AdminMapPage>
     return points;
   }
 
-  Future<_RouteResult?> _fetchRouteFromOsrm(
-    LatLng start,
-    LatLng end,
-  ) async {
+  Future<_RouteResult?> _fetchRouteFromOsrm(LatLng start, LatLng end) async {
     final uri = Uri.parse(
       'https://router.project-osrm.org/route/v1/driving/'
       '${start.longitude},${start.latitude};'
@@ -1860,9 +1946,10 @@ class _AdminMapPageState extends State<AdminMapPage>
     if (routes == null || routes.isEmpty) {
       return null;
     }
-    final route = routes
-        .whereType<Map<String, dynamic>>()
-        .reduce((best, current) {
+    final route = routes.whereType<Map<String, dynamic>>().reduce((
+      best,
+      current,
+    ) {
       final bestDistance =
           (best['distance'] as num?)?.toDouble() ?? double.maxFinite;
       final currentDistance =
@@ -2082,13 +2169,14 @@ class _AdminMapPageState extends State<AdminMapPage>
             }) {
               return Container(
                 margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: AppTheme.appRed.withOpacity(0.15),
-                  ),
+                  border: Border.all(color: AppTheme.appRed.withOpacity(0.15)),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.06),
@@ -2106,12 +2194,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                       fit: BoxFit.contain,
                     ),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        label,
-                        style: AppText.body,
-                      ),
-                    ),
+                    Expanded(child: Text(label, style: AppText.body)),
                     Checkbox(
                       value: value,
                       onChanged: onChanged,
@@ -2293,10 +2376,26 @@ class _AdminMapPageState extends State<AdminMapPage>
                 tileBuilder: (context, tileWidget, tile) {
                   return ColorFiltered(
                     colorFilter: const ColorFilter.matrix([
-                      1.05, 0.03, 0.02, 0, 10,
-                      0.03, 1.05, 0.02, 0, 10,
-                      0.03, 0.05, 1.02, 0, 10,
-                      0, 0, 0, 1, 0,
+                      1.05,
+                      0.03,
+                      0.02,
+                      0,
+                      10,
+                      0.03,
+                      1.05,
+                      0.02,
+                      0,
+                      10,
+                      0.03,
+                      0.05,
+                      1.02,
+                      0,
+                      10,
+                      0,
+                      0,
+                      0,
+                      1,
+                      0,
                     ]),
                     child: tileWidget,
                   );
@@ -2322,6 +2421,10 @@ class _AdminMapPageState extends State<AdminMapPage>
 
               // Incident markers
               MarkerLayer(markers: _incidentMarkers),
+
+              // Reporter location markers (shared live location)
+              if (_reporterMarkers.isNotEmpty)
+                MarkerLayer(markers: _reporterMarkers),
 
               // Route markers (user location and destination)
               if (_routeMarkers.isNotEmpty) MarkerLayer(markers: _routeMarkers),
@@ -2605,8 +2708,9 @@ class _AdminMapPageState extends State<AdminMapPage>
                   heroTag: 'admin_resolved_reports',
                   backgroundColor: Colors.white,
                   foregroundColor: const Color(0xFFAC1B22),
-                  onPressed:
-                      _resolvedReports.isEmpty ? null : _openResolvedReportsSheet,
+                  onPressed: _resolvedReports.isEmpty
+                      ? null
+                      : _openResolvedReportsSheet,
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -2680,4 +2784,3 @@ class _WeatherData {
   final WeatherState state;
   final String description;
 }
-

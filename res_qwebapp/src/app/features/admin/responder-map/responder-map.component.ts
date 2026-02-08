@@ -14,6 +14,11 @@ interface ResponderTrack {
   incidentType?: string;
   reporterName?: string;
   barangay?: string;
+  reportLocationLat: number;
+  reportLocationLng: number;
+  reporterLocationLat?: number | null;
+  reporterLocationLng?: number | null;
+  reporterLocationUpdatedAt?: Date | null;
   responderLocationLat: number;
   responderLocationLng: number;
   responderLocationUpdatedAt?: Date | null;
@@ -36,9 +41,13 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
 
   private map?: any;
   private responderLayer?: any;
+  private reportLayer?: any;
+  private reporterLayer?: any;
   private geofenceCircle?: any;
   private unsubscribe?: Unsubscribe;
-  private markerByReportId = new Map<string, any>();
+  private responderMarkerByReportId = new Map<string, any>();
+  private reportMarkerByReportId = new Map<string, any>();
+  private reporterMarkerByReportId = new Map<string, any>();
   private resizeHandler?: () => void;
   private resizeObserver?: ResizeObserver;
 
@@ -71,6 +80,8 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       fillOpacity: 0.07,
     }).addTo(this.map);
 
+    this.reportLayer = L.layerGroup().addTo(this.map);
+    this.reporterLayer = L.layerGroup().addTo(this.map);
     this.responderLayer = L.layerGroup().addTo(this.map);
     this.ensureMapRenders();
     this.startRealtimeTracking();
@@ -83,7 +94,9 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     if (this.map) {
       this.map.remove();
     }
-    this.markerByReportId.clear();
+    this.responderMarkerByReportId.clear();
+    this.reportMarkerByReportId.clear();
+    this.reporterMarkerByReportId.clear();
     if (this.resizeHandler) {
       window.removeEventListener('resize', this.resizeHandler);
     }
@@ -116,9 +129,9 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     return value.toLocaleString();
   }
 
-  formatCoord(value?: number): string {
+  formatCoord(value?: number | null): string {
     if (value === undefined || value === null || Number.isNaN(value)) {
-      return '—';
+      return '-';
     }
     return value.toFixed(5);
   }
@@ -158,7 +171,18 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
 
   fitToResponders(): void {
     if (!this.map || this.tracks.length === 0) return;
-    const points = this.tracks.map((track) => [track.responderLocationLat, track.responderLocationLng]);
+    const points: Array<[number, number]> = [];
+    this.tracks.forEach((track) => {
+      points.push([track.reportLocationLat, track.reportLocationLng]);
+      points.push([track.responderLocationLat, track.responderLocationLng]);
+      if (
+        typeof track.reporterLocationLat === 'number' &&
+        typeof track.reporterLocationLng === 'number'
+      ) {
+        points.push([track.reporterLocationLat, track.reporterLocationLng]);
+      }
+    });
+    if (points.length === 0) return;
     const bounds = L.latLngBounds(points);
     this.map.fitBounds(bounds.pad(0.2));
   }
@@ -169,6 +193,30 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     window.location.replace(url.toString());
   }
 
+  private toLatLng(raw: any): { lat: number; lng: number } | null {
+    if (!raw) return null;
+
+    if (typeof raw.latitude === 'number' && typeof raw.longitude === 'number') {
+      return { lat: raw.latitude, lng: raw.longitude };
+    }
+
+    if (typeof raw.lat === 'number' && typeof raw.lng === 'number') {
+      return { lat: raw.lat, lng: raw.lng };
+    }
+
+    return null;
+  }
+
+  private toDate(value: any): Date | null {
+    if (value && typeof value.toDate === 'function') {
+      return value.toDate();
+    }
+    if (value instanceof Date) {
+      return value;
+    }
+    return null;
+  }
+
   private startRealtimeTracking(): void {
     const reportsRef = collection(db, 'reports');
     this.unsubscribe = onSnapshot(
@@ -177,23 +225,40 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
         const nextTracks: ResponderTrack[] = [];
         snapshot.docs.forEach((doc) => {
           const data = doc.data() as any;
-          const loc = data?.responderLocation;
-          let lat: number | null = null;
-          let lng: number | null = null;
-          if (loc && typeof loc.latitude === 'number' && typeof loc.longitude === 'number') {
-            lat = loc.latitude;
-            lng = loc.longitude;
-          } else if (
-            typeof data?.responderLocationLat === 'number' &&
+          const responderPoint =
+            this.toLatLng(data?.responderLocation) ??
+            (typeof data?.responderLocationLat === 'number' &&
             typeof data?.responderLocationLng === 'number'
-          ) {
-            lat = data.responderLocationLat;
-            lng = data.responderLocationLng;
+              ? {
+                  lat: data.responderLocationLat as number,
+                  lng: data.responderLocationLng as number,
+                }
+              : null);
+          if (!responderPoint) return;
+
+          const reportPoint =
+            this.toLatLng(data?.incidentLocation) ??
+            this.toLatLng(data?.location) ??
+            (typeof data?.locationLat === 'number' && typeof data?.locationLng === 'number'
+              ? { lat: data.locationLat as number, lng: data.locationLng as number }
+              : null);
+          if (!reportPoint) return;
+
+          let reporterPoint =
+            this.toLatLng(data?.reporterLocation) ??
+            (typeof data?.reporterLocationLat === 'number' &&
+            typeof data?.reporterLocationLng === 'number'
+              ? {
+                  lat: data.reporterLocationLat as number,
+                  lng: data.reporterLocationLng as number,
+                }
+              : null);
+
+          const source = (data?.locationSource ?? '').toString().toLowerCase();
+          if (!reporterPoint && source === 'current') {
+            reporterPoint = reportPoint;
           }
-          if (lat === null || lng === null) return;
-          const updatedAt = data?.responderLocationUpdatedAt;
-          const updatedDate =
-            updatedAt && typeof updatedAt.toDate === 'function' ? updatedAt.toDate() : null;
+
           nextTracks.push({
             reportId: doc.id,
             responderName: data?.responderName ?? data?.responder ?? null,
@@ -203,9 +268,14 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
             incidentType: data?.incidentType ?? null,
             reporterName: data?.name ?? null,
             barangay: data?.barangay ?? null,
-            responderLocationLat: lat,
-            responderLocationLng: lng,
-            responderLocationUpdatedAt: updatedDate,
+            reportLocationLat: reportPoint.lat,
+            reportLocationLng: reportPoint.lng,
+            reporterLocationLat: reporterPoint?.lat ?? null,
+            reporterLocationLng: reporterPoint?.lng ?? null,
+            reporterLocationUpdatedAt: this.toDate(data?.reporterLocationUpdatedAt),
+            responderLocationLat: responderPoint.lat,
+            responderLocationLng: responderPoint.lng,
+            responderLocationUpdatedAt: this.toDate(data?.responderLocationUpdatedAt),
             reportStatus: data?.status ?? null,
           });
         });
@@ -227,7 +297,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
           this.isListening = false;
           this.isLoading = false;
         });
-      }
+      },
     );
   }
 
@@ -248,55 +318,148 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
   }
 
   private updateMarkers(): void {
-    if (!this.map || !this.responderLayer) return;
+    if (!this.map || !this.responderLayer || !this.reportLayer || !this.reporterLayer) return;
     const nextIds = new Set(this.tracks.map((track) => track.reportId));
 
-    for (const [reportId, marker] of this.markerByReportId.entries()) {
+    for (const [reportId, marker] of this.responderMarkerByReportId.entries()) {
       if (!nextIds.has(reportId)) {
         this.responderLayer.removeLayer(marker);
-        this.markerByReportId.delete(reportId);
+        this.responderMarkerByReportId.delete(reportId);
+      }
+    }
+
+    for (const [reportId, marker] of this.reportMarkerByReportId.entries()) {
+      if (!nextIds.has(reportId)) {
+        this.reportLayer.removeLayer(marker);
+        this.reportMarkerByReportId.delete(reportId);
+      }
+    }
+
+    for (const [reportId, marker] of this.reporterMarkerByReportId.entries()) {
+      if (!nextIds.has(reportId)) {
+        this.reporterLayer.removeLayer(marker);
+        this.reporterMarkerByReportId.delete(reportId);
       }
     }
 
     for (const track of this.tracks) {
-      const existing = this.markerByReportId.get(track.reportId);
-      if (existing) {
-        existing.setLatLng([track.responderLocationLat, track.responderLocationLng]);
-        continue;
-      }
-
-      const marker = L.circleMarker(
-        [track.responderLocationLat, track.responderLocationLng],
-        {
-          radius: 8,
-          color: '#0B5FFF',
-          fillColor: '#0B5FFF',
+      const reportExisting = this.reportMarkerByReportId.get(track.reportId);
+      if (reportExisting) {
+        reportExisting.setLatLng([track.reportLocationLat, track.reportLocationLng]);
+      } else {
+        const reportMarker = L.circleMarker([track.reportLocationLat, track.reportLocationLng], {
+          radius: 7,
+          color: '#AC1B22',
+          fillColor: '#AC1B22',
           fillOpacity: 0.9,
           weight: 2,
-        }
-      );
-
-      marker.on('click', () => {
-        this.ngZone.run(() => this.focusResponder(track.reportId));
-      });
-
-      marker.bindTooltip(
-        `${track.responderName ?? 'Responder'} · ${track.responderStatus ?? 'Active'}`,
-        {
+        });
+        reportMarker.on('click', () => {
+          this.ngZone.run(() => this.focusResponder(track.reportId));
+        });
+        reportMarker.bindTooltip('Report location', {
           direction: 'top',
           offset: [0, -8],
-        }
-      );
+        });
+        reportMarker.addTo(this.reportLayer);
+        this.reportMarkerByReportId.set(track.reportId, reportMarker);
+      }
 
-      marker.addTo(this.responderLayer);
-      this.markerByReportId.set(track.reportId, marker);
+      if (
+        typeof track.reporterLocationLat === 'number' &&
+        typeof track.reporterLocationLng === 'number'
+      ) {
+        const reporterExisting = this.reporterMarkerByReportId.get(track.reportId);
+        if (reporterExisting) {
+          reporterExisting.setLatLng([track.reporterLocationLat, track.reporterLocationLng]);
+        } else {
+          const reporterMarker = L.circleMarker(
+            [track.reporterLocationLat, track.reporterLocationLng],
+            {
+              radius: 6.5,
+              color: '#F59E0B',
+              fillColor: '#F59E0B',
+              fillOpacity: 0.9,
+              weight: 2,
+            },
+          );
+          reporterMarker.on('click', () => {
+            this.ngZone.run(() => this.focusResponder(track.reportId));
+          });
+          reporterMarker.bindTooltip('Reporter location', {
+            direction: 'top',
+            offset: [0, -8],
+          });
+          reporterMarker.addTo(this.reporterLayer);
+          this.reporterMarkerByReportId.set(track.reportId, reporterMarker);
+        }
+      } else {
+        const existingReporter = this.reporterMarkerByReportId.get(track.reportId);
+        if (existingReporter) {
+          this.reporterLayer.removeLayer(existingReporter);
+          this.reporterMarkerByReportId.delete(track.reportId);
+        }
+      }
+
+      const responderExisting = this.responderMarkerByReportId.get(track.reportId);
+      if (responderExisting) {
+        responderExisting.setLatLng([track.responderLocationLat, track.responderLocationLng]);
+      } else {
+        const responderMarker = L.circleMarker(
+          [track.responderLocationLat, track.responderLocationLng],
+          {
+            radius: 8,
+            color: '#0B5FFF',
+            fillColor: '#0B5FFF',
+            fillOpacity: 0.9,
+            weight: 2,
+          },
+        );
+
+        responderMarker.on('click', () => {
+          this.ngZone.run(() => this.focusResponder(track.reportId));
+        });
+
+        responderMarker.bindTooltip(
+          `${track.responderName ?? 'Responder'} - ${track.responderStatus ?? 'Active'}`,
+          {
+            direction: 'top',
+            offset: [0, -8],
+          },
+        );
+
+        responderMarker.addTo(this.responderLayer);
+        this.responderMarkerByReportId.set(track.reportId, responderMarker);
+      }
     }
 
     this.highlightSelectedMarker();
   }
 
   private highlightSelectedMarker(): void {
-    for (const [reportId, marker] of this.markerByReportId.entries()) {
+    for (const [reportId, marker] of this.reportMarkerByReportId.entries()) {
+      const isSelected = reportId === this.selectedId;
+      marker.setStyle({
+        radius: isSelected ? 9 : 7,
+        color: isSelected ? '#7F1D1D' : '#AC1B22',
+        fillColor: isSelected ? '#7F1D1D' : '#AC1B22',
+        fillOpacity: isSelected ? 1 : 0.9,
+        weight: isSelected ? 3 : 2,
+      });
+    }
+
+    for (const [reportId, marker] of this.reporterMarkerByReportId.entries()) {
+      const isSelected = reportId === this.selectedId;
+      marker.setStyle({
+        radius: isSelected ? 8.5 : 6.5,
+        color: isSelected ? '#D97706' : '#F59E0B',
+        fillColor: isSelected ? '#D97706' : '#F59E0B',
+        fillOpacity: isSelected ? 1 : 0.9,
+        weight: isSelected ? 3 : 2,
+      });
+    }
+
+    for (const [reportId, marker] of this.responderMarkerByReportId.entries()) {
       const isSelected = reportId === this.selectedId;
       marker.setStyle({
         radius: isSelected ? 11 : 8,
@@ -307,5 +470,4 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       });
     }
   }
-
 }

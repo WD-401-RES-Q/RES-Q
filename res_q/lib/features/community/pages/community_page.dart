@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/widgets/app_snackbar.dart';
 
 class CommunityPage extends StatefulWidget {
   const CommunityPage({super.key});
@@ -50,7 +52,6 @@ class _CommunityPageState extends State<CommunityPage>
     _subscribeToAnnouncements();
     // Delay loading votes to ensure UserSession is initialized after login
     _initializeVotes();
-    _ensureCommentsCollectionExists();
   }
 
   Future<void> _initializeVotes() async {
@@ -302,35 +303,6 @@ class _CommunityPageState extends State<CommunityPage>
       }, SetOptions(merge: true));
     } catch (e) {
       debugPrint('❌ Failed to migrate legacy votes: $e');
-    }
-  }
-
-  /// Ensure the comments collection exists by creating a marker document if needed
-  Future<void> _ensureCommentsCollectionExists() async {
-    try {
-      // Check if collection exists by trying to get a single document
-      final snapshot = await FirebaseFirestore.instance
-          .collection('comments')
-          .limit(1)
-          .get();
-
-      if (snapshot.docs.isEmpty) {
-        // Collection is empty or doesn't exist, create a marker document
-        debugPrint('📝 Creating comments collection with marker document...');
-        await FirebaseFirestore.instance
-            .collection('comments')
-            .doc('_marker')
-            .set({
-              'initialized': true,
-              'createdAt': Timestamp.now(),
-              'note': 'Marker document for collection initialization',
-            });
-        debugPrint('✅ Comments collection initialized');
-      } else {
-        debugPrint('✅ Comments collection already exists');
-      }
-    } catch (e) {
-      debugPrint('⚠️ Could not initialize comments collection: $e');
     }
   }
 
@@ -2507,20 +2479,33 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   static const appGreen = Color(0xFF00A458);
   static const appBlack = Color(0xFF212121);
   static const commentBlue = Color(0xFF2563EB);
+  static const int _maxReplyDepth = 4;
 
   final TextEditingController _commentController = TextEditingController();
+  final TextEditingController _replyController = TextEditingController();
   List<Map<String, dynamic>> _comments = [];
+  final Map<String, List<Map<String, dynamic>>> _repliesByCommentId = {};
+  final Set<String> _expandedReplyComments = <String>{};
+  final Map<String, bool> _loadingReplies = {};
+  final Map<String, bool> _postingReply = {};
+  Map<String, String> _commentVotes = {};
+  String? _replyingToCommentId;
+  String? _replyingToReplyId;
+  final Set<String> _expandedNestedReplies = <String>{};
   bool _loading = true;
+  bool _isPostingComment = false;
 
   @override
   void initState() {
     super.initState();
+    _loadCommentVotes();
     _loadComments();
   }
 
   @override
   void dispose() {
     _commentController.dispose();
+    _replyController.dispose();
     super.dispose();
   }
 
@@ -2550,7 +2535,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               'timestamp': timestamp,
               'greenFlags': data['greenFlags'] ?? 0,
               'redFlags': data['redFlags'] ?? 0,
-              'userVote': 'none',
+              'replyCount': data['replyCount'] ?? 0,
+              'userVote': _commentVotes[_commentVoteKey(doc.id)] ?? 'none',
             };
           })
           .whereType<Map<String, dynamic>>()
@@ -2566,8 +2552,120 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     }
   }
 
+  String _commentVoteKey(String commentId) {
+    final reportId = widget.report['id']?.toString() ?? '';
+    return '$reportId:$commentId';
+  }
+
+  String _replyVoteKey(String commentId, String replyId) {
+    final reportId = widget.report['id']?.toString() ?? '';
+    return 'reply:$reportId:$commentId:$replyId';
+  }
+
+  String _replyThreadKey(String commentId, String replyId) {
+    return '$commentId:$replyId';
+  }
+
+  String? _getLoggedInUserPhone() {
+    final userData = UserSession.currentUserData;
+    if (userData == null) return null;
+
+    String? phone =
+        userData['contactNumber']?.toString() ??
+        userData['phoneNumber']?.toString() ??
+        userData['phone']?.toString() ??
+        userData['mobileNumber']?.toString();
+
+    if (phone == null || phone.isEmpty) return null;
+    return phone.replaceAll(RegExp(r'[^0-9]'), '');
+  }
+
+  Future<void> _loadCommentVotes() async {
+    final userPhone = _getLoggedInUserPhone();
+    if (userPhone == null || userPhone.isEmpty) return;
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('userVotes')
+          .doc(userPhone)
+          .get();
+      final data = doc.data() ?? {};
+      final loadedVotes = Map<String, String>.from(data['commentVotes'] ?? {});
+
+      if (!mounted) return;
+      setState(() {
+        _commentVotes = loadedVotes;
+        for (final comment in _comments) {
+          final id = comment['id']?.toString();
+          if (id == null) continue;
+          comment['userVote'] = _commentVotes[_commentVoteKey(id)] ?? 'none';
+        }
+        for (final entry in _repliesByCommentId.entries) {
+          for (final reply in entry.value) {
+            final replyId = reply['id']?.toString();
+            if (replyId == null) continue;
+            reply['userVote'] =
+                _commentVotes[_replyVoteKey(entry.key, replyId)] ?? 'none';
+          }
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveCommentVote(String commentId, String vote) async {
+    final userPhone = _getLoggedInUserPhone();
+    if (userPhone == null || userPhone.isEmpty) return;
+
+    final key = _commentVoteKey(commentId);
+    if (vote == 'none') {
+      _commentVotes.remove(key);
+    } else {
+      _commentVotes[key] = vote;
+    }
+
+    try {
+      await FirebaseFirestore.instance.collection('userVotes').doc(userPhone).set({
+        'commentVotes': _commentVotes,
+      }, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
+  Future<void> _saveReplyVote(
+    String commentId,
+    String replyId,
+    String vote,
+  ) async {
+    final userPhone = _getLoggedInUserPhone();
+    if (userPhone == null || userPhone.isEmpty) return;
+
+    final key = _replyVoteKey(commentId, replyId);
+    if (vote == 'none') {
+      _commentVotes.remove(key);
+    } else {
+      _commentVotes[key] = vote;
+    }
+
+    try {
+      await FirebaseFirestore.instance.collection('userVotes').doc(userPhone).set({
+        'commentVotes': _commentVotes,
+      }, SetOptions(merge: true));
+    } catch (_) {}
+  }
+
   Future<void> _postComment() async {
-    if (_commentController.text.trim().isEmpty) return;
+    if (_isPostingComment) return;
+    final commentText = _commentController.text.trim();
+    if (commentText.isEmpty) return;
+    if (commentText.length > 256) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Comment must be 256 characters or less.',
+        type: AppSnackBarType.error,
+      );
+      return;
+    }
+    setState(() => _isPostingComment = true);
 
     try {
       final reportId = widget.report['id']?.toString() ?? '';
@@ -2583,12 +2681,13 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
           UserSession.currentUserData?['fullName'] as String? ?? 'Anonymous';
 
       final newComment = {
-        'text': _commentController.text.trim(),
+        'text': commentText,
         'author': userName,
         'type': 'user',
         'timestamp': Timestamp.now(),
         'greenFlags': 0,
         'redFlags': 0,
+        'replyCount': 0,
         'reportId': reportId,
         'reportTitle': reportTitle,
         'reportCategory': reportTitle,
@@ -2598,19 +2697,11 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
         'reportedBy': reportedBy,
       };
 
-      final savedDocRef = await FirebaseFirestore.instance
+      await FirebaseFirestore.instance
           .collection('reports')
           .doc(reportId)
           .collection('comments')
           .add(newComment);
-
-      // Also save to root comments collection
-      try {
-        await FirebaseFirestore.instance
-            .collection('comments')
-            .doc(savedDocRef.id)
-            .set(newComment);
-      } catch (_) {}
 
       // Update report comment count
       try {
@@ -2625,17 +2716,815 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       await _loadComments();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Comment posted'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 1),
-          ),
+        AppSnackBar.show(
+          context,
+          'Comment posted',
+          type: AppSnackBarType.success,
+          duration: const Duration(seconds: 1),
         );
       }
     } catch (e) {
       debugPrint('❌ Failed to post comment: $e');
+      if (mounted) {
+        AppSnackBar.show(
+          context,
+          'Failed to post comment. Please try again.',
+          type: AppSnackBarType.error,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPostingComment = false);
+      }
     }
+  }
+
+  Future<void> _onCommentVerify(int commentIndex) async {
+    final reportId = widget.report['id']?.toString() ?? '';
+    if (reportId.isEmpty) return;
+
+    final comment = _comments[commentIndex];
+    final vote = comment['userVote'] as String? ?? 'none';
+
+    var newGreenCount = comment['greenFlags'] as int? ?? 0;
+    var newRedCount = comment['redFlags'] as int? ?? 0;
+    var newVote = vote;
+
+    if (vote == 'green') {
+      if (newGreenCount > 0) newGreenCount--;
+      newVote = 'none';
+    } else {
+      if (vote == 'red' && newRedCount > 0) newRedCount--;
+      newGreenCount++;
+      newVote = 'green';
+    }
+
+    try {
+      final commentId = comment['id'] as String;
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .collection('comments')
+          .doc(commentId)
+          .update({'greenFlags': newGreenCount, 'redFlags': newRedCount});
+
+      if (!mounted) return;
+      setState(() {
+        comment['greenFlags'] = newGreenCount;
+        comment['redFlags'] = newRedCount;
+        comment['userVote'] = newVote;
+      });
+      await _saveCommentVote(commentId, newVote);
+    } catch (_) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Failed to update comment vote.',
+        type: AppSnackBarType.error,
+      );
+    }
+  }
+
+  Future<void> _onCommentReport(int commentIndex) async {
+    final reportId = widget.report['id']?.toString() ?? '';
+    if (reportId.isEmpty) return;
+
+    final comment = _comments[commentIndex];
+    final vote = comment['userVote'] as String? ?? 'none';
+
+    var newGreenCount = comment['greenFlags'] as int? ?? 0;
+    var newRedCount = comment['redFlags'] as int? ?? 0;
+    var newVote = vote;
+
+    if (vote == 'red') {
+      if (newRedCount > 0) newRedCount--;
+      newVote = 'none';
+    } else {
+      if (vote == 'green' && newGreenCount > 0) newGreenCount--;
+      newRedCount++;
+      newVote = 'red';
+    }
+
+    try {
+      final commentId = comment['id'] as String;
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .collection('comments')
+          .doc(commentId)
+          .update({'greenFlags': newGreenCount, 'redFlags': newRedCount});
+
+      if (!mounted) return;
+      setState(() {
+        comment['greenFlags'] = newGreenCount;
+        comment['redFlags'] = newRedCount;
+        comment['userVote'] = newVote;
+      });
+      await _saveCommentVote(commentId, newVote);
+    } catch (_) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Failed to update comment vote.',
+        type: AppSnackBarType.error,
+      );
+    }
+  }
+
+  Map<String, dynamic>? _findReply(String commentId, String replyId) {
+    final replies = _repliesByCommentId[commentId];
+    if (replies == null) return null;
+
+    for (final reply in replies) {
+      if (reply['id']?.toString() == replyId) return reply;
+    }
+    return null;
+  }
+
+  List<Map<String, dynamic>> _repliesForParent(
+    String commentId, {
+    String? parentReplyId,
+  }) {
+    final replies = _repliesByCommentId[commentId] ?? const <Map<String, dynamic>>[];
+    return replies.where((reply) {
+      final parentId = reply['parentReplyId']?.toString();
+      if (parentReplyId == null) {
+        return parentId == null || parentId.isEmpty;
+      }
+      return parentId == parentReplyId;
+    }).toList();
+  }
+
+  Future<void> _onReplyVerify(String commentId, String replyId) async {
+    final reportId = widget.report['id']?.toString() ?? '';
+    if (reportId.isEmpty) return;
+
+    final reply = _findReply(commentId, replyId);
+    if (reply == null) return;
+
+    final vote = reply['userVote'] as String? ?? 'none';
+    var newGreenCount = reply['greenFlags'] as int? ?? 0;
+    var newRedCount = reply['redFlags'] as int? ?? 0;
+    var newVote = vote;
+
+    if (vote == 'green') {
+      if (newGreenCount > 0) newGreenCount--;
+      newVote = 'none';
+    } else {
+      if (vote == 'red' && newRedCount > 0) newRedCount--;
+      newGreenCount++;
+      newVote = 'green';
+    }
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .collection('comments')
+          .doc(commentId)
+          .collection('replies')
+          .doc(replyId)
+          .update({'greenFlags': newGreenCount, 'redFlags': newRedCount});
+
+      if (!mounted) return;
+      setState(() {
+        reply['greenFlags'] = newGreenCount;
+        reply['redFlags'] = newRedCount;
+        reply['userVote'] = newVote;
+      });
+      await _saveReplyVote(commentId, replyId, newVote);
+    } catch (e) {
+      debugPrint('❌ Failed to update reply verify vote: $e');
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Failed to update reply vote.',
+        type: AppSnackBarType.error,
+      );
+    }
+  }
+
+  Future<void> _onReplyReport(String commentId, String replyId) async {
+    final reportId = widget.report['id']?.toString() ?? '';
+    if (reportId.isEmpty) return;
+
+    final reply = _findReply(commentId, replyId);
+    if (reply == null) return;
+
+    final vote = reply['userVote'] as String? ?? 'none';
+    var newGreenCount = reply['greenFlags'] as int? ?? 0;
+    var newRedCount = reply['redFlags'] as int? ?? 0;
+    var newVote = vote;
+
+    if (vote == 'red') {
+      if (newRedCount > 0) newRedCount--;
+      newVote = 'none';
+    } else {
+      if (vote == 'green' && newGreenCount > 0) newGreenCount--;
+      newRedCount++;
+      newVote = 'red';
+    }
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .collection('comments')
+          .doc(commentId)
+          .collection('replies')
+          .doc(replyId)
+          .update({'greenFlags': newGreenCount, 'redFlags': newRedCount});
+
+      if (!mounted) return;
+      setState(() {
+        reply['greenFlags'] = newGreenCount;
+        reply['redFlags'] = newRedCount;
+        reply['userVote'] = newVote;
+      });
+      await _saveReplyVote(commentId, replyId, newVote);
+    } catch (e) {
+      debugPrint('❌ Failed to update reply report vote: $e');
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Failed to update reply vote.',
+        type: AppSnackBarType.error,
+      );
+    }
+  }
+
+  Future<void> _loadReplies(String commentId) async {
+    final reportId = widget.report['id']?.toString() ?? '';
+    if (reportId.isEmpty) return;
+
+    if (mounted) {
+      setState(() => _loadingReplies[commentId] = true);
+    }
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .collection('comments')
+          .doc(commentId)
+          .collection('replies')
+          .orderBy('timestamp')
+          .get();
+
+      final replies = snapshot.docs.map((doc) {
+        final data = doc.data();
+        final timestampRaw = data['timestamp'];
+        final timestamp = timestampRaw is Timestamp
+            ? timestampRaw.toDate()
+            : DateTime.now();
+        final parentReplyIdRaw = data['parentReplyId']?.toString();
+        final parentReplyId =
+            parentReplyIdRaw == null || parentReplyIdRaw.isEmpty
+            ? null
+            : parentReplyIdRaw;
+        return {
+          'id': doc.id,
+          'text': data['text'] ?? '',
+          'author': data['author'] ?? 'Anonymous',
+          'timestamp': timestamp,
+          'greenFlags': data['greenFlags'] ?? 0,
+          'redFlags': data['redFlags'] ?? 0,
+          'replyCount': data['replyCount'] ?? 0,
+          'parentReplyId': parentReplyId,
+          'userVote': _commentVotes[_replyVoteKey(commentId, doc.id)] ?? 'none',
+        };
+      }).toList();
+
+      final actualReplyCount = replies.length;
+      final commentIndex = _comments.indexWhere((c) => c['id'] == commentId);
+      final storedReplyCount = commentIndex != -1
+          ? (_comments[commentIndex]['replyCount'] as int? ?? 0)
+          : null;
+
+      if (!mounted) return;
+      setState(() {
+        _repliesByCommentId[commentId] = replies;
+        if (commentIndex != -1) {
+          _comments[commentIndex]['replyCount'] = actualReplyCount;
+        }
+      });
+
+      if (storedReplyCount != null && storedReplyCount != actualReplyCount) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('reports')
+              .doc(reportId)
+              .collection('comments')
+              .doc(commentId)
+              .update({'replyCount': actualReplyCount});
+        } catch (e) {
+          debugPrint('❌ Failed to sync replyCount for comment $commentId: $e');
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Failed to load replies for comment $commentId: $e');
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Failed to load replies.',
+        type: AppSnackBarType.error,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _loadingReplies[commentId] = false);
+      }
+    }
+  }
+
+  Future<void> _toggleReplies(String commentId) async {
+    final isExpanded = _expandedReplyComments.contains(commentId);
+    setState(() {
+      if (isExpanded) {
+        _expandedReplyComments.remove(commentId);
+      } else {
+        _expandedReplyComments.add(commentId);
+      }
+    });
+
+    if (!isExpanded && !_repliesByCommentId.containsKey(commentId)) {
+      await _loadReplies(commentId);
+    }
+  }
+
+  Future<void> _startReply(String commentId, {String? replyId}) async {
+    final changedTarget =
+        _replyingToCommentId != commentId || _replyingToReplyId != replyId;
+    if (changedTarget) {
+      _replyController.clear();
+    }
+
+    setState(() {
+      _replyingToCommentId = commentId;
+      _replyingToReplyId = replyId;
+      _expandedReplyComments.add(commentId);
+      if (replyId != null) {
+        _expandedNestedReplies.add(_replyThreadKey(commentId, replyId));
+      }
+    });
+
+    if (!_repliesByCommentId.containsKey(commentId)) {
+      await _loadReplies(commentId);
+    }
+  }
+
+  Future<void> _postReply(String commentId, {String? parentReplyId}) async {
+    if (_postingReply[commentId] == true) return;
+
+    final replyText = _replyController.text.trim();
+    if (replyText.isEmpty) return;
+    if (replyText.length > 256) {
+      AppSnackBar.show(
+        context,
+        'Reply must be 256 characters or less.',
+        type: AppSnackBarType.error,
+      );
+      return;
+    }
+
+    final reportId = widget.report['id']?.toString() ?? '';
+    if (reportId.isEmpty) return;
+
+    final targetParentReplyId = parentReplyId ?? _replyingToReplyId;
+    setState(() => _postingReply[commentId] = true);
+
+    try {
+      final userName =
+          UserSession.currentUserData?['fullName'] as String? ?? 'Anonymous';
+      final reportTitle = widget.report['title']?.toString() ?? '';
+      final reportStatus = widget.report['status']?.toString() ?? '';
+      final reportDate = widget.report['date']?.toString() ?? '';
+      final reportTime = widget.report['time']?.toString() ?? '';
+      final reportedBy = widget.report['name']?.toString() ?? '';
+
+      final newReply = {
+        'text': replyText,
+        'author': userName,
+        'type': 'user_reply',
+        'timestamp': Timestamp.now(),
+        'greenFlags': 0,
+        'redFlags': 0,
+        'replyCount': 0,
+        'parentCommentId': commentId,
+        'parentReplyId': targetParentReplyId ?? '',
+        'reportId': reportId,
+        'reportTitle': reportTitle,
+        'reportCategory': reportTitle,
+        'reportStatus': reportStatus,
+        'reportDate': reportDate,
+        'reportTime': reportTime,
+        'reportedBy': reportedBy,
+      };
+
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .collection('comments')
+          .doc(commentId)
+          .collection('replies')
+          .add(newReply);
+
+      try {
+        await FirebaseFirestore.instance
+            .collection('reports')
+            .doc(reportId)
+            .collection('comments')
+            .doc(commentId)
+            .update({'replyCount': FieldValue.increment(1)});
+      } catch (_) {}
+
+      if (targetParentReplyId != null && targetParentReplyId.isNotEmpty) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('reports')
+              .doc(reportId)
+              .collection('comments')
+              .doc(commentId)
+              .collection('replies')
+              .doc(targetParentReplyId)
+              .update({'replyCount': FieldValue.increment(1)});
+        } catch (_) {}
+
+      }
+
+      if (!mounted) return;
+      setState(() {
+        final targetIndex = _comments.indexWhere((c) => c['id'] == commentId);
+        if (targetIndex != -1) {
+          final current = _comments[targetIndex]['replyCount'] as int? ?? 0;
+          _comments[targetIndex]['replyCount'] = current + 1;
+        }
+        if (targetParentReplyId != null && targetParentReplyId.isNotEmpty) {
+          final parentReply = _findReply(commentId, targetParentReplyId);
+          if (parentReply != null) {
+            final current = parentReply['replyCount'] as int? ?? 0;
+            parentReply['replyCount'] = current + 1;
+            _expandedNestedReplies.add(
+              _replyThreadKey(commentId, targetParentReplyId),
+            );
+          }
+        }
+        _replyController.clear();
+        _replyingToCommentId = null;
+        _replyingToReplyId = null;
+      });
+
+      await _loadReplies(commentId);
+
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Reply posted',
+        type: AppSnackBarType.success,
+        duration: const Duration(seconds: 1),
+      );
+    } catch (e) {
+      debugPrint('❌ Failed to post reply for comment $commentId: $e');
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Failed to post reply. Please try again.',
+        type: AppSnackBarType.error,
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _postingReply[commentId] = false);
+      }
+    }
+  }
+
+  Widget _buildCommentAction({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        decoration: BoxDecoration(
+          color: selected ? color.withOpacity(0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: selected ? color : color.withOpacity(0.7)),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+                color: appBlack,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _toggleNestedReplies(String commentId, String replyId) {
+    final key = _replyThreadKey(commentId, replyId);
+    setState(() {
+      if (_expandedNestedReplies.contains(key)) {
+        _expandedNestedReplies.remove(key);
+      } else {
+        _expandedNestedReplies.add(key);
+      }
+    });
+  }
+
+  Widget _buildReplyComposer({
+    required String commentId,
+    String? parentReplyId,
+    String? replyingToAuthor,
+  }) {
+    final isPostingReply = _postingReply[commentId] == true;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (replyingToAuthor != null) ...[
+          Text(
+            'Replying to $replyingToAuthor',
+            style: TextStyle(
+              fontFamily: 'RobotoCondensed',
+              fontSize: 11,
+              color: Colors.grey[600],
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _replyController,
+                maxLines: null,
+                inputFormatters: [
+                  LengthLimitingTextInputFormatter(256),
+                ],
+                style: const TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontSize: 13,
+                  color: appBlack,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Write a reply...',
+                  hintStyle: TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontSize: 13,
+                    color: Colors.grey[500],
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey[100],
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(18),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: isPostingReply
+                  ? null
+                  : () => _postReply(commentId, parentReplyId: parentReplyId),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: isPostingReply ? appBlue.withOpacity(0.6) : appBlue,
+                  shape: BoxShape.circle,
+                ),
+                child: isPostingReply
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      )
+                    : const Icon(
+                        Icons.send,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildReplyTree(
+    String commentId, {
+    String? parentReplyId,
+    int depth = 0,
+  }) {
+    if (depth >= _maxReplyDepth) {
+      return const <Widget>[];
+    }
+
+    final replies = _repliesForParent(commentId, parentReplyId: parentReplyId);
+    return replies
+        .map(
+          (reply) =>
+              _buildReplyTile(commentId: commentId, reply: reply, depth: depth),
+        )
+        .toList();
+  }
+
+  Widget _buildReplyTile({
+    required String commentId,
+    required Map<String, dynamic> reply,
+    int depth = 0,
+  }) {
+    final replyId = reply['id']?.toString() ?? '';
+    final author = reply['author']?.toString() ?? 'Anonymous';
+    final initial = author.isNotEmpty ? author[0].toUpperCase() : '?';
+    final timestamp = reply['timestamp'] as DateTime? ?? DateTime.now();
+    final vote = reply['userVote'] as String? ?? 'none';
+    final verifySelected = vote == 'green';
+    final reportSelected = vote == 'red';
+    final nestedReplies = _repliesForParent(commentId, parentReplyId: replyId);
+    final directChildCount = nestedReplies.length;
+    final storedReplyCount = reply['replyCount'] as int? ?? 0;
+    final replyCount =
+        storedReplyCount > directChildCount ? storedReplyCount : directChildCount;
+    final level = depth + 1;
+    final canReplyHere = level < _maxReplyDepth;
+    final canShowChildren = level < _maxReplyDepth;
+    final isExpanded = _expandedNestedReplies.contains(
+      _replyThreadKey(commentId, replyId),
+    );
+    final showReplyInput =
+        _replyingToCommentId == commentId && _replyingToReplyId == replyId;
+    final leftPadding = (10 + depth * 18).toDouble().clamp(10.0, 64.0).toDouble();
+
+    return Padding(
+      padding: EdgeInsets.only(top: 8, left: leftPadding),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 11,
+            backgroundColor: Colors.grey[350],
+            child: Text(
+              initial,
+              style: const TextStyle(
+                fontFamily: 'Roboto',
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        author,
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: appBlack,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        reply['text']?.toString() ?? '',
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 12,
+                          color: appBlack,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatTimeAgo(timestamp),
+                  style: TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontSize: 10,
+                    color: Colors.grey[600],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    _buildCommentAction(
+                      icon: Icons.verified,
+                      label: 'Verify ${reply['greenFlags'] ?? 0}',
+                      color: appGreen,
+                      selected: verifySelected,
+                      onTap: () => _onReplyVerify(commentId, replyId),
+                    ),
+                    _buildCommentAction(
+                      icon: Icons.flag,
+                      label: 'Report ${reply['redFlags'] ?? 0}',
+                      color: appRed,
+                      selected: reportSelected,
+                      onTap: () => _onReplyReport(commentId, replyId),
+                    ),
+                    _buildCommentAction(
+                      icon: Icons.reply,
+                      label: replyCount > 0 ? 'Reply ($replyCount)' : 'Reply',
+                      color: canReplyHere ? commentBlue : Colors.grey,
+                      selected: canReplyHere && showReplyInput,
+                      onTap: () {
+                        if (!canReplyHere) {
+                          AppSnackBar.show(
+                            context,
+                            'Maximum reply depth ($_maxReplyDepth levels) reached.',
+                            type: AppSnackBarType.error,
+                          );
+                          return;
+                        }
+                        _startReply(commentId, replyId: replyId);
+                      },
+                    ),
+                    if (replyCount > 0)
+                      _buildCommentAction(
+                        icon: isExpanded ? Icons.expand_less : Icons.expand_more,
+                        label: isExpanded ? 'Hide replies' : 'View replies',
+                        color: appBlack,
+                        selected: isExpanded,
+                        onTap: () => _toggleNestedReplies(commentId, replyId),
+                      ),
+                  ],
+                ),
+                if (showReplyInput && canReplyHere) ...[
+                  const SizedBox(height: 8),
+                  _buildReplyComposer(
+                    commentId: commentId,
+                    parentReplyId: replyId,
+                    replyingToAuthor: author,
+                  ),
+                ],
+                if (isExpanded && nestedReplies.isNotEmpty && canShowChildren) ...[
+                  const SizedBox(height: 4),
+                  Column(
+                    children: _buildReplyTree(
+                      commentId,
+                      parentReplyId: replyId,
+                      depth: depth + 1,
+                    ),
+                  ),
+                ],
+                if (isExpanded && nestedReplies.isNotEmpty && !canShowChildren) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Additional replies hidden (depth limit reached).',
+                    style: TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontSize: 11,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   String _formatTimeAgo(DateTime timestamp) {
@@ -2775,8 +3664,26 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                           final initial = author.isNotEmpty
                               ? author[0].toUpperCase()
                               : '?';
+                          final commentId = comment['id'] as String;
                           final timestamp = comment['timestamp'] as DateTime;
                           final timeAgo = _formatTimeAgo(timestamp);
+                          final vote = comment['userVote'] as String? ?? 'none';
+                          final verifySelected = vote == 'green';
+                          final reportSelected = vote == 'red';
+                          final loadedReplyCount =
+                              _repliesByCommentId[commentId]?.length;
+                          final replyCount =
+                              loadedReplyCount ??
+                              (comment['replyCount'] as int? ?? 0);
+                          final isExpanded = _expandedReplyComments.contains(
+                            commentId,
+                          );
+                          final isLoadingReplies =
+                              _loadingReplies[commentId] == true;
+                          final topLevelReplies = _repliesForParent(commentId);
+                          final showReplyInput =
+                              _replyingToCommentId == commentId &&
+                              _replyingToReplyId == null;
 
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 12),
@@ -2846,6 +3753,95 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                                           color: Colors.grey[500],
                                         ),
                                       ),
+                                      const SizedBox(height: 6),
+                                      Wrap(
+                                        spacing: 8,
+                                        runSpacing: 4,
+                                        children: [
+                                          _buildCommentAction(
+                                            icon: Icons.verified,
+                                            label:
+                                                'Verify ${comment['greenFlags']}',
+                                            color: appGreen,
+                                            selected: verifySelected,
+                                            onTap: () =>
+                                                _onCommentVerify(index),
+                                          ),
+                                          _buildCommentAction(
+                                            icon: Icons.flag,
+                                            label:
+                                                'Report ${comment['redFlags']}',
+                                            color: appRed,
+                                            selected: reportSelected,
+                                            onTap: () =>
+                                                _onCommentReport(index),
+                                          ),
+                                          _buildCommentAction(
+                                            icon: Icons.reply,
+                                            label: replyCount > 0
+                                                ? 'Reply ($replyCount)'
+                                                : 'Reply',
+                                            color: commentBlue,
+                                            selected: showReplyInput,
+                                            onTap: () =>
+                                                _startReply(commentId),
+                                          ),
+                                          if (replyCount > 0)
+                                            _buildCommentAction(
+                                              icon: isExpanded
+                                                  ? Icons.expand_less
+                                                  : Icons.expand_more,
+                                              label: isExpanded
+                                                  ? 'Hide replies'
+                                                  : 'View replies',
+                                              color: appBlack,
+                                              selected: isExpanded,
+                                              onTap: () =>
+                                                  _toggleReplies(commentId),
+                                            ),
+                                        ],
+                                      ),
+                                      if (isExpanded) ...[
+                                        const SizedBox(height: 4),
+                                        if (isLoadingReplies)
+                                          const Padding(
+                                            padding: EdgeInsets.symmetric(
+                                              vertical: 8,
+                                            ),
+                                            child: SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            ),
+                                          )
+                                        else if (topLevelReplies.isEmpty)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 10,
+                                              top: 6,
+                                            ),
+                                            child: Text(
+                                              'No replies yet.',
+                                              style: TextStyle(
+                                                fontFamily: 'RobotoCondensed',
+                                                fontSize: 12,
+                                                color: Colors.grey[600],
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          Column(
+                                            children: _buildReplyTree(commentId),
+                                          ),
+                                      ],
+                                      if (showReplyInput) ...[
+                                        const SizedBox(height: 8),
+                                        _buildReplyComposer(
+                                          commentId: commentId,
+                                        ),
+                                      ],
                                     ],
                                   ),
                                 ),
@@ -2874,6 +3870,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                       child: TextField(
                         controller: _commentController,
                         maxLines: null,
+                        inputFormatters: [
+                          LengthLimitingTextInputFormatter(256),
+                        ],
                         style: const TextStyle(
                           fontFamily: 'RobotoCondensed',
                           fontSize: 14,
@@ -2901,19 +3900,32 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                     ),
                     const SizedBox(width: 8),
                     GestureDetector(
-                      onTap: _postComment,
+                      onTap: _isPostingComment ? null : _postComment,
                       child: Container(
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: appBlue,
+                          color: _isPostingComment
+                              ? appBlue.withOpacity(0.6)
+                              : appBlue,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
-                          Icons.send,
-                          color: Colors.white,
-                          size: 18,
-                        ),
+                        child: _isPostingComment
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                            : const Icon(
+                                Icons.send,
+                                color: Colors.white,
+                                size: 18,
+                              ),
                       ),
                     ),
                   ],
@@ -2953,6 +3965,7 @@ class _CommentsPageState extends State<_CommentsPage> {
   String _commentFilter = 'All Comments';
   List<Map<String, dynamic>> _comments = [];
   bool _loading = true;
+  bool _isPostingComment = false;
 
   @override
   void initState() {
@@ -3029,7 +4042,19 @@ class _CommentsPageState extends State<_CommentsPage> {
   }
 
   Future<void> _postComment() async {
-    if (_commentController.text.trim().isEmpty) return;
+    if (_isPostingComment) return;
+    final commentText = _commentController.text.trim();
+    if (commentText.isEmpty) return;
+    if (commentText.length > 256) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Comment must be 256 characters or less.',
+        type: AppSnackBarType.error,
+      );
+      return;
+    }
+    setState(() => _isPostingComment = true);
 
     try {
       debugPrint('=== POSTING COMMENT ===');
@@ -3050,11 +4075,10 @@ class _CommentsPageState extends State<_CommentsPage> {
       if (reportId.isEmpty) {
         debugPrint('❌ ERROR: reportId is empty! Cannot post comment.');
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Error: Report ID is missing'),
-              backgroundColor: Colors.red,
-            ),
+          AppSnackBar.show(
+            context,
+            'Error: Report ID is missing',
+            type: AppSnackBarType.error,
           );
         }
         return;
@@ -3071,12 +4095,13 @@ class _CommentsPageState extends State<_CommentsPage> {
           UserSession.currentUserData?['fullName'] as String? ?? 'Anonymous';
 
       final newComment = {
-        'text': _commentController.text.trim(),
+        'text': commentText,
         'author': userName,
         'type': 'user',
         'timestamp': Timestamp.now(),
         'greenFlags': 0,
         'redFlags': 0,
+        'replyCount': 0,
         // Report credentials
         'reportId': reportId,
         'reportTitle': reportTitle,
@@ -3100,19 +4125,6 @@ class _CommentsPageState extends State<_CommentsPage> {
       debugPrint(
         '✅ Comment saved to nested collection with ID: ${savedDocRef.id}',
       );
-
-      // Also save to root-level comments collection (for easy admin access)
-      debugPrint('🔐 Also saving to root comments collection...');
-      try {
-        await FirebaseFirestore.instance
-            .collection('comments')
-            .doc(savedDocRef.id)
-            .set(newComment);
-        debugPrint('✅ Comment also saved to root collection');
-      } catch (rootError) {
-        debugPrint('⚠️ Warning: Could not save to root collection: $rootError');
-        // Don't fail if root collection save fails
-      }
 
       // Try to update report document with new comment count
       // If this fails due to permissions, it won't block the comment from being saved
@@ -3139,12 +4151,11 @@ class _CommentsPageState extends State<_CommentsPage> {
       await _loadComments();
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Comment posted successfully'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
-          ),
+        AppSnackBar.show(
+          context,
+          'Comment posted successfully',
+          type: AppSnackBarType.success,
+          duration: const Duration(seconds: 2),
         );
       }
     } catch (e) {
@@ -3168,6 +4179,10 @@ class _CommentsPageState extends State<_CommentsPage> {
             ],
           ),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPostingComment = false);
       }
     }
   }
@@ -3612,6 +4627,9 @@ class _CommentsPageState extends State<_CommentsPage> {
                   child: TextField(
                     controller: _commentController,
                     maxLines: null,
+                    inputFormatters: [
+                      LengthLimitingTextInputFormatter(256),
+                    ],
                     style: const TextStyle(
                       fontFamily: 'RobotoCondensed',
                       fontSize: 13,
@@ -3640,9 +4658,11 @@ class _CommentsPageState extends State<_CommentsPage> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: _postComment,
+                  onPressed: _isPostingComment ? null : _postComment,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: appBlue,
+                    backgroundColor: _isPostingComment
+                        ? appBlue.withOpacity(0.6)
+                        : appBlue,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
                     ),
@@ -3651,15 +4671,26 @@ class _CommentsPageState extends State<_CommentsPage> {
                       vertical: 12,
                     ),
                   ),
-                  child: Text(
-                    'Post',
-                    style: const TextStyle(
-                      fontFamily: 'RobotoCondensed',
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
+                  child: _isPostingComment
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
+                          ),
+                        )
+                      : Text(
+                          'Post',
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
                 ),
               ],
             ),

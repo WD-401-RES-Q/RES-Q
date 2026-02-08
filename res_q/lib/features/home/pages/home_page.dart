@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../../common/widgets/app_snackbar.dart';
 
@@ -239,7 +238,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   height: cardHeight,
                                   child: _incidentCard(
                                     context,
-                                    "VEHICULAR",
+                                    "ROAD CRASH",
                                     "assets/icons/FINAL-CRASH-ICON.png",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
