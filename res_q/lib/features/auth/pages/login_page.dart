@@ -344,59 +344,21 @@ class _LoginPageState extends State<LoginPage>
     return _normalizePhoneForMatch(authPhone) == _normalizePhoneForMatch(phone);
   }
 
-  Future<String?> _showOtpInputDialog(String phone) async {
-    final otpController = TextEditingController();
-    try {
-      return await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) {
-          return AlertDialog(
-            title: const Text('Verify Phone'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Enter the 6-digit code sent to $phone',
-                  style: const TextStyle(fontSize: 13),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: otpController,
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(6),
-                  ],
-                  decoration: const InputDecoration(
-                    counterText: '',
-                    hintText: '123456',
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  final code = otpController.text.trim();
-                  if (code.length != 6) return;
-                  Navigator.of(dialogContext).pop(code);
-                },
-                child: const Text('Verify'),
-              ),
-            ],
-          );
-        },
-      );
-    } finally {
-      otpController.dispose();
-    }
+  Future<bool> _openOtpVerificationPage({
+    required String phone,
+    required String verificationId,
+  }) async {
+    if (!mounted) return false;
+    final result = await Navigator.pushNamed(
+      context,
+      '/otp',
+      arguments: {
+        'verificationId': verificationId,
+        'phoneNumber': phone,
+        'isLoginVerification': true,
+      },
+    );
+    return result == true;
   }
 
   Future<bool> _ensurePhoneAuthForLogin(String phone) async {
@@ -448,19 +410,21 @@ class _LoginPageState extends State<LoginPage>
         },
         codeSent: (String verificationId, int? resendToken) async {
           if (completer.isCompleted) return;
-          final smsCode = await _showOtpInputDialog(phone);
+          if (!mounted) {
+            completer.complete(false);
+            return;
+          }
+          final otpVerified = await _openOtpVerificationPage(
+            phone: phone,
+            verificationId: verificationId,
+          );
           if (completer.isCompleted) return;
-          if (smsCode == null || smsCode.length != 6) {
+          if (!otpVerified) {
             completer.complete(false);
             return;
           }
 
           try {
-            final credential = PhoneAuthProvider.credential(
-              verificationId: verificationId,
-              smsCode: smsCode,
-            );
-            await FirebaseAuth.instance.signInWithCredential(credential);
             if (!completer.isCompleted) {
               await _markPhoneAuthVerified(phone);
               completer.complete(_isCurrentPhoneAuthenticated(phone));

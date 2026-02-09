@@ -1,7 +1,7 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_cropper/image_cropper.dart';
@@ -2069,21 +2069,31 @@ class _ProfilePageState extends State<ProfilePage>
                       children: List.generate(4, (index) {
                         return Container(
                           width: 40,
-                          height: 48,
+                          height: 56,
                           margin: const EdgeInsets.symmetric(horizontal: 4),
                           child: TextField(
                             controller: getControllers()[index],
                             focusNode: getFocusNodes()[index],
                             keyboardType: TextInputType.number,
                             textAlign: TextAlign.center,
+                            textAlignVertical: TextAlignVertical.center,
                             maxLength: 1,
+                            showCursor: false,
                             obscureText: true,
+                            obscuringCharacter: '\u2022',
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(1),
+                            ],
                             style: const TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
+                              height: 1.0,
                             ),
                             decoration: InputDecoration(
                               counterText: '',
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
                               filled: true,
                               fillColor: Colors.white,
                               border: OutlineInputBorder(
@@ -2107,11 +2117,32 @@ class _ProfilePageState extends State<ProfilePage>
                               ),
                             ),
                             onChanged: (value) {
-                              if (value.isNotEmpty && index < 3) {
-                                getFocusNodes()[index + 1].requestFocus();
+                              final cleanValue = value.replaceAll(
+                                RegExp(r'[^0-9]'),
+                                '',
+                              );
+                              if (cleanValue.isEmpty) {
+                                getControllers()[index].clear();
+                                if (index > 0) {
+                                  getFocusNodes()[index - 1].requestFocus();
+                                }
+                                setDialogState(() => errorMessage = null);
+                                return;
                               }
-                              if (value.isEmpty && index > 0) {
-                                getFocusNodes()[index - 1].requestFocus();
+
+                              final singleChar = cleanValue.substring(
+                                cleanValue.length - 1,
+                              );
+                              if (getControllers()[index].text != singleChar) {
+                                getControllers()[index].text = singleChar;
+                                getControllers()[index].selection =
+                                    const TextSelection.collapsed(offset: 1);
+                              }
+
+                              if (index < 3) {
+                                getFocusNodes()[index + 1].requestFocus();
+                              } else {
+                                FocusScope.of(context).unfocus();
                               }
                               setDialogState(() => errorMessage = null);
                             },
