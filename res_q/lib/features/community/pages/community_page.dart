@@ -9,6 +9,83 @@ import 'package:intl/intl.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/widgets/app_snackbar.dart';
 
+String? _extractProfilePhotoUrl(Map<String, dynamic>? data) {
+  if (data == null) return null;
+  const keys = <String>[
+    'profilePhotoUrl',
+    'authorProfilePhotoUrl',
+    'photoUrl',
+    'avatarUrl',
+    'profileImageUrl',
+  ];
+
+  for (final key in keys) {
+    final value = data[key]?.toString().trim() ?? '';
+    if (value.isNotEmpty) return value;
+  }
+  return null;
+}
+
+Widget _buildUserAvatar({
+  required String displayName,
+  String? profilePhotoUrl,
+  required double radius,
+  required Color fallbackColor,
+  required double fontSize,
+}) {
+  final trimmedName = displayName.trim();
+  final initial = trimmedName.isNotEmpty ? trimmedName[0].toUpperCase() : '?';
+  final photoUrl = profilePhotoUrl?.trim() ?? '';
+  final hasPhoto = photoUrl.isNotEmpty;
+
+  if (!hasPhoto) {
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: fallbackColor,
+      child: Text(
+        initial,
+        style: TextStyle(
+          fontFamily: 'Roboto',
+          fontSize: fontSize,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+
+  final diameter = radius * 2;
+  return CircleAvatar(
+    radius: radius,
+    backgroundColor: Colors.grey.shade200,
+    child: ClipOval(
+      child: Image.network(
+        photoUrl,
+        width: diameter,
+        height: diameter,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            width: diameter,
+            height: diameter,
+            color: fallbackColor,
+            alignment: Alignment.center,
+            child: Text(
+              initial,
+              style: TextStyle(
+                fontFamily: 'Roboto',
+                fontSize: fontSize,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          );
+        },
+      ),
+    ),
+  );
+}
+
 class CommunityPage extends StatefulWidget {
   const CommunityPage({super.key});
 
@@ -377,6 +454,7 @@ class _CommunityPageState extends State<CommunityPage>
       'commentsList': <Map<String, dynamic>>[],
       'userVote': 'none',
       'name': data['name'] ?? 'Unknown',
+      'profilePhotoUrl': _extractProfilePhotoUrl(data),
       'mediaType': data['mediaType'] ?? 'photo',
     };
   }
@@ -2137,9 +2215,8 @@ class _CommunityPageState extends State<CommunityPage>
 
                   // Get reporter info
                   final reporterName = report['name'] ?? 'Unknown';
-                  final reporterInitial = reporterName.isNotEmpty
-                      ? reporterName[0].toUpperCase()
-                      : '?';
+                  final reporterPhotoUrl = report['profilePhotoUrl']
+                      ?.toString();
                   final reportedAt = report['reportedAt'] as DateTime?;
                   final timeAgo = reportedAt != null
                       ? _formatTimeAgo(reportedAt)
@@ -2163,18 +2240,12 @@ class _CommunityPageState extends State<CommunityPage>
                             child: Row(
                               children: [
                                 // Profile Avatar
-                                CircleAvatar(
+                                _buildUserAvatar(
+                                  displayName: reporterName,
+                                  profilePhotoUrl: reporterPhotoUrl,
                                   radius: 20,
-                                  backgroundColor: appBlue,
-                                  child: Text(
-                                    reporterInitial,
-                                    style: const TextStyle(
-                                      fontFamily: 'Roboto',
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                    ),
-                                  ),
+                                  fallbackColor: appBlue,
+                                  fontSize: 16,
                                 ),
                                 const SizedBox(width: 10),
                                 // Name + Time + Status
@@ -2532,6 +2603,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               'id': doc.id,
               'text': data['text'] ?? '',
               'author': data['author'] ?? 'Anonymous',
+              'profilePhotoUrl': _extractProfilePhotoUrl(data),
               'timestamp': timestamp,
               'greenFlags': data['greenFlags'] ?? 0,
               'redFlags': data['redFlags'] ?? 0,
@@ -2580,6 +2652,10 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     return phone.replaceAll(RegExp(r'[^0-9]'), '');
   }
 
+  String? _getCurrentUserProfilePhotoUrl() {
+    return _extractProfilePhotoUrl(UserSession.currentUserData);
+  }
+
   Future<void> _loadCommentVotes() async {
     final userPhone = _getLoggedInUserPhone();
     if (userPhone == null || userPhone.isEmpty) return;
@@ -2624,9 +2700,10 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     }
 
     try {
-      await FirebaseFirestore.instance.collection('userVotes').doc(userPhone).set({
-        'commentVotes': _commentVotes,
-      }, SetOptions(merge: true));
+      await FirebaseFirestore.instance
+          .collection('userVotes')
+          .doc(userPhone)
+          .set({'commentVotes': _commentVotes}, SetOptions(merge: true));
     } catch (_) {}
   }
 
@@ -2646,9 +2723,10 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     }
 
     try {
-      await FirebaseFirestore.instance.collection('userVotes').doc(userPhone).set({
-        'commentVotes': _commentVotes,
-      }, SetOptions(merge: true));
+      await FirebaseFirestore.instance
+          .collection('userVotes')
+          .doc(userPhone)
+          .set({'commentVotes': _commentVotes}, SetOptions(merge: true));
     } catch (_) {}
   }
 
@@ -2679,10 +2757,12 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
 
       final userName =
           UserSession.currentUserData?['fullName'] as String? ?? 'Anonymous';
+      final userProfilePhotoUrl = _getCurrentUserProfilePhotoUrl();
 
       final newComment = {
         'text': commentText,
         'author': userName,
+        if (userProfilePhotoUrl != null) 'profilePhotoUrl': userProfilePhotoUrl,
         'type': 'user',
         'timestamp': Timestamp.now(),
         'greenFlags': 0,
@@ -2845,7 +2925,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     String commentId, {
     String? parentReplyId,
   }) {
-    final replies = _repliesByCommentId[commentId] ?? const <Map<String, dynamic>>[];
+    final replies =
+        _repliesByCommentId[commentId] ?? const <Map<String, dynamic>>[];
     return replies.where((reply) {
       final parentId = reply['parentReplyId']?.toString();
       if (parentReplyId == null) {
@@ -2986,6 +3067,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
           'id': doc.id,
           'text': data['text'] ?? '',
           'author': data['author'] ?? 'Anonymous',
+          'profilePhotoUrl': _extractProfilePhotoUrl(data),
           'timestamp': timestamp,
           'greenFlags': data['greenFlags'] ?? 0,
           'redFlags': data['redFlags'] ?? 0,
@@ -3095,6 +3177,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     try {
       final userName =
           UserSession.currentUserData?['fullName'] as String? ?? 'Anonymous';
+      final userProfilePhotoUrl = _getCurrentUserProfilePhotoUrl();
       final reportTitle = widget.report['title']?.toString() ?? '';
       final reportStatus = widget.report['status']?.toString() ?? '';
       final reportDate = widget.report['date']?.toString() ?? '';
@@ -3104,6 +3187,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       final newReply = {
         'text': replyText,
         'author': userName,
+        if (userProfilePhotoUrl != null) 'profilePhotoUrl': userProfilePhotoUrl,
         'type': 'user_reply',
         'timestamp': Timestamp.now(),
         'greenFlags': 0,
@@ -3148,7 +3232,6 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               .doc(targetParentReplyId)
               .update({'replyCount': FieldValue.increment(1)});
         } catch (_) {}
-
       }
 
       if (!mounted) return;
@@ -3216,7 +3299,11 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16, color: selected ? color : color.withOpacity(0.7)),
+            Icon(
+              icon,
+              size: 16,
+              color: selected ? color : color.withOpacity(0.7),
+            ),
             const SizedBox(width: 4),
             Text(
               label,
@@ -3270,9 +3357,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               child: TextField(
                 controller: _replyController,
                 maxLines: null,
-                inputFormatters: [
-                  LengthLimitingTextInputFormatter(256),
-                ],
+                inputFormatters: [LengthLimitingTextInputFormatter(256)],
                 style: const TextStyle(
                   fontFamily: 'RobotoCondensed',
                   fontSize: 13,
@@ -3321,11 +3406,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                           ),
                         ),
                       )
-                    : const Icon(
-                        Icons.send,
-                        color: Colors.white,
-                        size: 16,
-                      ),
+                    : const Icon(Icons.send, color: Colors.white, size: 16),
               ),
             ),
           ],
@@ -3359,7 +3440,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   }) {
     final replyId = reply['id']?.toString() ?? '';
     final author = reply['author']?.toString() ?? 'Anonymous';
-    final initial = author.isNotEmpty ? author[0].toUpperCase() : '?';
+    final profilePhotoUrl = reply['profilePhotoUrl']?.toString();
     final timestamp = reply['timestamp'] as DateTime? ?? DateTime.now();
     final vote = reply['userVote'] as String? ?? 'none';
     final verifySelected = vote == 'green';
@@ -3367,8 +3448,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     final nestedReplies = _repliesForParent(commentId, parentReplyId: replyId);
     final directChildCount = nestedReplies.length;
     final storedReplyCount = reply['replyCount'] as int? ?? 0;
-    final replyCount =
-        storedReplyCount > directChildCount ? storedReplyCount : directChildCount;
+    final replyCount = storedReplyCount > directChildCount
+        ? storedReplyCount
+        : directChildCount;
     final level = depth + 1;
     final canReplyHere = level < _maxReplyDepth;
     final canShowChildren = level < _maxReplyDepth;
@@ -3377,25 +3459,22 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     );
     final showReplyInput =
         _replyingToCommentId == commentId && _replyingToReplyId == replyId;
-    final leftPadding = (10 + depth * 18).toDouble().clamp(10.0, 64.0).toDouble();
+    final leftPadding = (10 + depth * 18)
+        .toDouble()
+        .clamp(10.0, 64.0)
+        .toDouble();
 
     return Padding(
       padding: EdgeInsets.only(top: 8, left: leftPadding),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
+          _buildUserAvatar(
+            displayName: author,
+            profilePhotoUrl: profilePhotoUrl,
             radius: 11,
-            backgroundColor: Colors.grey[350],
-            child: Text(
-              initial,
-              style: const TextStyle(
-                fontFamily: 'Roboto',
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: Colors.white,
-              ),
-            ),
+            fallbackColor: Colors.grey.shade400,
+            fontSize: 10,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -3482,7 +3561,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                     ),
                     if (replyCount > 0)
                       _buildCommentAction(
-                        icon: isExpanded ? Icons.expand_less : Icons.expand_more,
+                        icon: isExpanded
+                            ? Icons.expand_less
+                            : Icons.expand_more,
                         label: isExpanded ? 'Hide replies' : 'View replies',
                         color: appBlack,
                         selected: isExpanded,
@@ -3498,7 +3579,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                     replyingToAuthor: author,
                   ),
                 ],
-                if (isExpanded && nestedReplies.isNotEmpty && canShowChildren) ...[
+                if (isExpanded &&
+                    nestedReplies.isNotEmpty &&
+                    canShowChildren) ...[
                   const SizedBox(height: 4),
                   Column(
                     children: _buildReplyTree(
@@ -3508,7 +3591,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                     ),
                   ),
                 ],
-                if (isExpanded && nestedReplies.isNotEmpty && !canShowChildren) ...[
+                if (isExpanded &&
+                    nestedReplies.isNotEmpty &&
+                    !canShowChildren) ...[
                   const SizedBox(height: 4),
                   Text(
                     'Additional replies hidden (depth limit reached).',
@@ -3661,9 +3746,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                         itemBuilder: (context, index) {
                           final comment = _comments[index];
                           final author = comment['author'] as String;
-                          final initial = author.isNotEmpty
-                              ? author[0].toUpperCase()
-                              : '?';
+                          final profilePhotoUrl = comment['profilePhotoUrl']
+                              ?.toString();
                           final commentId = comment['id'] as String;
                           final timestamp = comment['timestamp'] as DateTime;
                           final timeAgo = _formatTimeAgo(timestamp);
@@ -3691,18 +3775,12 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 // Avatar
-                                CircleAvatar(
+                                _buildUserAvatar(
+                                  displayName: author,
+                                  profilePhotoUrl: profilePhotoUrl,
                                   radius: 16,
-                                  backgroundColor: appBlue,
-                                  child: Text(
-                                    initial,
-                                    style: const TextStyle(
-                                      fontFamily: 'Roboto',
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                    ),
-                                  ),
+                                  fallbackColor: appBlue,
+                                  fontSize: 12,
                                 ),
                                 const SizedBox(width: 10),
                                 // Comment bubble
@@ -3783,8 +3861,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                                                 : 'Reply',
                                             color: commentBlue,
                                             selected: showReplyInput,
-                                            onTap: () =>
-                                                _startReply(commentId),
+                                            onTap: () => _startReply(commentId),
                                           ),
                                           if (replyCount > 0)
                                             _buildCommentAction(
@@ -3833,7 +3910,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                                           )
                                         else
                                           Column(
-                                            children: _buildReplyTree(commentId),
+                                            children: _buildReplyTree(
+                                              commentId,
+                                            ),
                                           ),
                                       ],
                                       if (showReplyInput) ...[
@@ -4012,6 +4091,7 @@ class _CommentsPageState extends State<_CommentsPage> {
               'id': doc.id,
               'text': data['text'] ?? '',
               'author': data['author'] ?? 'Anonymous',
+              'profilePhotoUrl': _extractProfilePhotoUrl(data),
               'timestamp': timestamp,
               'greenFlags': data['greenFlags'] ?? 0,
               'redFlags': data['redFlags'] ?? 0,
@@ -4093,10 +4173,14 @@ class _CommentsPageState extends State<_CommentsPage> {
       // Get the current user's name from UserSession
       final userName =
           UserSession.currentUserData?['fullName'] as String? ?? 'Anonymous';
+      final userProfilePhotoUrl = _extractProfilePhotoUrl(
+        UserSession.currentUserData,
+      );
 
       final newComment = {
         'text': commentText,
         'author': userName,
+        if (userProfilePhotoUrl != null) 'profilePhotoUrl': userProfilePhotoUrl,
         'type': 'user',
         'timestamp': Timestamp.now(),
         'greenFlags': 0,
@@ -4467,18 +4551,15 @@ class _CommentsPageState extends State<_CommentsPage> {
                             // AUTHOR + TIME
                             Row(
                               children: [
-                                CircleAvatar(
+                                _buildUserAvatar(
+                                  displayName:
+                                      comment['author']?.toString() ??
+                                      'Anonymous',
+                                  profilePhotoUrl: comment['profilePhotoUrl']
+                                      ?.toString(),
                                   radius: 14,
-                                  backgroundColor: appBlue,
-                                  child: Text(
-                                    comment['author'][0].toUpperCase(),
-                                    style: const TextStyle(
-                                      fontFamily: 'RobotoCondensed',
-                                      fontSize: 12,
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w400,
-                                    ),
-                                  ),
+                                  fallbackColor: appBlue,
+                                  fontSize: 12,
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
@@ -4627,9 +4708,7 @@ class _CommentsPageState extends State<_CommentsPage> {
                   child: TextField(
                     controller: _commentController,
                     maxLines: null,
-                    inputFormatters: [
-                      LengthLimitingTextInputFormatter(256),
-                    ],
+                    inputFormatters: [LengthLimitingTextInputFormatter(256)],
                     style: const TextStyle(
                       fontFamily: 'RobotoCondensed',
                       fontSize: 13,
