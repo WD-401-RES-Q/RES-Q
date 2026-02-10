@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
 class BottomNavItemConfig {
@@ -34,6 +34,31 @@ class BottomNavBar extends StatefulWidget {
 }
 
 class _BottomNavBarState extends State<BottomNavBar> {
+  bool _didPrecacheIcons = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didPrecacheIcons) return;
+    _didPrecacheIcons = true;
+    _precacheIcons(widget.itemConfigs ?? _defaultItems);
+  }
+
+  @override
+  void didUpdateWidget(covariant BottomNavBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.itemConfigs != widget.itemConfigs) {
+      _didPrecacheIcons = false;
+    }
+  }
+
+  void _precacheIcons(List<BottomNavItemConfig> configs) {
+    for (final config in configs) {
+      precacheImage(AssetImage(config.activeIconPath), context);
+      precacheImage(AssetImage(config.inactiveIconPath), context);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final configs = widget.itemConfigs ?? _defaultItems;
@@ -129,4 +154,3 @@ class _BottomNavBarState extends State<BottomNavBar> {
     ),
   ];
 }
-

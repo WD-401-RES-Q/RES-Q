@@ -45,6 +45,7 @@ class ReportFormScreen extends StatefulWidget {
 }
 
 class _ReportFormScreenState extends State<ReportFormScreen> {
+  static const Distance _distanceCalculator = Distance();
   final TextEditingController _informationController = TextEditingController();
   final TextEditingController _barangayController = TextEditingController();
   final TextEditingController _otherIncidentController =
@@ -65,14 +66,27 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   CapturedMediaType? _capturedMediaType;
   final ImagePicker _picker = ImagePicker();
   bool _submitting = false;
-  int _navIndex = 0;
+  final int _navIndex = 0;
   int _injuredCount = 0;
   bool _needsAmbulance = false;
   final List<_VehicleInvolved> _vehicles = <_VehicleInvolved>[];
+  late final String _normalizedIncidentType;
+  late final bool _isVehicularIncidentType;
+  late final bool _isFireIncidentType;
+  late final bool _isFloodIncidentType;
+  late final bool _isOthersIncidentType;
 
   @override
   void initState() {
     super.initState();
+    _normalizedIncidentType = widget.incidentType.toUpperCase().trim();
+    _isVehicularIncidentType =
+        _normalizedIncidentType == 'VEHICULAR' ||
+        _normalizedIncidentType == 'ROAD CRASH' ||
+        _normalizedIncidentType == 'ROADCRASH';
+    _isFireIncidentType = _normalizedIncidentType == 'FIRE';
+    _isFloodIncidentType = _normalizedIncidentType == 'FLOOD';
+    _isOthersIncidentType = _normalizedIncidentType == 'OTHERS';
     _reportDate = _formatDate(DateTime.now());
     _loadUserInfo();
     if (_isVehicularIncident()) {
@@ -371,6 +385,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
       String? mediaUrl;
       String? mediaType;
+      String? mediaPath;
 
       // Upload media only if captured (required by validation above)
       if (_capturedMedia != null) {
@@ -406,6 +421,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             .putData(data, metadata)
             .timeout(uploadTimeout);
 
+        mediaPath = uploadSnapshot.ref.fullPath;
         mediaUrl = await uploadSnapshot.ref.getDownloadURL().timeout(
           const Duration(seconds: 20),
         );
@@ -502,6 +518,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 ? 'current'
                 : 'pin',
             'mediaUrl': mediaUrl,
+            'mediaPath': mediaPath,
             'mediaType': mediaType,
             // Keep incident pin immutable for maps/admin even when user shares
             // live location updates later.
@@ -582,6 +599,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                     'otherIncidentType': _otherIncidentController.text.trim(),
                   },
                   'mediaUrl': mediaUrl,
+                  'mediaPath': mediaPath,
                   'mediaType': mediaType,
                   'reportedAt': now,
                   'locationSource':
@@ -823,7 +841,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   bool _isWithinAngeles(LatLng point) {
     const center = LatLng(15.1450, 120.5887);
     const radiusMeters = 6000.0;
-    final distance = const Distance().as(LengthUnit.Meter, center, point);
+    final distance = _distanceCalculator.as(LengthUnit.Meter, center, point);
     return distance <= radiusMeters;
   }
 
@@ -979,6 +997,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       context,
     ).push<LatLng>(MaterialPageRoute(builder: (_) => const _PinPickerPage()));
     if (picked == null) return;
+    if (_selectedLocation != null &&
+        _selectedLocation!.latitude == picked.latitude &&
+        _selectedLocation!.longitude == picked.longitude) {
+      return;
+    }
     setState(() {
       _selectedLocation = picked;
     });
@@ -1035,32 +1058,39 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
               child: Column(
                 children: [
                   // Back button + logo row
-                  Row(
-                    children: [
-                      const ResqBackButton(),
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: SizedBox(
-                            height: 50,
-                            child: Align(
-                              alignment: Alignment.center,
-                              child: SvgPicture.asset(
-                                "assets/icons/RES-Q_LOGO.svg",
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    const Icon(
-                                      Icons.image_not_supported,
-                                      size: 30,
-                                      color: Colors.blue,
-                                    ),
+                  SizedBox(
+                    height: 50,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: ResqBackButton.outline(),
+                        ),
+                        Align(
+                          alignment: Alignment.center,
+                          child: GestureDetector(
+                            onTap: () => Navigator.pop(context),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 190),
+                              child: SizedBox(
+                                height: 50,
+                                child: SvgPicture.asset(
+                                  "assets/icons/RES-Q_LOGO.svg",
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const Icon(
+                                        Icons.image_not_supported,
+                                        size: 30,
+                                        color: Colors.blue,
+                                      ),
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 44),
-                    ],
+                      ],
+                    ),
                   ),
 
                   const SizedBox(height: 32),
@@ -1289,6 +1319,10 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                             isSelected:
                                 _locationMode == LocationSelectionMode.current,
                             onTap: () {
+                              if (_locationMode ==
+                                  LocationSelectionMode.current) {
+                                return;
+                              }
                               setState(() {
                                 _locationMode = LocationSelectionMode.current;
                               });
@@ -1300,6 +1334,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                             isSelected:
                                 _locationMode == LocationSelectionMode.pin,
                             onTap: () {
+                              if (_locationMode == LocationSelectionMode.pin) {
+                                return;
+                              }
                               setState(() {
                                 _locationMode = LocationSelectionMode.pin;
                               });
@@ -1466,9 +1503,6 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       bottomNavigationBar: BottomNavBar(
         currentIndex: _navIndex,
         onTap: (index) {
-          setState(() {
-            _navIndex = index;
-          });
           // Navigate back to MainPage with selected tab
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => MainPage(initialIndex: index)),
@@ -1562,14 +1596,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   };
 
   bool _isVehicularIncident() {
-    final incident = widget.incidentType.toUpperCase().trim();
-    return incident == 'VEHICULAR' ||
-        incident == 'ROAD CRASH' ||
-        incident == 'ROADCRASH';
+    return _isVehicularIncidentType;
   }
 
   bool _isFireIncident() {
-    return widget.incidentType.toUpperCase().trim() == 'FIRE';
+    return _isFireIncidentType;
   }
 
   String _incidentTypeForStorage() {
@@ -1578,11 +1609,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   bool _isFloodIncident() {
-    return widget.incidentType.toUpperCase() == 'FLOOD';
+    return _isFloodIncidentType;
   }
 
   bool _isOthersIncident() {
-    return widget.incidentType.toUpperCase() == 'OTHERS';
+    return _isOthersIncidentType;
   }
 
   Widget _buildInjuredCounterField() {
@@ -2262,12 +2293,16 @@ class _PinPickerPage extends StatefulWidget {
 class _PinPickerPageState extends State<_PinPickerPage> {
   static const LatLng _center = LatLng(15.1450, 120.5887);
   static const double _radiusMeters = 6000;
+  static const Distance _distanceCalculator = Distance();
+  static const double _minUiUpdateDistanceMeters = 12;
+  static const Duration _minUiUpdateInterval = Duration(seconds: 2);
 
   final MapController _mapController = MapController();
   LatLng? _selected;
   LatLng? _currentLocation;
   bool _locationChecked = false;
   StreamSubscription<Position>? _locationSubscription;
+  DateTime? _lastLocationUiUpdateAt;
 
   @override
   void initState() {
@@ -2287,9 +2322,7 @@ class _PinPickerPageState extends State<_PinPickerPage> {
       final position = await LocationService.getCurrentPosition();
       if (position != null && mounted) {
         final currentPos = LatLng(position.latitude, position.longitude);
-        setState(() {
-          _currentLocation = currentPos;
-        });
+        _applyCurrentLocationUpdate(currentPos);
 
         // Check if user is outside Angeles City (only show once)
         if (!_locationChecked && !_isWithinAngeles(currentPos)) {
@@ -2299,25 +2332,25 @@ class _PinPickerPageState extends State<_PinPickerPage> {
       }
 
       // Start listening to location updates
-      _locationSubscription = LocationService.getPositionStream().listen(
-        (position) {
-          if (mounted) {
-            final newPos = LatLng(position.latitude, position.longitude);
-            setState(() {
-              _currentLocation = newPos;
-            });
+      _locationSubscription =
+          LocationService.getPositionStream(
+            distanceFilterMeters: _minUiUpdateDistanceMeters.toInt(),
+          ).listen(
+            (position) {
+              if (!mounted) return;
+              final newPos = LatLng(position.latitude, position.longitude);
+              _applyCurrentLocationUpdate(newPos);
 
-            // Check if user moved outside Angeles City
-            if (!_locationChecked && !_isWithinAngeles(newPos)) {
-              _locationChecked = true;
-              _showOutsideAreaError();
-            }
-          }
-        },
-        onError: (e) {
-          debugPrint('Location stream error: $e');
-        },
-      );
+              // Check if user moved outside Angeles City
+              if (!_locationChecked && !_isWithinAngeles(newPos)) {
+                _locationChecked = true;
+                _showOutsideAreaError();
+              }
+            },
+            onError: (e) {
+              debugPrint('Location stream error: $e');
+            },
+          );
     } catch (e) {
       debugPrint('Error starting location tracking: $e');
     }
@@ -2390,8 +2423,34 @@ class _PinPickerPageState extends State<_PinPickerPage> {
   }
 
   bool _isWithinAngeles(LatLng point) {
-    final distance = const Distance().as(LengthUnit.Meter, _center, point);
+    final distance = _distanceCalculator.as(LengthUnit.Meter, _center, point);
     return distance <= _radiusMeters;
+  }
+
+  bool _shouldUpdateCurrentLocation(LatLng newPos) {
+    final current = _currentLocation;
+    if (current == null) return true;
+
+    final movedMeters = _distanceCalculator.as(
+      LengthUnit.Meter,
+      current,
+      newPos,
+    );
+    if (movedMeters >= _minUiUpdateDistanceMeters) {
+      return true;
+    }
+
+    final lastUpdate = _lastLocationUiUpdateAt;
+    if (lastUpdate == null) return true;
+    return DateTime.now().difference(lastUpdate) >= _minUiUpdateInterval;
+  }
+
+  void _applyCurrentLocationUpdate(LatLng newPos) {
+    if (!_shouldUpdateCurrentLocation(newPos)) return;
+    setState(() {
+      _currentLocation = newPos;
+    });
+    _lastLocationUiUpdateAt = DateTime.now();
   }
 
   void _confirmSelection() {

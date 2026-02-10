@@ -46,6 +46,10 @@ class _MapPageState extends State<MapPage> {
 
   // Sample incident markers
   final List<Marker> _incidentMarkers = [];
+  final Map<String, Marker> _incidentMarkerById = {};
+  final Map<String, int> _incidentMarkerSignatureById = {};
+  final Map<String, Map<String, dynamic>> _reportCacheById = {};
+  final Map<String, Map<String, dynamic>> _resolvedReportEntryById = {};
   static const Duration _resolvedRetention = Duration(hours: 1);
   final Map<String, Timer> _resolvedRemovalTimers = {};
   List<Map<String, dynamic>> _resolvedReports = [];
@@ -539,18 +543,21 @@ class _MapPageState extends State<MapPage> {
 
     _trackingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
       if (pointIndex < _routePoints.length - 1) {
+        final nextPointIndex = pointIndex + 1;
+        final nextLocation = _routePoints[pointIndex];
+        final shouldAdvanceStep =
+            nextPointIndex % 5 == 0 && _currentStepIndex < 3;
+
         setState(() {
-          _userLocation = _routePoints[pointIndex];
-          pointIndex++;
+          _userLocation = nextLocation;
+          pointIndex = nextPointIndex;
 
           // Update current step
-          if (pointIndex % 5 == 0 && _currentStepIndex < 3) {
+          if (shouldAdvanceStep) {
             _currentStepIndex++;
           }
-
-          // Move map to follow user
-          _mapController.move(_userLocation!, _mapController.camera.zoom);
         });
+        _mapController.move(nextLocation, _mapController.camera.zoom);
       } else {
         _stopTracking();
         setState(() {
@@ -674,7 +681,7 @@ class _MapPageState extends State<MapPage> {
         .snapshots()
         .listen(
           (snapshot) {
-            _applyReportSnapshot(snapshot);
+            _applyReportChanges(snapshot);
           },
           onError: (error) {
             debugPrint('❌ Failed to subscribe to reports: $error');
@@ -713,7 +720,7 @@ class _MapPageState extends State<MapPage> {
     final markerSize = isInactive ? 56.0 : 72.0;
     final badge = _buildStatusBadge(statusLower, markerSize);
     final baseContent = GestureDetector(
-      onTap: () => _showIncidentInfo(data),
+      onTap: () => _showIncidentInfo(_reportCacheById[reportId] ?? data),
       child: Stack(
         clipBehavior: Clip.none,
         children: [
@@ -741,62 +748,219 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
+  int _buildIncidentMarkerSignature({
+    required GeoPoint location,
+    required String incidentType,
+    required String statusLower,
+    required bool shouldShowType,
+  }) {
+    return Object.hash(
+      // Visual marker state depends on location, type visibility and status.
+      location.latitude.toStringAsFixed(6),
+      location.longitude.toStringAsFixed(6),
+      incidentType.trim().toLowerCase(),
+      statusLower,
+      shouldShowType,
+    );
+  }
+
   void _applyReportSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
     _latestReportSnapshot = snapshot;
-    _incidentMarkers.clear();
-    final resolvedReports = <Map<String, dynamic>>[];
-    for (var doc in snapshot.docs) {
-      final data = doc.data();
-      final location = data['location'] as GeoPoint?;
-      if (location != null) {
-        final reportId = doc.id;
-        final status = (data['status'] as String? ?? '').toLowerCase();
-        final incidentType = data['incidentType'] as String? ?? 'Unknown';
-        final shouldShowType = _shouldShowIncidentType(incidentType);
-        final resolvedAt = _parseResolvedAt(data);
-        final flaggedAt = _parseFlaggedAt(data) ?? _parseReportedAt(data);
-        final isResolved =
-            status == 'resolved' || status == 'incident resolved';
-        final isFlagged = status == 'flagged' || status == 'unverified';
-        final isInactive = isResolved || isFlagged;
-        if (isInactive) {
-          final inactiveAt = isResolved ? resolvedAt : flaggedAt;
-          final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
-          if (!shouldKeep) {
-            continue;
-          }
-          if (isResolved && shouldShowType) {
-            resolvedReports.add({'id': reportId, 'data': data});
-          }
-        } else {
-          _cancelResolvedRemoval(reportId);
-        }
-        final marker = _createIncidentMarker(reportId: reportId, data: data);
-        if (marker != null) {
-          _incidentMarkers.add(marker);
-        }
+    final incomingIds = <String>{};
+    for (final doc in snapshot.docs) {
+      incomingIds.add(doc.id);
+      _reportCacheById[doc.id] = Map<String, dynamic>.from(doc.data());
+    }
+
+    final staleIds = _reportCacheById.keys
+        .where((id) => !incomingIds.contains(id))
+        .toList(growable: false);
+    for (final staleId in staleIds) {
+      _reportCacheById.remove(staleId);
+      _removeReportFromView(staleId);
+    }
+
+    _rebuildViewFromCache();
+    _showReportLimitNoticeIfNeeded(snapshot.docs.length);
+  }
+
+  void _applyReportChanges(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    _latestReportSnapshot = snapshot;
+    if (snapshot.docChanges.isEmpty) {
+      _showReportLimitNoticeIfNeeded(snapshot.docs.length);
+      return;
+    }
+
+    var hasViewChanges = false;
+    for (final change in snapshot.docChanges) {
+      final reportId = change.doc.id;
+      if (change.type == DocumentChangeType.removed) {
+        _reportCacheById.remove(reportId);
+        hasViewChanges = _removeReportFromView(reportId) || hasViewChanges;
+        continue;
+      }
+
+      final data = change.doc.data();
+      if (data == null) {
+        _reportCacheById.remove(reportId);
+        hasViewChanges = _removeReportFromView(reportId) || hasViewChanges;
+        continue;
+      }
+
+      _reportCacheById[reportId] = Map<String, dynamic>.from(data);
+      hasViewChanges =
+          _upsertReportIntoView(reportId, _reportCacheById[reportId]!) ||
+          hasViewChanges;
+    }
+
+    if (hasViewChanges) {
+      _commitIncidentViewState();
+    }
+
+    _showReportLimitNoticeIfNeeded(snapshot.docs.length);
+  }
+
+  bool _upsertReportIntoView(String reportId, Map<String, dynamic> data) {
+    var changed = false;
+    final location = data['location'] as GeoPoint?;
+    if (location == null) {
+      return _removeReportFromView(reportId);
+    }
+
+    final status = (data['status'] as String? ?? '').toLowerCase();
+    final incidentType = data['incidentType'] as String? ?? 'Unknown';
+    final shouldShowType = _shouldShowIncidentType(incidentType);
+    final resolvedAt = _parseResolvedAt(data);
+    final flaggedAt = _parseFlaggedAt(data) ?? _parseReportedAt(data);
+    final isResolved = status == 'resolved' || status == 'incident resolved';
+    final isFlagged = status == 'flagged' || status == 'unverified';
+    final isInactive = isResolved || isFlagged;
+    final markerSignature = _buildIncidentMarkerSignature(
+      location: location,
+      incidentType: incidentType,
+      statusLower: status,
+      shouldShowType: shouldShowType,
+    );
+
+    if (isInactive) {
+      final inactiveAt = isResolved ? resolvedAt : flaggedAt;
+      final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
+      if (!shouldKeep) {
+        return _removeReportFromView(reportId);
+      }
+      if (isResolved && shouldShowType) {
+        _resolvedReportEntryById[reportId] = {'id': reportId, 'data': data};
+        changed = true;
+      } else if (_resolvedReportEntryById.remove(reportId) != null) {
+        changed = true;
+      }
+    } else {
+      _cancelResolvedRemoval(reportId);
+      if (_resolvedReportEntryById.remove(reportId) != null) {
+        changed = true;
       }
     }
 
-    if (mounted) {
-      setState(() {
-        _resolvedReports = resolvedReports;
-      });
+    if (!shouldShowType) {
+      final removedMarker = _incidentMarkerById.remove(reportId) != null;
+      final removedSignature =
+          _incidentMarkerSignatureById.remove(reportId) != null;
+      return changed || removedMarker || removedSignature;
     }
-    debugPrint('✅ Loaded ${snapshot.docs.length} reports from Firestore');
-    if (!_hasShownReportLimitNotice &&
-        snapshot.docs.length >= _reportFetchLimit) {
-      _hasShownReportLimitNotice = true;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Showing latest $_reportFetchLimit reports. Older reports are not displayed.',
-            ),
-            duration: const Duration(seconds: 3),
-          ),
-        );
+
+    final previousSignature = _incidentMarkerSignatureById[reportId];
+    if (previousSignature == markerSignature &&
+        _incidentMarkerById.containsKey(reportId)) {
+      return changed;
+    }
+
+    final marker = _createIncidentMarker(reportId: reportId, data: data);
+    if (marker == null) {
+      if (_incidentMarkerById.remove(reportId) != null) {
+        changed = true;
       }
+      if (_incidentMarkerSignatureById.remove(reportId) != null) {
+        changed = true;
+      }
+      return changed;
+    }
+
+    _incidentMarkerSignatureById[reportId] = markerSignature;
+    _incidentMarkerById[reportId] = marker;
+    return true;
+  }
+
+  bool _removeReportFromView(String reportId) {
+    final removedMarker = _incidentMarkerById.remove(reportId) != null;
+    final removedSignature =
+        _incidentMarkerSignatureById.remove(reportId) != null;
+    final removedResolved = _resolvedReportEntryById.remove(reportId) != null;
+    _cancelResolvedRemoval(reportId);
+    return removedMarker || removedResolved || removedSignature;
+  }
+
+  void _rebuildViewFromCache() {
+    _incidentMarkerById.clear();
+    _incidentMarkerSignatureById.clear();
+    _resolvedReportEntryById.clear();
+    for (final entry in _reportCacheById.entries) {
+      _upsertReportIntoView(entry.key, entry.value);
+    }
+    _commitIncidentViewState();
+  }
+
+  void _commitIncidentViewState() {
+    final orderedMarkers = _incidentMarkerById.entries.toList(growable: false)
+      ..sort((a, b) => a.key.compareTo(b.key));
+    final orderedResolvedReports =
+        _resolvedReportEntryById.values.toList(growable: false)..sort((a, b) {
+          final aData = (a['data'] as Map<String, dynamic>? ?? const {});
+          final bData = (b['data'] as Map<String, dynamic>? ?? const {});
+          final aTime =
+              (_parseResolvedAt(aData) ??
+                      _parseFlaggedAt(aData) ??
+                      _parseReportedAt(aData))
+                  ?.millisecondsSinceEpoch ??
+              0;
+          final bTime =
+              (_parseResolvedAt(bData) ??
+                      _parseFlaggedAt(bData) ??
+                      _parseReportedAt(bData))
+                  ?.millisecondsSinceEpoch ??
+              0;
+          return bTime.compareTo(aTime);
+        });
+
+    if (!mounted) {
+      _incidentMarkers
+        ..clear()
+        ..addAll(orderedMarkers.map((entry) => entry.value));
+      _resolvedReports = orderedResolvedReports;
+      return;
+    }
+
+    setState(() {
+      _incidentMarkers
+        ..clear()
+        ..addAll(orderedMarkers.map((entry) => entry.value));
+      _resolvedReports = orderedResolvedReports;
+    });
+  }
+
+  void _showReportLimitNoticeIfNeeded(int docCount) {
+    if (_hasShownReportLimitNotice || docCount < _reportFetchLimit) {
+      return;
+    }
+    _hasShownReportLimitNotice = true;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Showing latest $_reportFetchLimit reports. Older reports are not displayed.',
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
   }
 
@@ -890,13 +1054,14 @@ class _MapPageState extends State<MapPage> {
   }
 
   void _removeIncidentMarker(String reportId) {
-    if (!mounted) return;
-    setState(() {
-      _incidentMarkers.removeWhere(
-        (marker) => marker.key == ValueKey('incident-$reportId'),
-      );
-    });
+    final removedMarker = _incidentMarkerById.remove(reportId) != null;
+    final removedSignature =
+        _incidentMarkerSignatureById.remove(reportId) != null;
+    final removedResolved = _resolvedReportEntryById.remove(reportId) != null;
     _cancelResolvedRemoval(reportId);
+    if (removedMarker || removedResolved || removedSignature) {
+      _commitIncidentViewState();
+    }
   }
 
   Widget? _buildStatusBadge(String statusLower, double markerSize) {

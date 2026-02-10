@@ -1,7 +1,14 @@
 const {onDocumentCreated} = require("firebase-functions/v2/firestore");
+const {onObjectFinalized} = require("firebase-functions/v2/storage");
 const {initializeApp} = require("firebase-admin/app");
 const {getMessaging} = require("firebase-admin/messaging");
 const {getFirestore} = require("firebase-admin/firestore");
+const {getStorage, getDownloadURL} = require("firebase-admin/storage");
+const sharp = require("sharp");
+const path = require("path");
+const os = require("os");
+const fs = require("fs/promises");
+const crypto = require("crypto");
 
 initializeApp();
 
@@ -171,6 +178,165 @@ exports.onReportCreated = onDocumentCreated(
       } catch (error) {
         console.error("Error sending report notification:", error);
         return null;
+      }
+    });
+
+/**
+ * Generate report image derivatives (thumbnail webp/jpg) and store references
+ * back in the corresponding report document for lightweight list rendering.
+ */
+exports.onReportImageUploaded = onObjectFinalized(
+    {
+      region: "asia-southeast1",
+      bucket: "res-q-93ca6.firebasestorage.app",
+    },
+    async (event) => {
+      const object = event.data;
+      const filePath = object?.name || "";
+      const bucketName = object?.bucket || "";
+      const contentType = (object?.contentType || "").toLowerCase();
+      const customMeta = object?.metadata || {};
+
+      if (!filePath || !bucketName) {
+        return null;
+      }
+
+      if (!filePath.startsWith("reports/")) {
+        return null;
+      }
+      if (filePath.startsWith("reports/thumbs/")) {
+        return null;
+      }
+      if (customMeta.derivative === "true") {
+        return null;
+      }
+      if (!contentType.startsWith("image/")) {
+        return null;
+      }
+
+      const bucket = getStorage().bucket(bucketName);
+      const sourceFile = bucket.file(filePath);
+      const ext = path.extname(filePath);
+      const baseName = path.basename(filePath, ext || undefined);
+
+      if (!baseName) {
+        return null;
+      }
+
+      const tempSourcePath = path.join(os.tmpdir(), `${baseName}${ext || ""}`);
+      const thumbBaseName = `${baseName}_640`;
+      const tempThumbWebpPath = path.join(os.tmpdir(), `${thumbBaseName}.webp`);
+      const tempThumbJpegPath = path.join(os.tmpdir(), `${thumbBaseName}.jpg`);
+      const thumbWebpPath = `reports/thumbs/${thumbBaseName}.webp`;
+      const thumbJpegPath = `reports/thumbs/${thumbBaseName}.jpg`;
+
+      try {
+        await sourceFile.download({destination: tempSourcePath});
+
+        await sharp(tempSourcePath)
+            .rotate()
+            .resize({
+              width: 640,
+              height: 640,
+              fit: "inside",
+              withoutEnlargement: true,
+            })
+            .webp({quality: 78})
+            .toFile(tempThumbWebpPath);
+
+        await sharp(tempSourcePath)
+            .rotate()
+            .resize({
+              width: 640,
+              height: 640,
+              fit: "inside",
+              withoutEnlargement: true,
+            })
+            .jpeg({quality: 80, mozjpeg: true})
+            .toFile(tempThumbJpegPath);
+
+        const webpToken = crypto.randomUUID();
+        const jpegToken = crypto.randomUUID();
+
+        await bucket.upload(tempThumbWebpPath, {
+          destination: thumbWebpPath,
+          metadata: {
+            contentType: "image/webp",
+            cacheControl: "public, max-age=31536000, immutable",
+            metadata: {
+              derivative: "true",
+              sourcePath: filePath,
+              firebaseStorageDownloadTokens: webpToken,
+            },
+          },
+        });
+
+        await bucket.upload(tempThumbJpegPath, {
+          destination: thumbJpegPath,
+          metadata: {
+            contentType: "image/jpeg",
+            cacheControl: "public, max-age=31536000, immutable",
+            metadata: {
+              derivative: "true",
+              sourcePath: filePath,
+              firebaseStorageDownloadTokens: jpegToken,
+            },
+          },
+        });
+
+        const encodedWebpPath = encodeURIComponent(thumbWebpPath);
+        const encodedJpegPath = encodeURIComponent(thumbJpegPath);
+        const thumbWebpUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodedWebpPath}?alt=media&token=${webpToken}`;
+        const thumbJpegUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodedJpegPath}?alt=media&token=${jpegToken}`;
+
+        let originalDownloadUrl = "";
+        try {
+          originalDownloadUrl = await getDownloadURL(sourceFile);
+        } catch (error) {
+          console.warn("Unable to resolve original download URL:", error);
+        }
+
+        const firestore = getFirestore();
+        let reportsSnapshot = await firestore.collection("reports")
+            .where("mediaPath", "==", filePath)
+            .limit(20)
+            .get();
+
+        if (reportsSnapshot.empty && originalDownloadUrl) {
+          reportsSnapshot = await firestore.collection("reports")
+              .where("mediaUrl", "==", originalDownloadUrl)
+              .limit(20)
+              .get();
+        }
+
+        if (reportsSnapshot.empty) {
+          console.log("No report document matched source image:", filePath);
+          return null;
+        }
+
+        const batch = firestore.batch();
+        reportsSnapshot.docs.forEach((reportDoc) => {
+          batch.update(reportDoc.ref, {
+            mediaThumbPath: thumbJpegPath,
+            mediaThumbUrl: thumbJpegUrl,
+            mediaThumbWebpPath: thumbWebpPath,
+            mediaThumbWebpUrl: thumbWebpUrl,
+            mediaDerivativesAt: new Date().toISOString(),
+          });
+        });
+        await batch.commit();
+
+        console.log("Generated report image derivatives for:", filePath);
+        return null;
+      } catch (error) {
+        console.error("Failed to generate report image derivatives:", error);
+        return null;
+      } finally {
+        await Promise.allSettled([
+          fs.unlink(tempSourcePath),
+          fs.unlink(tempThumbWebpPath),
+          fs.unlink(tempThumbJpegPath),
+        ]);
       }
     });
 

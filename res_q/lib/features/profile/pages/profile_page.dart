@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -38,12 +39,19 @@ class _ProfilePageState extends State<ProfilePage>
   bool _pushNotifications = true;
   bool _soundEnabled = true;
   bool _vibrationEnabled = true;
+  static const Duration _notificationPersistDebounceDelay = Duration(
+    milliseconds: 400,
+  );
   final ImagePicker _imagePicker = ImagePicker();
   XFile? _profilePhoto;
   Uint8List? _profilePhotoBytes;
   String? _profilePhotoUrl; // URL from Firebase Storage
   bool _isUploadingPhoto = false;
   static const String _profilePhotoCachePrefix = 'profile_photo_url_';
+  Timer? _notificationPersistDebounce;
+  Future<List<dynamic>>? _accountSecurityFuture;
+  bool? _cachedBiometricsAvailable;
+  bool? _cachedBiometricsEnabled;
 
   bool _hasConfiguredSupportEmail() {
     final trimmed = kFeedbackEmail.trim();
@@ -117,8 +125,21 @@ class _ProfilePageState extends State<ProfilePage>
   @override
   void initState() {
     super.initState();
+    _accountSecurityFuture = _loadAccountSecurityState(forceRefresh: true);
     _initializeProfilePhoto();
     _initializeNotificationSettings();
+  }
+
+  @override
+  void dispose() {
+    final pendingPersist = _notificationPersistDebounce;
+    if (pendingPersist?.isActive == true) {
+      _notificationPersistDebounce?.cancel();
+      unawaited(_persistNotificationSettings());
+    } else {
+      _notificationPersistDebounce?.cancel();
+    }
+    super.dispose();
   }
 
   Future<void> _initializeProfilePhoto() async {
@@ -460,6 +481,9 @@ class _ProfilePageState extends State<ProfilePage>
     final content = _getModalContent(title);
     int feedbackRating = 4;
     String? selectedProblemType;
+    if (title == 'Account Security' && _accountSecurityFuture == null) {
+      _accountSecurityFuture = _loadAccountSecurityState(forceRefresh: false);
+    }
 
     // Prevent swipe to dismiss for Personal Information modal
     final bool canDismiss = title != 'Personal Information';
@@ -1624,16 +1648,29 @@ class _ProfilePageState extends State<ProfilePage>
         (userData['contactNumber'] ?? userData['phoneNumber'])?.toString() ??
         '';
 
+    _accountSecurityFuture ??= _loadAccountSecurityState(forceRefresh: false);
+
     return StatefulBuilder(
       builder: (context, setModalState) {
         return FutureBuilder<List<dynamic>>(
-          future: Future.wait([
-            _checkBiometricsAvailable(),
-            _getBiometricsEnabled(),
-          ]),
+          future: _accountSecurityFuture,
           builder: (context, snapshot) {
-            final biometricsAvailable = snapshot.data?[0] as bool? ?? false;
-            final biometricsEnabled = snapshot.data?[1] as bool? ?? false;
+            if (snapshot.connectionState == ConnectionState.waiting &&
+                _cachedBiometricsAvailable == null &&
+                _cachedBiometricsEnabled == null) {
+              return const Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFAC1B22)),
+                ),
+              );
+            }
+
+            final biometricsAvailable =
+                _cachedBiometricsAvailable ??
+                (snapshot.data?[0] as bool? ?? false);
+            final biometricsEnabled =
+                _cachedBiometricsEnabled ??
+                (snapshot.data?[1] as bool? ?? false);
 
             return SingleChildScrollView(
               child: Column(
@@ -1694,8 +1731,29 @@ class _ProfilePageState extends State<ProfilePage>
                               value: biometricsEnabled,
                               onChanged: biometricsAvailable
                                   ? (value) async {
-                                      await _setBiometricsEnabled(value);
-                                      setModalState(() {});
+                                      final previousValue =
+                                          _cachedBiometricsEnabled ??
+                                          biometricsEnabled;
+                                      setModalState(() {
+                                        _cachedBiometricsEnabled = value;
+                                      });
+                                      final saved = await _setBiometricsEnabled(
+                                        value,
+                                      );
+                                      if (!saved) {
+                                        if (!context.mounted) return;
+                                        setModalState(() {
+                                          _cachedBiometricsEnabled =
+                                              previousValue;
+                                        });
+                                        AppSnackBar.show(
+                                          context,
+                                          'Failed to update biometric setting.',
+                                          type: AppSnackBarType.error,
+                                          useRootOverlay: true,
+                                        );
+                                        return;
+                                      }
                                       if (!context.mounted) return;
                                       AppSnackBar.show(
                                         context,
@@ -1847,6 +1905,24 @@ class _ProfilePageState extends State<ProfilePage>
     );
   }
 
+  Future<List<dynamic>> _loadAccountSecurityState({
+    required bool forceRefresh,
+  }) async {
+    if (!forceRefresh &&
+        _cachedBiometricsAvailable != null &&
+        _cachedBiometricsEnabled != null) {
+      return [_cachedBiometricsAvailable!, _cachedBiometricsEnabled!];
+    }
+
+    final results = await Future.wait<dynamic>([
+      _checkBiometricsAvailable(),
+      _getBiometricsEnabled(),
+    ]);
+    _cachedBiometricsAvailable = results[0] as bool;
+    _cachedBiometricsEnabled = results[1] as bool;
+    return results;
+  }
+
   Future<bool> _checkBiometricsAvailable() async {
     if (kIsWeb) return false;
     try {
@@ -1901,10 +1977,10 @@ class _ProfilePageState extends State<ProfilePage>
     }
   }
 
-  Future<void> _setBiometricsEnabled(bool enabled) async {
+  Future<bool> _setBiometricsEnabled(bool enabled) async {
     try {
       final contactNumber = _currentContactNumber();
-      if (contactNumber.isEmpty) return;
+      if (contactNumber.isEmpty) return false;
 
       final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
 
@@ -1917,7 +1993,8 @@ class _ProfilePageState extends State<ProfilePage>
         debugPrint(
           'Biometrics preference saved locally only (no Firebase auth session).',
         );
-        return;
+        _cachedBiometricsEnabled = enabled;
+        return true;
       }
 
       // Save to Firestore for persistence across devices (like votes)
@@ -1929,9 +2006,12 @@ class _ProfilePageState extends State<ProfilePage>
             'biometricsUpdatedAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
 
-      debugPrint('✅ Biometrics preference saved: $enabled for $cleanPhone');
+      _cachedBiometricsEnabled = enabled;
+      debugPrint('Biometrics preference saved.');
+      return true;
     } catch (e) {
       debugPrint('Error setting biometrics: $e');
+      return false;
     }
   }
 
@@ -2474,16 +2554,24 @@ class _ProfilePageState extends State<ProfilePage>
     );
   }
 
-  Future<void> _updateNotificationSetting(
+  void _updateNotificationSetting(
     StateSetter setDialogState,
     VoidCallback updateValue,
-  ) async {
+  ) {
     updateValue();
     if (mounted) {
       setState(() {});
     }
     setDialogState(() {});
-    await _persistNotificationSettings();
+    _scheduleNotificationSettingsPersist();
+  }
+
+  void _scheduleNotificationSettingsPersist() {
+    _notificationPersistDebounce?.cancel();
+    _notificationPersistDebounce = Timer(
+      _notificationPersistDebounceDelay,
+      () => unawaited(_persistNotificationSettings()),
+    );
   }
 
   Widget _buildNotificationToggle(

@@ -395,13 +395,27 @@ class _RegistrationPageState extends State<RegistrationPage> {
                 left: AppDimensions.paddingXLarge,
                 right: AppDimensions.paddingXLarge,
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const ResqBackButton.outline(),
-                  const ResqLogo(fontSize: 53),
-                  const SizedBox(width: 44), // Balance the row
-                ],
+              child: SizedBox(
+                height: 44,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: ResqBackButton.outline(),
+                    ),
+                    Align(
+                      alignment: Alignment.center,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 190),
+                        child: const FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: ResqLogo(fontSize: 53),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: AppDimensions.paddingSmall),

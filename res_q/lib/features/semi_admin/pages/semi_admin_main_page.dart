@@ -16,13 +16,41 @@ class _SemiAdminMainPageState extends State<SemiAdminMainPage> {
   static const appOffWhite = Color(0xFFF7F8F3);
 
   int _currentIndex = 0;
-
-  final List<Widget> _pages = [
-    const AdminMapPage(),
-    const CommunityPage(),
-    const NotificationsPage(),
-    const ProfilePage(),
+  final Set<int> _loadedTabs = <int>{0};
+  static const List<Widget> _pages = <Widget>[
+    AdminMapPage(),
+    CommunityPage(),
+    NotificationsPage(),
+    ProfilePage(),
   ];
+
+  void _onTabSelected(int index) {
+    if (_currentIndex == index && _loadedTabs.contains(index)) {
+      return;
+    }
+
+    setState(() {
+      _currentIndex = index;
+      _loadedTabs.add(index);
+    });
+  }
+
+  Widget _buildLazyTabBody() {
+    return Stack(
+      fit: StackFit.expand,
+      children: List.generate(_pages.length, (index) {
+        if (!_loadedTabs.contains(index)) {
+          return const SizedBox.shrink();
+        }
+
+        final isActive = index == _currentIndex;
+        return Offstage(
+          offstage: !isActive,
+          child: TickerMode(enabled: isActive, child: _pages[index]),
+        );
+      }),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +58,7 @@ class _SemiAdminMainPageState extends State<SemiAdminMainPage> {
       backgroundColor: appOffWhite,
       bottomNavigationBar: BottomNavBar(
         currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
+        onTap: _onTabSelected,
         itemConfigs: const [
           BottomNavItemConfig(
             label: "MAP",
@@ -62,7 +90,7 @@ class _SemiAdminMainPageState extends State<SemiAdminMainPage> {
           ),
         ],
       ),
-      body: SafeArea(child: _pages[_currentIndex]),
+      body: SafeArea(child: _buildLazyTabBody()),
     );
   }
 }

@@ -4,21 +4,23 @@ import {
   query, 
   where, 
   getDocs, 
+  limit,
+  orderBy,
+  startAfter,
   addDoc, 
   updateDoc, 
   deleteDoc, 
   doc,
   setDoc,
   Timestamp,
-  CollectionReference,
-  DocumentData,
   onSnapshot,
+  QueryDocumentSnapshot,
+  DocumentData,
   Unsubscribe
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase.config';
 import { BehaviorSubject, Observable } from 'rxjs';
-import { AuthService } from './auth.service';
 
 @Injectable({
   providedIn: 'root'
@@ -31,6 +33,7 @@ export class FirestoreService {
   private approvedReportsSubject = new BehaviorSubject<any[]>([]);
   private reportsSubject = new BehaviorSubject<any[]>([]);
   private flaggedReportsSubject = new BehaviorSubject<any[]>([]);
+  private hasMoreReportsSubject = new BehaviorSubject<boolean>(true);
   
   // Track loading state
   private isLoadingSubject = new BehaviorSubject<boolean>(true);
@@ -41,14 +44,18 @@ export class FirestoreService {
   public approvedReports$: Observable<any[]> = this.approvedReportsSubject.asObservable();
   public reports$: Observable<any[]> = this.reportsSubject.asObservable();
   public flaggedReports$: Observable<any[]> = this.flaggedReportsSubject.asObservable();
+  public hasMoreReports$: Observable<boolean> = this.hasMoreReportsSubject.asObservable();
   public isLoading$: Observable<boolean> = this.isLoadingSubject.asObservable();
   
   private pendingUsersUnsubscribe?: Unsubscribe;
   private approvedUsersUnsubscribe?: Unsubscribe;
-  private pendingReportsUnsubscribe?: Unsubscribe;
-  private approvedReportsUnsubscribe?: Unsubscribe;
   private reportsUnsubscribe?: Unsubscribe;
-  private flaggedReportsUnsubscribe?: Unsubscribe;
+  private readonly reportsPageSize = 120;
+  private reportsRealtime: any[] = [];
+  private reportsPaged: any[] = [];
+  private reportsRealtimeCursor: QueryDocumentSnapshot<DocumentData> | null = null;
+  private reportsPageCursor: QueryDocumentSnapshot<DocumentData> | null = null;
+  private isLoadingReportsPage = false;
 
   constructor(private ngZone: NgZone) {
     console.log('=== FIRESTORE SERVICE CONSTRUCTOR ===');
@@ -104,27 +111,22 @@ export class FirestoreService {
         this.approvedUsersSubject.next(approvedUsers);
       });
 
-      // Load all reports once (seed streams before listeners fire)
-      const reportsRef = collection(db, 'reports');
-      const reportsSnapshot = await getDocs(reportsRef);
+      // Seed report streams with a bounded first page.
+      const reportsSeedQuery = query(
+        collection(db, 'reports'),
+        orderBy('reportedAt', 'desc'),
+        limit(this.reportsPageSize),
+      );
+      const reportsSnapshot = await getDocs(reportsSeedQuery);
       const reports = reportsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      if (reportsSnapshot.docs.length > 0) {
+        this.reportsRealtimeCursor = reportsSnapshot.docs[reportsSnapshot.docs.length - 1];
+        this.reportsPageCursor = this.reportsRealtimeCursor;
+      }
+      this.reportsRealtime = reports;
       this.ngZone.run(() => {
-        this.reportsSubject.next(reports);
-        // Seed filtered subjects too for immediate UI without waiting on snapshots
-        // Pending includes: pending, responding, on scene, resolved, flagged (semi-admin actions)
-        const pendingSeed = reports.filter((r: any) => {
-          const s = (r.status ?? '').toString().toLowerCase();
-          return s === 'pending' || s === 'responding' || s === 'on scene' || s === 'resolved' || s === 'flagged';
-        });
-        const approvedSeed = reports.filter((r: any) => {
-          const s = (r.status ?? '').toString().toLowerCase();
-          return s === 'approved';
-        });
-        // Flagged page only shows ADMIN_FLAGGED (web admin rejections)
-        const flaggedSeed = reports.filter((r: any) => (r.status ?? '').toString().toLowerCase() === 'admin_flagged');
-        this.pendingReportsSubject.next(pendingSeed);
-        this.approvedReportsSubject.next(approvedSeed);
-        this.flaggedReportsSubject.next(flaggedSeed);
+        this.hasMoreReportsSubject.next(reportsSnapshot.docs.length === this.reportsPageSize);
+        this.emitReportStreams(this.getMergedReports());
       });
       
       console.log('=== INITIAL DATA LOADED AND EMITTED ===');
@@ -222,122 +224,41 @@ export class FirestoreService {
         }
       );
 
-      // Pending reports listener (Pending, RESPONDING, ON SCENE, RESOLVED, FLAGGED - excludes ADMIN_FLAGGED)
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      const thirtyDaysAgoTime = thirtyDaysAgo.getTime();
-      
-      const pendingReportsQuery = query(
-        collection(db, 'reports'), 
-        where('status', 'in', ['Pending', 'PENDING', 'RESPONDING', 'ON SCENE', 'RESOLVED', 'FLAGGED'])
+      // Reports listener (bounded, newest-first page only)
+      const reportsQuery = query(
+        collection(db, 'reports'),
+        orderBy('reportedAt', 'desc'),
+        limit(this.reportsPageSize),
       );
-      this.pendingReportsUnsubscribe = onSnapshot(
-        pendingReportsQuery,
-        (snapshot) => {
-          this.ngZone.run(() => {
-            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
-            // Show Pending/RESPONDING/ON SCENE always, RESOLVED/FLAGGED within 30 days
-            const filtered = reports.filter(r => {
-              const status = (r.status || '').toUpperCase();
-              if (['PENDING', 'RESPONDING', 'ON SCENE'].includes(status)) return true;
-              if (status === 'RESOLVED') {
-                if (r.resolvedAt) {
-                  const resolvedTime = typeof r.resolvedAt.toDate === 'function' 
-                    ? r.resolvedAt.toDate().getTime() 
-                    : new Date(r.resolvedAt).getTime();
-                  return resolvedTime >= thirtyDaysAgoTime;
-                }
-                return true;
-              }
-              if (status === 'FLAGGED') {
-                if (r.flaggedAt) {
-                  const flaggedTime = typeof r.flaggedAt.toDate === 'function' 
-                    ? r.flaggedAt.toDate().getTime() 
-                    : new Date(r.flaggedAt).getTime();
-                  return flaggedTime >= thirtyDaysAgoTime;
-                }
-                return true;
-              }
-              return false;
-            });
-            this.pendingReportsSubject.next(filtered);
-          });
-        },
-        (error) => {
-          console.error('=== PENDING REPORTS LISTENER ERROR ===', error);
-          this.ngZone.run(() => {
-            this.pendingReportsSubject.next([]);
-          });
-        }
-      );
-
-      // Approved reports listener (Approved status only)
-      const approvedReportsQuery = query(
-        collection(db, 'reports'), 
-        where('status', '==', 'Approved')
-      );
-      this.approvedReportsUnsubscribe = onSnapshot(
-        approvedReportsQuery,
-        (snapshot) => {
-          this.ngZone.run(() => {
-            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
-            this.approvedReportsSubject.next(reports);
-          });
-        },
-        (error) => {
-          console.error('=== APPROVED REPORTS LISTENER ERROR ===', error);
-          this.ngZone.run(() => {
-            this.approvedReportsSubject.next([]);
-          });
-        }
-      );
-
-      // All reports listener (no filter)
-      const reportsRef = collection(db, 'reports');
       this.reportsUnsubscribe = onSnapshot(
-        reportsRef,
+        reportsQuery,
         (snapshot) => {
           this.ngZone.run(() => {
-            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            this.reportsSubject.next(reports);
+            this.reportsRealtime = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+            if (snapshot.docs.length > 0) {
+              this.reportsRealtimeCursor = snapshot.docs[snapshot.docs.length - 1];
+              if (this.reportsPaged.length === 0) {
+                this.reportsPageCursor = this.reportsRealtimeCursor;
+              }
+            } else {
+              this.reportsRealtimeCursor = null;
+              if (this.reportsPaged.length === 0) {
+                this.reportsPageCursor = null;
+              }
+            }
+            this.hasMoreReportsSubject.next(snapshot.docs.length === this.reportsPageSize);
+            this.emitReportStreams(this.getMergedReports());
           });
         },
         (error) => {
           console.error('=== REPORTS LISTENER ERROR ===', error);
           this.ngZone.run(() => {
-            this.reportsSubject.next([]);
-          });
-        }
-      );
-
-      // Flagged reports listener (ADMIN_FLAGGED status - only reports flagged by web admin)
-      const flaggedReportsQuery = query(
-        collection(db, 'reports'), 
-        where('status', 'in', ['ADMIN_FLAGGED', 'Admin_Flagged'])
-      );
-      this.flaggedReportsUnsubscribe = onSnapshot(
-        flaggedReportsQuery,
-        (snapshot) => {
-          this.ngZone.run(() => {
-            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
-            // Filter: show FLAGGED if within last 30 days, or if no flaggedAt (legacy data)
-            const filtered = reports.filter(r => {
-              if (r.flaggedAt) {
-                const flaggedTime = typeof r.flaggedAt.toDate === 'function' 
-                  ? r.flaggedAt.toDate().getTime() 
-                  : new Date(r.flaggedAt).getTime();
-                return flaggedTime >= thirtyDaysAgoTime;
-              }
-              // Include flagged reports without flaggedAt timestamp (legacy data)
-              return true;
-            });
-            this.flaggedReportsSubject.next(filtered);
-          });
-        },
-        (error) => {
-          console.error('=== FLAGGED REPORTS LISTENER ERROR ===', error);
-          this.ngZone.run(() => {
-            this.flaggedReportsSubject.next([]);
+            this.reportsRealtime = [];
+            this.reportsPaged = [];
+            this.reportsRealtimeCursor = null;
+            this.reportsPageCursor = null;
+            this.hasMoreReportsSubject.next(false);
+            this.emitReportStreams([]);
           });
         }
       );
@@ -346,6 +267,135 @@ export class FirestoreService {
       console.log('Both listeners are now active and waiting for snapshots');
     } catch (error) {
       console.error('=== CRITICAL ERROR SETTING UP LISTENERS ===', error);
+    }
+  }
+
+  private getMergedReports(): any[] {
+    return this.mergeUniqueById(this.reportsRealtime, this.reportsPaged);
+  }
+
+  private mergeUniqueById(primary: any[], secondary: any[]): any[] {
+    const merged: any[] = [];
+    const seen = new Set<string>();
+
+    for (const report of primary) {
+      const id = (report?.id ?? '').toString();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      merged.push(report);
+    }
+
+    for (const report of secondary) {
+      const id = (report?.id ?? '').toString();
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      merged.push(report);
+    }
+
+    return merged;
+  }
+
+  private emitReportStreams(reports: any[]): void {
+    this.reportsSubject.next(reports);
+    this.pendingReportsSubject.next(this.filterPendingReports(reports));
+    this.approvedReportsSubject.next(this.filterApprovedReports(reports));
+    this.flaggedReportsSubject.next(this.filterFlaggedReports(reports));
+  }
+
+  private filterPendingReports(reports: any[]): any[] {
+    const now = Date.now();
+    const thirtyDaysAgoTime = now - (30 * 24 * 60 * 60 * 1000);
+
+    return reports.filter((report) => {
+      const status = (report?.status ?? '').toString().toUpperCase();
+      if (status === 'PENDING' || status === 'RESPONDING' || status === 'ON SCENE') {
+        return true;
+      }
+      if (status === 'RESOLVED') {
+        return this.isWithinWindow(report?.resolvedAt, thirtyDaysAgoTime);
+      }
+      if (status === 'FLAGGED') {
+        return this.isWithinWindow(report?.flaggedAt, thirtyDaysAgoTime);
+      }
+      return false;
+    });
+  }
+
+  private filterApprovedReports(reports: any[]): any[] {
+    return reports.filter((report) => (report?.status ?? '').toString().toUpperCase() === 'APPROVED');
+  }
+
+  private filterFlaggedReports(reports: any[]): any[] {
+    const now = Date.now();
+    const thirtyDaysAgoTime = now - (30 * 24 * 60 * 60 * 1000);
+
+    return reports.filter((report) => {
+      const status = (report?.status ?? '').toString().toUpperCase();
+      if (status !== 'ADMIN_FLAGGED') return false;
+      return this.isWithinWindow(report?.flaggedAt, thirtyDaysAgoTime);
+    });
+  }
+
+  private coerceTimestampMs(value: any): number | null {
+    if (!value) return null;
+    if (typeof value?.toDate === 'function') {
+      const date = value.toDate();
+      const ms = date instanceof Date ? date.getTime() : NaN;
+      return Number.isFinite(ms) ? ms : null;
+    }
+    const parsed = new Date(value);
+    const ms = parsed.getTime();
+    return Number.isFinite(ms) ? ms : null;
+  }
+
+  private isWithinWindow(value: any, thresholdMs: number): boolean {
+    const timestampMs = this.coerceTimestampMs(value);
+    if (timestampMs === null) {
+      // Keep legacy records without tracked event timestamps.
+      return true;
+    }
+    return timestampMs >= thresholdMs;
+  }
+
+  async loadMoreReportsPage(): Promise<void> {
+    if (this.isLoadingReportsPage || !this.hasMoreReportsSubject.value) {
+      return;
+    }
+    if (!this.reportsPageCursor) {
+      this.reportsPageCursor = this.reportsRealtimeCursor;
+    }
+    if (!this.reportsPageCursor) {
+      this.hasMoreReportsSubject.next(false);
+      return;
+    }
+
+    this.isLoadingReportsPage = true;
+    try {
+      const nextPageQuery = query(
+        collection(db, 'reports'),
+        orderBy('reportedAt', 'desc'),
+        startAfter(this.reportsPageCursor),
+        limit(this.reportsPageSize),
+      );
+      const nextPageSnapshot = await getDocs(nextPageQuery);
+      const nextReports = nextPageSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
+
+      if (nextPageSnapshot.docs.length > 0) {
+        this.reportsPageCursor = nextPageSnapshot.docs[nextPageSnapshot.docs.length - 1];
+      } else {
+        this.reportsPageCursor = null;
+      }
+
+      this.ngZone.run(() => {
+        this.reportsPaged = this.mergeUniqueById(this.reportsPaged, nextReports);
+        this.hasMoreReportsSubject.next(nextPageSnapshot.docs.length === this.reportsPageSize);
+        this.emitReportStreams(this.getMergedReports());
+      });
+    } catch (error) {
+      console.error('Failed to load more reports page:', error);
+      throw error;
+    } finally {
+      this.isLoadingReportsPage = false;
     }
   }
 
@@ -409,22 +459,16 @@ export class FirestoreService {
 
   // Clean up listeners (call on app destroy if needed)
   disposeReportListeners() {
-    if (this.pendingReportsUnsubscribe) {
-      this.pendingReportsUnsubscribe();
-      this.pendingReportsUnsubscribe = undefined;
-    }
-    if (this.approvedReportsUnsubscribe) {
-      this.approvedReportsUnsubscribe();
-      this.approvedReportsUnsubscribe = undefined;
-    }
     if (this.reportsUnsubscribe) {
       this.reportsUnsubscribe();
       this.reportsUnsubscribe = undefined;
     }
-    if (this.flaggedReportsUnsubscribe) {
-      this.flaggedReportsUnsubscribe();
-      this.flaggedReportsUnsubscribe = undefined;
-    }
+    this.reportsRealtime = [];
+    this.reportsPaged = [];
+    this.reportsRealtimeCursor = null;
+    this.reportsPageCursor = null;
+    this.hasMoreReportsSubject.next(false);
+    this.emitReportStreams([]);
   }
 
   // Add a document to a collection

@@ -44,7 +44,7 @@ class AdminComment {
 }
 
 class _AdminMapPageState extends State<AdminMapPage>
-    with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin {
   final MapController _mapController = MapController();
   final FlutterLocalNotificationsPlugin _localNotificationsPlugin =
       FlutterLocalNotificationsPlugin();
@@ -55,7 +55,6 @@ class _AdminMapPageState extends State<AdminMapPage>
         description: 'Deployment and status updates for responders',
         importance: Importance.high,
       );
-  late final AnimationController _pinBounceController;
   WeatherState _weatherState = WeatherState.none;
   bool _showWeatherCard = false;
   bool _isWeatherLoading = false;
@@ -83,10 +82,18 @@ class _AdminMapPageState extends State<AdminMapPage>
   // Sample incident markers
   final List<Marker> _incidentMarkers = [];
   final List<Marker> _reporterMarkers = [];
+  final Map<String, Marker> _incidentMarkerById = {};
+  final Map<String, Marker> _reporterMarkerById = {};
+  final Map<String, int> _incidentMarkerSignatureById = {};
+  final Map<String, int> _reporterMarkerSignatureById = {};
+  final Map<String, Map<String, dynamic>> _reportCacheById = {};
+  final Map<String, Map<String, dynamic>> _resolvedReportEntryById = {};
+  final Map<String, String> _assignedStatusByReportId = {};
   static const Duration _resolvedRetention = Duration(hours: 1);
   final Map<String, Timer> _resolvedRemovalTimers = {};
   List<Map<String, dynamic>> _resolvedReports = [];
   QuerySnapshot<Map<String, dynamic>>? _latestReportSnapshot;
+  static const Distance _distanceCalculator = Distance();
 
   bool _showEarthquake = true;
   bool _showFlood = true;
@@ -122,10 +129,6 @@ class _AdminMapPageState extends State<AdminMapPage>
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
     _syncUserLocation();
-    _pinBounceController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    )..repeat(reverse: true);
     _startResponderLocationSharing();
     unawaited(_initializeDispatchNotifications());
     unawaited(_syncOwnPresence(status: 'available', isAvailable: true));
@@ -153,7 +156,6 @@ class _AdminMapPageState extends State<AdminMapPage>
     for (final timer in _resolvedRemovalTimers.values) {
       timer.cancel();
     }
-    _pinBounceController.dispose();
     super.dispose();
   }
 
@@ -303,12 +305,14 @@ class _AdminMapPageState extends State<AdminMapPage>
     bool interactive = true,
     double size = 72,
     double opacity = 1,
+    bool animate = true,
   }) {
     final statusLower = (data['status'] as String? ?? '')
         .toString()
         .toLowerCase();
     final badge = _buildStatusBadge(statusLower, size);
     final marker = _buildBouncyPin(
+      animate: animate,
       child: GestureDetector(
         onTap: () {
           unawaited(
@@ -317,7 +321,11 @@ class _AdminMapPageState extends State<AdminMapPage>
               position: position,
             ),
           );
-          _showIncidentInfo(data, reportId, position);
+          _showIncidentInfo(
+            _reportCacheById[reportId] ?? data,
+            reportId,
+            position,
+          );
         },
         child: Container(
           decoration: const BoxDecoration(shape: BoxShape.circle),
@@ -368,15 +376,29 @@ class _AdminMapPageState extends State<AdminMapPage>
           .get();
       _applyReportSnapshot(snapshot);
     } catch (e) {
-      print('❌ Failed to load reports: $e');
+      debugPrint('Failed to load reports: $e');
     }
   }
 
   void _applyReportSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
     _latestReportSnapshot = snapshot;
-    _incidentMarkers.clear();
-    _reporterMarkers.clear();
-    final resolvedReports = <Map<String, dynamic>>[];
+    _reportCacheById
+      ..clear()
+      ..addEntries(
+        snapshot.docs.map(
+          (doc) => MapEntry(doc.id, Map<String, dynamic>.from(doc.data())),
+        ),
+      );
+    _rebuildResponderViewFromCache();
+    debugPrint('Loaded ${snapshot.docs.length} reports from Firestore');
+  }
+
+  void _applyReportChanges(QuerySnapshot<Map<String, dynamic>> snapshot) {
+    _latestReportSnapshot = snapshot;
+    if (snapshot.docChanges.isEmpty) {
+      return;
+    }
+
     final userData = UserSession.currentUserData;
     final responderPhone = _normalizePhoneValue(
       userData?['contactNumber'] ?? userData?['phoneNumber'],
@@ -386,112 +408,324 @@ class _AdminMapPageState extends State<AdminMapPage>
         .trim()
         .toLowerCase();
     final authUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
-    final assignedReportIds = <String>{};
-    final assignedStatusByReportId = <String, String>{};
 
-    for (final doc in snapshot.docs) {
-      final data = doc.data();
-      final responderStatus = _normalizeStatusLabel(
-        data['responderStatus'] as String? ?? data['status'] as String? ?? '',
-      );
-      if (_isClosedIncidentStatus(responderStatus)) {
+    var hasViewChanges = false;
+    for (final change in snapshot.docChanges) {
+      final reportId = change.doc.id;
+      if (change.type == DocumentChangeType.removed) {
+        _reportCacheById.remove(reportId);
+        hasViewChanges = _removeReportFromView(reportId) || hasViewChanges;
         continue;
       }
-      if (_matchesCurrentResponderAssignment(
-        data: data,
+
+      final data = change.doc.data();
+      if (data == null) {
+        _reportCacheById.remove(reportId);
+        hasViewChanges = _removeReportFromView(reportId) || hasViewChanges;
+        continue;
+      }
+
+      _reportCacheById[reportId] = Map<String, dynamic>.from(data);
+      hasViewChanges =
+          _upsertReportIntoView(
+            reportId: reportId,
+            data: _reportCacheById[reportId]!,
+            responderPhone: responderPhone,
+            responderName: responderName,
+            authUid: authUid,
+          ) ||
+          hasViewChanges;
+    }
+
+    if (hasViewChanges) {
+      _commitReportViewState();
+    }
+    _syncAssignedStatusNotifications(_assignedStatusByReportId);
+    _syncAutoAssignedReport();
+  }
+
+  void _rebuildResponderViewFromCache() {
+    final userData = UserSession.currentUserData;
+    final responderPhone = _normalizePhoneValue(
+      userData?['contactNumber'] ?? userData?['phoneNumber'],
+    );
+    final responderName = (userData?['fullName'] ?? userData?['username'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final authUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+
+    _incidentMarkerById.clear();
+    _reporterMarkerById.clear();
+    _incidentMarkerSignatureById.clear();
+    _reporterMarkerSignatureById.clear();
+    _resolvedReportEntryById.clear();
+    _assignedStatusByReportId.clear();
+
+    for (final entry in _reportCacheById.entries) {
+      _upsertReportIntoView(
+        reportId: entry.key,
+        data: entry.value,
         responderPhone: responderPhone,
         responderName: responderName,
         authUid: authUid,
-      )) {
-        assignedReportIds.add(doc.id);
-        assignedStatusByReportId[doc.id] = responderStatus;
+      );
+    }
+
+    _commitReportViewState();
+    _syncAssignedStatusNotifications(_assignedStatusByReportId);
+    _syncAutoAssignedReport();
+  }
+
+  bool _upsertReportIntoView({
+    required String reportId,
+    required Map<String, dynamic> data,
+    required String responderPhone,
+    required String responderName,
+    required String authUid,
+  }) {
+    var changed = false;
+    final responderStatus = _normalizeStatusLabel(
+      data['responderStatus'] as String? ?? data['status'] as String? ?? '',
+    );
+    final isAssigned =
+        !_isClosedIncidentStatus(responderStatus) &&
+        _matchesCurrentResponderAssignment(
+          data: data,
+          responderPhone: responderPhone,
+          responderName: responderName,
+          authUid: authUid,
+        );
+
+    if (!isAssigned) {
+      return _removeReportFromView(reportId);
+    }
+    _assignedStatusByReportId[reportId] = responderStatus;
+
+    final incidentPoint =
+        _latLngFromDynamic(data['incidentLocation']) ??
+        _latLngFromDynamic(data['location']);
+    if (incidentPoint == null) {
+      return _removeReportFromView(reportId);
+    }
+
+    final status = (data['status'] as String? ?? '').toLowerCase();
+    final incidentType = data['incidentType'] as String? ?? 'Unknown';
+    final shouldShowType = _shouldShowIncidentType(incidentType);
+    final resolvedAt = _parseResolvedAt(data);
+    final flaggedAt = _parseFlaggedAt(data) ?? _parseReportedAt(data);
+    final isResolved = status == 'resolved' || status == 'incident resolved';
+    final isFlagged = status == 'flagged' || status == 'unverified';
+    final isInactive = isResolved || isFlagged;
+    final incidentMarkerSignature = _buildIncidentMarkerSignature(
+      incidentPoint: incidentPoint,
+      incidentType: incidentType,
+      statusLower: status,
+      shouldShowType: shouldShowType,
+    );
+
+    if (isInactive) {
+      final inactiveAt = isResolved ? resolvedAt : flaggedAt;
+      final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
+      if (!shouldKeep) {
+        return _removeReportFromView(reportId);
+      }
+      if (isResolved && shouldShowType) {
+        _resolvedReportEntryById[reportId] = {'id': reportId, 'data': data};
+        changed = true;
+      } else if (_resolvedReportEntryById.remove(reportId) != null) {
+        changed = true;
+      }
+    } else {
+      _cancelResolvedRemoval(reportId);
+      if (_resolvedReportEntryById.remove(reportId) != null) {
+        changed = true;
       }
     }
 
-    for (final doc in snapshot.docs) {
-      final data = doc.data();
-      final incidentPoint =
-          _latLngFromDynamic(data['incidentLocation']) ??
-          _latLngFromDynamic(data['location']);
-      if (incidentPoint == null) continue;
-
-      final reportId = doc.id;
-      if (!assignedReportIds.contains(reportId)) {
-        continue;
+    if (!shouldShowType) {
+      if (_incidentMarkerById.remove(reportId) != null) {
+        changed = true;
       }
-      final status = (data['status'] as String? ?? '').toLowerCase();
-      final incidentType = data['incidentType'] as String? ?? 'Unknown';
-      final shouldShowType = _shouldShowIncidentType(incidentType);
-      final resolvedAt = _parseResolvedAt(data);
-      final flaggedAt = _parseFlaggedAt(data) ?? _parseReportedAt(data);
-      final isResolved = status == 'resolved' || status == 'incident resolved';
-      final isFlagged = status == 'flagged' || status == 'unverified';
-      final isInactive = isResolved || isFlagged;
-      if (isInactive) {
-        final inactiveAt = isResolved ? resolvedAt : flaggedAt;
-        final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
-        if (!shouldKeep) {
-          continue;
-        }
-        if (isResolved && shouldShowType) {
-          resolvedReports.add({'id': reportId, 'data': data});
-        }
-      } else {
-        _cancelResolvedRemoval(reportId);
+      if (_incidentMarkerSignatureById.remove(reportId) != null) {
+        changed = true;
       }
-
-      if (!shouldShowType) {
-        continue;
+      if (_reporterMarkerById.remove(reportId) != null) {
+        changed = true;
       }
+      if (_reporterMarkerSignatureById.remove(reportId) != null) {
+        changed = true;
+      }
+      return changed;
+    }
 
+    final previousIncidentSignature = _incidentMarkerSignatureById[reportId];
+    if (previousIncidentSignature != incidentMarkerSignature ||
+        !_incidentMarkerById.containsKey(reportId)) {
       final markerSize = isInactive ? 56.0 : 72.0;
-      _incidentMarkers.add(
-        Marker(
-          key: ValueKey('incident-$reportId'),
-          point: incidentPoint,
-          width: markerSize,
-          height: markerSize,
-          child: _buildIncidentMarker(
-            assetPath: _getMarkerAssetForIncidentType(incidentType),
-            data: data,
-            reportId: reportId,
-            position: incidentPoint,
-            interactive: !isInactive,
-            size: markerSize,
-            opacity: isInactive ? 0.45 : 1,
-          ),
+      _incidentMarkerById[reportId] = Marker(
+        key: ValueKey('incident-$reportId'),
+        point: incidentPoint,
+        width: markerSize,
+        height: markerSize,
+        child: _buildIncidentMarker(
+          assetPath: _getMarkerAssetForIncidentType(incidentType),
+          data: data,
+          reportId: reportId,
+          position: incidentPoint,
+          interactive: !isInactive,
+          size: markerSize,
+          opacity: isInactive ? 0.45 : 1,
+          animate: false,
         ),
       );
+      _incidentMarkerSignatureById[reportId] = incidentMarkerSignature;
+      changed = true;
+    }
 
-      final reporterPoint = _latLngFromDynamic(data['reporterLocation']);
-      if (reporterPoint != null) {
-        _reporterMarkers.add(
-          Marker(
-            key: ValueKey('reporter-$reportId'),
-            point: reporterPoint,
-            width: 44,
-            height: 44,
-            child: GestureDetector(
-              onTap: () => _showIncidentInfo(data, reportId, incidentPoint),
-              child: const Icon(
-                Icons.person_pin_circle,
-                color: Color(0xFF2563EB),
-                size: 30,
-              ),
-            ),
-          ),
+    final reporterPoint = _latLngFromDynamic(data['reporterLocation']);
+    if (reporterPoint != null) {
+      final reporterMarkerSignature = _buildReporterMarkerSignature(
+        reporterPoint: reporterPoint,
+      );
+      final previousReporterSignature = _reporterMarkerSignatureById[reportId];
+      if (previousReporterSignature != reporterMarkerSignature ||
+          !_reporterMarkerById.containsKey(reportId)) {
+        _reporterMarkerById[reportId] = _createReporterMarker(
+          reportId: reportId,
+          reporterPoint: reporterPoint,
         );
+        _reporterMarkerSignatureById[reportId] = reporterMarkerSignature;
+        changed = true;
       }
+    } else if (_reporterMarkerById.remove(reportId) != null) {
+      changed = true;
+      _reporterMarkerSignatureById.remove(reportId);
+    } else if (_reporterMarkerSignatureById.remove(reportId) != null) {
+      changed = true;
     }
 
-    if (mounted) {
-      setState(() {
-        _resolvedReports = resolvedReports;
-      });
+    return changed;
+  }
+
+  int _buildIncidentMarkerSignature({
+    required LatLng incidentPoint,
+    required String incidentType,
+    required String statusLower,
+    required bool shouldShowType,
+  }) {
+    return Object.hash(
+      incidentPoint.latitude.toStringAsFixed(6),
+      incidentPoint.longitude.toStringAsFixed(6),
+      incidentType.trim().toLowerCase(),
+      statusLower,
+      shouldShowType,
+    );
+  }
+
+  int _buildReporterMarkerSignature({required LatLng reporterPoint}) {
+    return Object.hash(
+      reporterPoint.latitude.toStringAsFixed(6),
+      reporterPoint.longitude.toStringAsFixed(6),
+    );
+  }
+
+  Marker _createReporterMarker({
+    required String reportId,
+    required LatLng reporterPoint,
+  }) {
+    return Marker(
+      key: ValueKey('reporter-$reportId'),
+      point: reporterPoint,
+      width: 44,
+      height: 44,
+      child: GestureDetector(
+        onTap: () {
+          final latestData = _reportCacheById[reportId];
+          final incidentPoint =
+              _latLngFromDynamic(latestData?['incidentLocation']) ??
+              _latLngFromDynamic(latestData?['location']) ??
+              _latLngFromDynamic(latestData?['reporterLocation']) ??
+              reporterPoint;
+          _showIncidentInfo(
+            latestData ?? const <String, dynamic>{},
+            reportId,
+            incidentPoint,
+          );
+        },
+        child: const Icon(
+          Icons.person_pin_circle,
+          color: Color(0xFF2563EB),
+          size: 30,
+        ),
+      ),
+    );
+  }
+
+  bool _removeReportFromView(String reportId) {
+    final removedIncident = _incidentMarkerById.remove(reportId) != null;
+    final removedReporter = _reporterMarkerById.remove(reportId) != null;
+    final removedIncidentSignature =
+        _incidentMarkerSignatureById.remove(reportId) != null;
+    final removedReporterSignature =
+        _reporterMarkerSignatureById.remove(reportId) != null;
+    final removedResolved = _resolvedReportEntryById.remove(reportId) != null;
+    final removedStatus = _assignedStatusByReportId.remove(reportId) != null;
+    _cancelResolvedRemoval(reportId);
+    return removedIncident ||
+        removedReporter ||
+        removedIncidentSignature ||
+        removedReporterSignature ||
+        removedResolved ||
+        removedStatus;
+  }
+
+  void _commitReportViewState() {
+    final orderedIncidentEntries = _incidentMarkerById.entries.toList(
+      growable: false,
+    )..sort((a, b) => a.key.compareTo(b.key));
+    final orderedReporterEntries = _reporterMarkerById.entries.toList(
+      growable: false,
+    )..sort((a, b) => a.key.compareTo(b.key));
+    final orderedResolvedReports =
+        _resolvedReportEntryById.values.toList(growable: false)..sort((a, b) {
+          final aData = (a['data'] as Map<String, dynamic>? ?? const {});
+          final bData = (b['data'] as Map<String, dynamic>? ?? const {});
+          final aTime =
+              (_parseResolvedAt(aData) ??
+                      _parseFlaggedAt(aData) ??
+                      _parseReportedAt(aData))
+                  ?.millisecondsSinceEpoch ??
+              0;
+          final bTime =
+              (_parseResolvedAt(bData) ??
+                      _parseFlaggedAt(bData) ??
+                      _parseReportedAt(bData))
+                  ?.millisecondsSinceEpoch ??
+              0;
+          return bTime.compareTo(aTime);
+        });
+
+    if (!mounted) {
+      _incidentMarkers
+        ..clear()
+        ..addAll(orderedIncidentEntries.map((entry) => entry.value));
+      _reporterMarkers
+        ..clear()
+        ..addAll(orderedReporterEntries.map((entry) => entry.value));
+      _resolvedReports = orderedResolvedReports;
+      return;
     }
-    _syncAssignedStatusNotifications(assignedStatusByReportId);
-    _syncAutoAssignedReport(snapshot);
-    print('Loaded ${snapshot.docs.length} reports from Firestore');
+
+    setState(() {
+      _incidentMarkers
+        ..clear()
+        ..addAll(orderedIncidentEntries.map((entry) => entry.value));
+      _reporterMarkers
+        ..clear()
+        ..addAll(orderedReporterEntries.map((entry) => entry.value));
+      _resolvedReports = orderedResolvedReports;
+    });
   }
 
   String _normalizePhoneValue(Object? raw) {
@@ -580,7 +814,7 @@ class _AdminMapPageState extends State<AdminMapPage>
     }
   }
 
-  void _syncAutoAssignedReport(QuerySnapshot<Map<String, dynamic>> snapshot) {
+  void _syncAutoAssignedReport() {
     final userData = UserSession.currentUserData;
     final responderPhone = _normalizePhoneValue(
       userData?['contactNumber'] ?? userData?['phoneNumber'],
@@ -602,8 +836,9 @@ class _AdminMapPageState extends State<AdminMapPage>
     String matchedIncidentType = 'incident';
     DateTime latestAssignedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-    for (final doc in snapshot.docs) {
-      final data = doc.data();
+    for (final entry in _reportCacheById.entries) {
+      final reportId = entry.key;
+      final data = entry.value;
       final status =
           (data['responderStatus'] as String? ??
                   data['status'] as String? ??
@@ -640,7 +875,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       }
 
       latestAssignedAt = assignedAt;
-      matchedReportId = doc.id;
+      matchedReportId = reportId;
       matchedDestination = incidentPoint;
       matchedStatusLabel = _normalizeStatusLabel(
         data['responderStatus'] as String? ?? data['status'] as String? ?? '',
@@ -683,7 +918,7 @@ class _AdminMapPageState extends State<AdminMapPage>
         _autoAssignedReportId != matchedReportId ||
         _activeReportId != matchedReportId ||
         _destination == null ||
-        const Distance().as(
+        _distanceCalculator.as(
               LengthUnit.Meter,
               _destination!,
               matchedDestination,
@@ -944,16 +1179,8 @@ class _AdminMapPageState extends State<AdminMapPage>
     );
   }
 
-  Widget _buildBouncyPin({required Widget child}) {
-    return AnimatedBuilder(
-      animation: _pinBounceController,
-      child: child,
-      builder: (context, child) {
-        final eased = Curves.easeInOut.transform(_pinBounceController.value);
-        final offset = sin(eased * pi) * 4;
-        return Transform.translate(offset: Offset(0, -offset), child: child);
-      },
-    );
+  Widget _buildBouncyPin({required Widget child, bool animate = true}) {
+    return child;
   }
 
   Future<void> _toggleWeatherCard() async {
@@ -1164,7 +1391,7 @@ class _AdminMapPageState extends State<AdminMapPage>
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(
-              '${data.temperature.round()}°',
+              '${data.temperature.round()} deg',
               style: const TextStyle(
                 fontFamily: 'RobotoCondensed',
                 fontWeight: FontWeight.w400,
@@ -1173,7 +1400,7 @@ class _AdminMapPageState extends State<AdminMapPage>
               ),
             ),
             Text(
-              'H ${data.max.round()}°  L ${data.min.round()}°',
+              'H ${data.max.round()} deg  L ${data.min.round()} deg',
               style: const TextStyle(
                 fontFamily: 'RobotoCondensed',
                 fontWeight: FontWeight.w400,
@@ -1358,7 +1585,9 @@ class _AdminMapPageState extends State<AdminMapPage>
               'latestResponderCommentAt': commentPayload['timestamp'],
             });
       } catch (mirrorError) {
-        debugPrint('Failed to mirror responder comment on report: $mirrorError');
+        debugPrint(
+          'Failed to mirror responder comment on report: $mirrorError',
+        );
       }
 
       if (!mounted) return;
@@ -1651,13 +1880,23 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   void _removeIncidentMarker(String reportId) {
-    if (!mounted) return;
-    setState(() {
-      _incidentMarkers.removeWhere(
-        (marker) => marker.key == ValueKey('incident-$reportId'),
-      );
-    });
+    final removedIncident = _incidentMarkerById.remove(reportId) != null;
+    final removedReporter = _reporterMarkerById.remove(reportId) != null;
+    final removedIncidentSignature =
+        _incidentMarkerSignatureById.remove(reportId) != null;
+    final removedReporterSignature =
+        _reporterMarkerSignatureById.remove(reportId) != null;
+    final removedResolved = _resolvedReportEntryById.remove(reportId) != null;
+    final removedStatus = _assignedStatusByReportId.remove(reportId) != null;
     _cancelResolvedRemoval(reportId);
+    if (removedIncident ||
+        removedReporter ||
+        removedIncidentSignature ||
+        removedReporterSignature ||
+        removedResolved ||
+        removedStatus) {
+      _commitReportViewState();
+    }
   }
 
   Future<void> _startResponderLocationSharing() async {
@@ -1669,6 +1908,17 @@ class _AdminMapPageState extends State<AdminMapPage>
           position,
         ) {
           final point = LatLng(position.latitude, position.longitude);
+          final previousPoint = _userLocation;
+          if (previousPoint != null) {
+            final movedMeters = _distanceCalculator.as(
+              LengthUnit.Meter,
+              previousPoint,
+              point,
+            );
+            if (movedMeters < 2) {
+              return;
+            }
+          }
           if (!mounted) return;
           setState(() {
             _userLocation = point;
@@ -1688,12 +1938,15 @@ class _AdminMapPageState extends State<AdminMapPage>
       return;
     }
     try {
-      await FirebaseFirestore.instance.collection('reports').doc(reportId).update({
-        'responderLocation': GeoPoint(point.latitude, point.longitude),
-        'responderLocationLat': point.latitude,
-        'responderLocationLng': point.longitude,
-        'responderLocationUpdatedAt': Timestamp.now(),
-      });
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .update({
+            'responderLocation': GeoPoint(point.latitude, point.longitude),
+            'responderLocationLat': point.latitude,
+            'responderLocationLng': point.longitude,
+            'responderLocationUpdatedAt': Timestamp.now(),
+          });
     } catch (e) {
       debugPrint('Failed to sync responder location for $reportId: $e');
     }
@@ -1705,9 +1958,9 @@ class _AdminMapPageState extends State<AdminMapPage>
         .collection('reports')
         .snapshots()
         .listen(
-          _applyReportSnapshot,
+          _applyReportChanges,
           onError: (error) {
-            debugPrint('❌ Failed to subscribe to report updates: $error');
+            debugPrint('Failed to subscribe to report updates: $error');
           },
         );
   }
@@ -2306,7 +2559,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                                         ),
                                         const SizedBox(height: 6),
                                         Text(
-                                          '${comment.author} • ${_getTimeAgo(comment.timestamp)}',
+                                          '${comment.author} - ${_getTimeAgo(comment.timestamp)}',
                                           style: const TextStyle(
                                             fontFamily: 'Roboto',
                                             fontSize: 11,
@@ -2432,7 +2685,7 @@ class _AdminMapPageState extends State<AdminMapPage>
           ..addAll(comments);
       });
     } catch (e) {
-      debugPrint('❌ Failed to load admin comments: $e');
+      debugPrint('Failed to load admin comments: $e');
     }
   }
 
@@ -2797,7 +3050,7 @@ class _AdminMapPageState extends State<AdminMapPage>
   double _calculateDistance(List<LatLng> points) {
     double totalDistance = 0.0;
     for (int i = 0; i < points.length - 1; i++) {
-      totalDistance += const Distance().as(
+      totalDistance += _distanceCalculator.as(
         LengthUnit.Kilometer,
         points[i],
         points[i + 1],
@@ -2828,8 +3081,8 @@ class _AdminMapPageState extends State<AdminMapPage>
   void _generateRouteInstructions() {
     _routeInstructions =
         '''
-📏 Distance: ${_estimatedDistance.toStringAsFixed(2)} km
-⏱️ Estimated Time: $_estimatedTime
+Distance: ${_estimatedDistance.toStringAsFixed(2)} km
+Estimated Time: $_estimatedTime
 ''';
     _currentStepIndex = 0;
   }

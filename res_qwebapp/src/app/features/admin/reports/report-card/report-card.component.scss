@@ -1,0 +1,355 @@
+.report-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 20px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  content-visibility: auto;
+  contain: layout paint style;
+  contain-intrinsic-size: 420px;
+}
+
+.image-wrap {
+  flex: 0 0 280px;
+}
+
+.report-picture {
+  display: block;
+  width: 100%;
+}
+
+.report-image {
+  display: block;
+  width: 100%;
+  height: 190px;
+  object-fit: cover;
+  border-radius: 12px;
+}
+
+.details {
+  flex: 1;
+  font-family: 'Roboto Condensed', sans-serif;
+}
+
+.report-title {
+  margin: 0 0 10px;
+  font-size: 22px;
+  font-family: 'Roboto', sans-serif;
+  font-weight: 700;
+}
+
+.meta-group {
+  display: flex;
+  gap: 4px;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.meta-label {
+  font-weight: 600;
+  color: #444;
+}
+
+.meta-value {
+  color: #111;
+}
+
+.description {
+  margin: 12px 0;
+  font-size: 14px;
+  color: #374151;
+  line-height: 1.45;
+}
+
+.counters {
+  display: flex;
+  gap: 16px;
+  margin-top: 12px;
+  margin-bottom: 8px;
+}
+
+.counter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'Roboto', sans-serif;
+}
+
+.counter-green {
+  background-color: rgba(0, 164, 88, 0.1);
+  color: #00a458;
+}
+
+.counter-red {
+  background-color: rgba(172, 27, 34, 0.1);
+  color: var(--resq-red, var(--resq-red, #AC1B22));
+}
+
+.counter-comments {
+  background-color: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.btn {
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: 'Roboto', sans-serif;
+  font-weight: 600;
+  color: white;
+  transition: 0.15s ease;
+}
+
+.btn-comments {
+  background-color: #6b7280;
+  color: white;
+}
+
+.btn-comments:hover {
+  background-color: #4b5563;
+  transform: translateY(-2px);
+  box-shadow: 0 3px 8px rgba(107, 114, 128, 0.35);
+}
+
+.btn-approve {
+  background-color: var(--resq-yellow, var(--resq-yellow, #FFC806));
+  color: var(--text-dark, #212121);
+}
+
+.btn-approve:hover {
+  background-color: #e5b400;
+  transform: translateY(-2px);
+  box-shadow: 0 3px 8px rgba(255, 200, 6, 0.35);
+}
+
+.btn-reject {
+  background-color: var(--resq-red, var(--resq-red, #AC1B22));
+  color: white;
+}
+
+.btn-reject:hover {
+  background-color: #8f161c;
+  transform: translateY(-2px);
+  box-shadow: 0 3px 8px rgba(172, 27, 34, 0.35);
+}
+
+.btn-revert {
+  background-color: var(--resq-red, var(--resq-red, #AC1B22));
+  color: white;
+}
+
+.btn-revert:hover {
+  background-color: #8f161c;
+  transform: translateY(-2px);
+  box-shadow: 0 3px 8px rgba(172, 27, 34, 0.35);
+}
+
+.btn-load-more-comments {
+  background-color: #4b5563;
+  color: #ffffff;
+  padding: 8px 14px;
+  font-size: 12px;
+}
+
+.btn-load-more-comments:hover {
+  background-color: #374151;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 8px rgba(75, 85, 99, 0.35);
+}
+
+.btn-load-more-comments:disabled {
+  opacity: 0.7;
+  cursor: wait;
+  transform: none;
+  box-shadow: none;
+}
+
+.comments-section {
+  flex-basis: 100%;
+  width: 100%;
+  margin-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #d0d0d0;
+}
+
+.loading-comments,
+.no-comments {
+  text-align: center;
+  padding: 20px;
+  color: #6b7280;
+  font-family: 'Roboto Condensed', sans-serif;
+  font-size: 14px;
+}
+
+.loading-comments p,
+.no-comments p {
+  text-align: center;
+  margin: 0;
+}
+
+.comments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.comments-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+}
+
+.comments-count {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
+  font-family: 'Roboto Condensed', sans-serif;
+}
+
+.comment-item {
+  background: transparent;
+  border-radius: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid #d0d0d0;
+}
+
+.comment-item:last-child {
+  border-bottom: none;
+}
+
+.comment-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.comment-author {
+  font-weight: 600;
+  font-family: 'Roboto', sans-serif;
+  color: var(--text-dark, #212121);
+  font-size: 13px;
+}
+
+.comment-time {
+  font-size: 12px;
+  color: #6b7280;
+  font-family: 'Roboto Condensed', sans-serif;
+}
+
+.comment-text {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #374151;
+  font-family: 'Roboto Condensed', sans-serif;
+}
+
+.comment-flags {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  font-family: 'Roboto Condensed', sans-serif;
+}
+
+.flag-green,
+.flag-red {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.flag-green {
+  color: #00a458;
+}
+
+.flag-red {
+  color: var(--resq-red, var(--resq-red, #AC1B22));
+}
+
+.activity-card {
+  flex: 0 0 240px;
+  align-self: flex-start;
+  min-height: 228px;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-top: 12px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.activity-title {
+  font-family: 'Roboto', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-dark, #212121);
+  margin: 0 0 12px 0;
+}
+
+.activity-item {
+  display: grid;
+  grid-template-columns: minmax(128px, 1fr) minmax(90px, auto);
+  align-items: center;
+  column-gap: 12px;
+  padding: 8px 0;
+  min-height: 44px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.activity-item:last-child {
+  border-bottom: none;
+}
+
+.activity-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.activity-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+  text-align: right;
+  min-width: 72px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .report-card {
+    flex-direction: column;
+  }
+
+  .image-wrap {
+    width: 100%;
+  }
+
+  .activity-card {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+}
