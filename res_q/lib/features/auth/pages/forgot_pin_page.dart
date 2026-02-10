@@ -356,15 +356,29 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
                 left: AppDimensions.paddingXLarge,
                 right: AppDimensions.paddingXLarge,
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  ResqBackButton.outline(
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  const ResqLogo(fontSize: 53),
-                  const SizedBox(width: 44),
-                ],
+              child: SizedBox(
+                height: 44,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: ResqBackButton.outline(
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.center,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 190),
+                        child: const FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: ResqLogo(fontSize: 53),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: AppDimensions.paddingSmall),

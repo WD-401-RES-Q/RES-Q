@@ -1,62 +1,36 @@
-import { Component, OnDestroy, OnInit, NgZone, ChangeDetectorRef } from '@angular/core';
+import { Component, OnDestroy, OnInit, NgZone, ChangeDetectorRef, ChangeDetectionStrategy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FirestoreService } from '../../../core/services/firestore.service';
 import { FirebaseStorageService } from '../../../core/services/firebase-storage.service';
 import { Subscription } from 'rxjs';
-import { collection, onSnapshot, orderBy, query, where, Timestamp } from 'firebase/firestore';
+import {
+  collection,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  startAfter,
+  type Unsubscribe,
+} from 'firebase/firestore';
 import { db } from '../../../core/config/firebase.config';
-
-interface Report {
-  id: string;
-  title: string;
-  category: string;
-  location: string;
-  date: string;
-  time: string;
-  reporter: string;
-  description: string;
-  image: string;
-  greenFlags?: number;
-  redFlags?: number;
-  comments?: number;
-  status: 'Pending' | 'Approved' | 'Flagged';
-  incidentStatus?: string;
-  sortTimestamp?: number;
-  approvedBy?: string;
-  approvedAt?: string;
-  respondingAt?: string;
-  respondingBy?: string;
-  arrivedAt?: string;
-  arrivedBy?: string;
-  resolvedAt?: string;
-  resolvedBy?: string;
-  flaggedAt?: string;
-  flaggedBy?: string;
-}
-
-interface Comment {
-  id: string;
-  text: string;
-  author: string;
-  timestamp: Date;
-  greenFlags: number;
-  redFlags: number;
-  reportId: string;
-  reportTitle: string;
-  reportStatus: string;
-}
-
-type FilterType = 'pending' | 'approved' | 'flagged';
-type DateFilterType = 'all' | 'today' | 'week' | 'month' | 'year';
-type IncidentFilterType = 'all' | 'fire' | 'flood' | 'vehicular' | 'earthquake' | 'other';
+import { ReportCardComponent } from './report-card/report-card.component';
+import {
+  Comment,
+  DateFilterType,
+  FilterType,
+  IncidentFilterType,
+  Report,
+} from './reports.models';
 
 @Component({
   selector: 'app-reports',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, ReportCardComponent],
   templateUrl: './reports.html',
   styleUrls: ['./reports.component.scss'],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ReportsComponent implements OnInit, OnDestroy {
   constructor(
@@ -77,15 +51,45 @@ export class ReportsComponent implements OnInit, OnDestroy {
   // Incident type filter state
   incidentFilter: IncidentFilterType = 'all';
   showIncidentDropdown = false;
+
+  readonly dateFilterLabels: Record<DateFilterType, string> = {
+    all: 'ALL TIME',
+    today: 'TODAY',
+    week: 'THIS WEEK',
+    month: 'THIS MONTH',
+    year: 'THIS YEAR',
+  };
+
+  readonly incidentFilterLabels: Record<IncidentFilterType, string> = {
+    all: 'ALL TYPES',
+    fire: 'FIRE',
+    flood: 'FLOOD',
+    vehicular: 'VEHICULAR',
+    earthquake: 'EARTHQUAKE',
+    other: 'OTHER',
+  };
   
   // All reports data
   allReports: Report[] = [];
   pendingReports: Report[] = [];
   approvedReports: Report[] = [];
   flaggedReports: Report[] = [];
+  filteredReports: Report[] = [];
+  visibleReports: Report[] = [];
+  hasMoreReports = false;
+  hasMoreServerReports = true;
+  isLoadingMoreReports = false;
+  private readonly initialVisibleReports = 20;
+  private readonly visibleReportsStep = 20;
+  private visibleReportsCount = 0;
   
   isLoading = true;
   private subscriptions: Subscription[] = [];
+  private hasLoadedPending = false;
+  private hasLoadedApproved = false;
+  private hasLoadedFlagged = false;
+  private streamRecomputeScheduled = false;
+  private streamRecomputeHandle: number | null = null;
 
   // Modal state
   showApproveModal = false;
@@ -98,10 +102,25 @@ export class ReportsComponent implements OnInit, OnDestroy {
   // Comments state
   expandedReportId: string | null = null;
   reportComments: { [key: string]: Comment[] } = {};
+  private liveReportComments: { [key: string]: Comment[] } = {};
+  private pagedReportComments: { [key: string]: Comment[] } = {};
+  visibleReportComments: { [key: string]: Comment[] } = {};
+  hasMoreComments: { [key: string]: boolean } = {};
+  private hasMoreServerComments: { [key: string]: boolean } = {};
   loadingComments: { [key: string]: boolean } = {};
+  loadingMoreComments: { [key: string]: boolean } = {};
+  private commentUnsubscribers: { [key: string]: Unsubscribe } = {};
+  private commentPageCursors: { [key: string]: any | null } = {};
+  private visibleCommentCounts: { [key: string]: number } = {};
+  private readonly initialVisibleComments = 30;
+  private readonly visibleCommentsStep = 30;
+  private readonly initialCommentsServerPageSize = 50;
+  private readonly commentsServerPageSize = 50;
+  private readonly maxCachedCommentReports = 12;
+  private commentCacheOrder: string[] = [];
 
-  // Computed property for filtered reports
-  get filteredReports(): Report[] {
+  // Recompute filtered reports only when source lists or filters change.
+  private recomputeFilteredReports(resetVisibleWindow = false) {
     let reports: Report[];
     switch (this.currentFilter) {
       case 'approved':
@@ -126,72 +145,296 @@ export class ReportsComponent implements OnInit, OnDestroy {
       reports = this.applyIncidentFilter(reports);
     }
 
-    if (this.dateFilter === 'all') {
-      reports = [...reports].sort(
-        (a, b) => (b.sortTimestamp ?? 0) - (a.sortTimestamp ?? 0)
-      );
+    this.filteredReports = reports;
+    this.syncVisibleReports(resetVisibleWindow);
+  }
+
+  private syncVisibleReports(resetVisibleWindow = false): void {
+    if (resetVisibleWindow || this.visibleReportsCount <= 0) {
+      this.visibleReportsCount = this.initialVisibleReports;
     }
 
-    return reports;
+    this.visibleReportsCount = Math.min(this.visibleReportsCount, this.filteredReports.length);
+    this.visibleReports = this.filteredReports.slice(0, this.visibleReportsCount);
+    this.hasMoreReports = this.visibleReportsCount < this.filteredReports.length;
+
+    if (this.expandedReportId && !this.visibleReports.some((report) => report.id === this.expandedReportId)) {
+      const expandedReportId = this.expandedReportId;
+      this.expandedReportId = null;
+      this.loadingComments[expandedReportId] = false;
+      this.detachCommentListener(expandedReportId);
+    }
+  }
+
+  get canLoadMoreReports(): boolean {
+    return this.hasMoreReports || this.hasMoreServerReports;
+  }
+
+  async showMoreReports(): Promise<void> {
+    const nextVisibleCount = Math.min(
+      this.visibleReportsCount + this.visibleReportsStep,
+      this.filteredReports.length,
+    );
+
+    if (nextVisibleCount > this.visibleReports.length) {
+      this.visibleReportsCount = nextVisibleCount;
+      this.syncVisibleReports();
+      this.cdr.markForCheck();
+      return;
+    }
+
+    if (!this.hasMoreServerReports || this.isLoadingMoreReports) {
+      this.cdr.markForCheck();
+      return;
+    }
+
+    this.isLoadingMoreReports = true;
+    this.cdr.markForCheck();
+
+    try {
+      await this.firestoreService.loadMoreReportsPage();
+      this.recomputeFilteredReports();
+      const grownVisibleCount = Math.min(
+        this.visibleReportsCount + this.visibleReportsStep,
+        this.filteredReports.length,
+      );
+      this.visibleReportsCount = grownVisibleCount;
+      this.syncVisibleReports();
+    } catch (err) {
+      console.error('Failed to load more reports:', err);
+    } finally {
+      this.isLoadingMoreReports = false;
+      this.cdr.markForCheck();
+    }
+  }
+
+  private syncVisibleComments(reportId: string, resetVisibleWindow = false): void {
+    const comments = this.reportComments[reportId] ?? [];
+
+    if (resetVisibleWindow || !this.visibleCommentCounts[reportId]) {
+      this.visibleCommentCounts[reportId] = this.initialVisibleComments;
+    }
+
+    const visibleCount = Math.min(this.visibleCommentCounts[reportId], comments.length);
+    this.visibleCommentCounts[reportId] = visibleCount;
+    this.visibleReportComments[reportId] = comments.slice(0, visibleCount);
+    this.hasMoreComments[reportId] =
+      visibleCount < comments.length || this.hasMoreServerComments[reportId] === true;
+  }
+
+  async showMoreComments(reportId: string): Promise<void> {
+    if (!reportId) return;
+    this.touchCommentCache(reportId);
+
+    const visibleCount = this.visibleReportComments[reportId]?.length ?? 0;
+    const loadedCount = this.reportComments[reportId]?.length ?? 0;
+
+    if (visibleCount < loadedCount) {
+      const currentCount = this.visibleCommentCounts[reportId] ?? this.initialVisibleComments;
+      this.visibleCommentCounts[reportId] = currentCount + this.visibleCommentsStep;
+      this.syncVisibleComments(reportId);
+      this.cdr.markForCheck();
+      return;
+    }
+
+    if (!this.hasMoreServerComments[reportId] || this.loadingMoreComments[reportId]) {
+      this.syncVisibleComments(reportId);
+      this.cdr.markForCheck();
+      return;
+    }
+
+    await this.loadMoreCommentsFromServer(reportId);
+  }
+
+  private mergeCommentLists(primary: Comment[], secondary: Comment[]): Comment[] {
+    const merged: Comment[] = [];
+    const seen = new Set<string>();
+
+    for (const comment of primary) {
+      if (seen.has(comment.id)) continue;
+      seen.add(comment.id);
+      merged.push(comment);
+    }
+
+    for (const comment of secondary) {
+      if (seen.has(comment.id)) continue;
+      seen.add(comment.id);
+      merged.push(comment);
+    }
+
+    return merged;
+  }
+
+  private touchCommentCache(reportId: string): void {
+    this.commentCacheOrder = this.commentCacheOrder.filter((id) => id !== reportId);
+    this.commentCacheOrder.push(reportId);
+    this.trimCommentCache();
+  }
+
+  private trimCommentCache(): void {
+    let safetyCounter = 0;
+    while (this.commentCacheOrder.length > this.maxCachedCommentReports && safetyCounter < 50) {
+      safetyCounter += 1;
+      const candidate = this.commentCacheOrder.shift();
+      if (!candidate) break;
+
+      if (candidate === this.expandedReportId) {
+        this.commentCacheOrder.push(candidate);
+        continue;
+      }
+
+      this.evictCommentCache(candidate);
+    }
+  }
+
+  private evictCommentCache(reportId: string): void {
+    this.detachCommentListener(reportId);
+
+    delete this.reportComments[reportId];
+    delete this.liveReportComments[reportId];
+    delete this.pagedReportComments[reportId];
+    delete this.visibleReportComments[reportId];
+    delete this.hasMoreComments[reportId];
+    delete this.hasMoreServerComments[reportId];
+    delete this.loadingComments[reportId];
+    delete this.loadingMoreComments[reportId];
+    delete this.commentPageCursors[reportId];
+    delete this.visibleCommentCounts[reportId];
+  }
+
+  private async loadMoreCommentsFromServer(reportId: string): Promise<void> {
+    const cursor = this.commentPageCursors[reportId];
+    if (!cursor) {
+      this.hasMoreServerComments[reportId] = false;
+      this.syncVisibleComments(reportId);
+      this.cdr.markForCheck();
+      return;
+    }
+
+    this.loadingMoreComments[reportId] = true;
+    this.cdr.markForCheck();
+
+    try {
+      const commentsRef = collection(db, 'reports', reportId, 'comments');
+      const nextPageQuery = query(
+        commentsRef,
+        orderBy('timestamp', 'desc'),
+        startAfter(cursor),
+        limit(this.commentsServerPageSize),
+      );
+      const snapshot = await getDocs(nextPageQuery);
+      const serverComments = snapshot.docs.map((doc) => this.mapComment(doc, reportId));
+
+      const existingPagedComments = this.pagedReportComments[reportId] ?? [];
+      this.pagedReportComments[reportId] = this.mergeCommentLists(
+        existingPagedComments,
+        serverComments,
+      );
+
+      if (snapshot.docs.length > 0) {
+        this.commentPageCursors[reportId] = snapshot.docs[snapshot.docs.length - 1];
+      }
+      this.hasMoreServerComments[reportId] = snapshot.docs.length === this.commentsServerPageSize;
+
+      const liveComments = this.liveReportComments[reportId] ?? [];
+      this.reportComments[reportId] = this.mergeCommentLists(
+        liveComments,
+        this.pagedReportComments[reportId],
+      );
+      this.touchCommentCache(reportId);
+
+      const currentCount = this.visibleCommentCounts[reportId] ?? this.initialVisibleComments;
+      this.visibleCommentCounts[reportId] = currentCount + this.visibleCommentsStep;
+      this.syncVisibleComments(reportId);
+    } catch (err) {
+      console.error('Error loading more comments:', err);
+      this.hasMoreServerComments[reportId] = false;
+      this.syncVisibleComments(reportId);
+    } finally {
+      this.loadingMoreComments[reportId] = false;
+      this.cdr.markForCheck();
+    }
+  }
+
+  private ensureCommentState(reportId: string, resetServerPaging = false): void {
+    if (resetServerPaging) {
+      this.pagedReportComments[reportId] = [];
+      this.liveReportComments[reportId] = [];
+      this.commentPageCursors[reportId] = null;
+      this.hasMoreServerComments[reportId] = false;
+    }
+
+    this.loadingMoreComments[reportId] = this.loadingMoreComments[reportId] ?? false;
+    this.visibleCommentCounts[reportId] = this.visibleCommentCounts[reportId] ?? this.initialVisibleComments;
+    this.visibleReportComments[reportId] = this.visibleReportComments[reportId] ?? [];
+    this.reportComments[reportId] = this.reportComments[reportId] ?? [];
+    this.touchCommentCache(reportId);
+  }
+
+  trackByReportId(index: number, report: Report): string {
+    return report.id || `report-${index}`;
   }
 
   private applyDateFilter(reports: Report[]): Report[] {
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    );
+    let threshold = todayStart.getTime();
 
-    return reports.filter(report => {
-      const reportDate = this.parseReportDate(report.date);
-      if (!reportDate) return true;
-
-      switch (this.dateFilter) {
-        case 'today':
-          return reportDate >= today;
-        case 'week':
-          const weekAgo = new Date(today);
-          weekAgo.setDate(weekAgo.getDate() - 7);
-          return reportDate >= weekAgo;
-        case 'month':
-          const monthAgo = new Date(today);
-          monthAgo.setMonth(monthAgo.getMonth() - 1);
-          return reportDate >= monthAgo;
-        case 'year':
-          const yearAgo = new Date(today);
-          yearAgo.setFullYear(yearAgo.getFullYear() - 1);
-          return reportDate >= yearAgo;
-        default:
-          return true;
+    switch (this.dateFilter) {
+      case 'today':
+        threshold = todayStart.getTime();
+        break;
+      case 'week': {
+        const weekAgo = new Date(todayStart);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        threshold = weekAgo.getTime();
+        break;
       }
+      case 'month': {
+        const monthAgo = new Date(todayStart);
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        threshold = monthAgo.getTime();
+        break;
+      }
+      case 'year': {
+        const yearAgo = new Date(todayStart);
+        yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+        threshold = yearAgo.getTime();
+        break;
+      }
+      default:
+        return reports;
+    }
+
+    return reports.filter((report) => {
+      const reportTimestamp = report.sortTimestamp ?? 0;
+      if (reportTimestamp <= 0) return true;
+      return reportTimestamp >= threshold;
     });
   }
 
   private applyIncidentFilter(reports: Report[]): Report[] {
-    return reports.filter(report => {
-      const category = (report.category || '').toLowerCase();
-      switch (this.incidentFilter) {
-        case 'fire':
-          return category.includes('fire');
-        case 'flood':
-          return category.includes('flood');
-        case 'vehicular':
-          return category.includes('vehicular') || category.includes('accident');
-        case 'earthquake':
-          return category.includes('earthquake');
-        case 'other':
-          return !category.includes('fire') &&
-                 !category.includes('flood') &&
-                 !category.includes('vehicular') &&
-                 !category.includes('accident') &&
-                 !category.includes('earthquake');
-        default:
-          return true;
-      }
-    });
+    if (this.incidentFilter === 'other') {
+      return reports.filter((report) => report.incidentFilterKey === 'other');
+    }
+
+    return reports.filter((report) => report.incidentFilterKey === this.incidentFilter);
   }
 
-  private parseReportDate(dateStr: string): Date | null {
-    if (!dateStr || dateStr === '–') return null;
-    const parsed = new Date(dateStr);
-    return isNaN(parsed.getTime()) ? null : parsed;
+  private sortReportsByTimestamp(reports: Report[]): Report[] {
+    return [...reports].sort((a, b) => (b.sortTimestamp ?? 0) - (a.sortTimestamp ?? 0));
+  }
+
+  private toIncidentFilterKey(categoryKey: string): Exclude<IncidentFilterType, 'all'> {
+    if (categoryKey.includes('fire')) return 'fire';
+    if (categoryKey.includes('flood')) return 'flood';
+    if (categoryKey.includes('vehicular') || categoryKey.includes('accident')) return 'vehicular';
+    if (categoryKey.includes('earthquake')) return 'earthquake';
+    return 'other';
   }
 
   ngOnInit() {
@@ -220,86 +463,138 @@ export class ReportsComponent implements OnInit, OnDestroy {
     return normalized.length > 0 ? normalized : '-';
   }
 
-  getActivityResponder(report: Report): string {
-    return this.valueOrDash(
-      report.respondingBy ??
-          report.arrivedBy ??
-          report.resolvedBy ??
-          report.flaggedBy,
-    );
-  }
-
-  getActivityTime(value?: string): string {
-    return this.valueOrDash(value);
-  }
-
-  getFinalActivityLabel(report: Report): string {
-    const status = (report.incidentStatus ?? report.status ?? '').toUpperCase();
-    return status === 'FLAGGED'
-      ? 'Time Flagged:'
-      : 'Time Approved:';
-  }
-
-  getFinalActivityTime(report: Report): string {
-    const status = (report.incidentStatus ?? report.status ?? '').toUpperCase();
-    const isFlagged = status === 'FLAGGED';
-    if (isFlagged) {
-      return this.valueOrDash(report.flaggedAt);
-    }
-    return this.valueOrDash(report.resolvedAt ?? report.approvedAt);
-  }
-
   ngOnDestroy() {
+    this.cancelScheduledStreamRecompute();
+    this.detachAllCommentListeners();
     this.subscriptions.forEach(sub => sub.unsubscribe());
+  }
+
+  private detachCommentListener(reportId: string): void {
+    const unsubscribe = this.commentUnsubscribers[reportId];
+    if (!unsubscribe) return;
+    try {
+      unsubscribe();
+    } catch (err) {
+      console.error('Failed to unsubscribe comments listener:', err);
+    } finally {
+      delete this.commentUnsubscribers[reportId];
+    }
+  }
+
+  private detachAllCommentListeners(): void {
+    for (const reportId of Object.keys(this.commentUnsubscribers)) {
+      this.detachCommentListener(reportId);
+    }
   }
 
   private loadReports() {
     // Subscribe to pending reports
     const pendingSub = this.firestoreService.pendingReports$.subscribe({
       next: (docs) => {
-        this.pendingReports = docs.map((doc: any) => this.mapReport(doc, 'Pending'));
-        this.updateLoading();
+        this.pendingReports = this.sortReportsByTimestamp(
+          docs.map((doc: any) => this.mapReport(doc, 'Pending')),
+        );
+        this.updateLoading('pending');
       },
       error: (err) => {
         console.error('Failed to load pending reports:', err);
         this.pendingReports = [];
-        this.updateLoading();
+        this.updateLoading('pending');
       },
     });
 
     // Subscribe to approved reports
     const approvedSub = this.firestoreService.approvedReports$.subscribe({
       next: (docs) => {
-        this.approvedReports = docs.map((doc: any) => this.mapReport(doc, 'Approved'));
-        this.updateLoading();
+        this.approvedReports = this.sortReportsByTimestamp(
+          docs.map((doc: any) => this.mapReport(doc, 'Approved')),
+        );
+        this.updateLoading('approved');
       },
       error: (err) => {
         console.error('Failed to load approved reports:', err);
         this.approvedReports = [];
-        this.updateLoading();
+        this.updateLoading('approved');
       },
     });
 
     // Subscribe to flagged reports
     const flaggedSub = this.firestoreService.flaggedReports$.subscribe({
       next: (docs) => {
-        this.flaggedReports = docs.map((doc: any) => this.mapReport(doc, 'Flagged'));
-        this.updateLoading();
+        this.flaggedReports = this.sortReportsByTimestamp(
+          docs.map((doc: any) => this.mapReport(doc, 'Flagged')),
+        );
+        this.updateLoading('flagged');
       },
       error: (err) => {
         console.error('Failed to load flagged reports:', err);
         this.flaggedReports = [];
-        this.updateLoading();
+        this.updateLoading('flagged');
       },
     });
 
-    this.subscriptions.push(pendingSub, approvedSub, flaggedSub);
+    const hasMoreReportsSub = this.firestoreService.hasMoreReports$.subscribe({
+      next: (hasMore) => {
+        this.hasMoreServerReports = hasMore;
+        this.cdr.markForCheck();
+      },
+      error: () => {
+        this.hasMoreServerReports = false;
+        this.cdr.markForCheck();
+      },
+    });
+
+    this.subscriptions.push(pendingSub, approvedSub, flaggedSub, hasMoreReportsSub);
   }
 
-  private updateLoading() {
-    // Loading is complete when we have at least attempted to load all three streams
-    this.isLoading = false;
-    this.cdr.markForCheck();
+  private updateLoading(stream: 'pending' | 'approved' | 'flagged') {
+    switch (stream) {
+      case 'pending':
+        this.hasLoadedPending = true;
+        break;
+      case 'approved':
+        this.hasLoadedApproved = true;
+        break;
+      case 'flagged':
+        this.hasLoadedFlagged = true;
+        break;
+    }
+
+    this.isLoading = !(this.hasLoadedPending && this.hasLoadedApproved && this.hasLoadedFlagged);
+    this.scheduleStreamRecompute();
+  }
+
+  private scheduleStreamRecompute(): void {
+    if (this.streamRecomputeScheduled) return;
+    this.streamRecomputeScheduled = true;
+
+    this.ngZone.runOutsideAngular(() => {
+      const flush = () => {
+        this.ngZone.run(() => {
+          this.streamRecomputeScheduled = false;
+          this.streamRecomputeHandle = null;
+          this.recomputeFilteredReports();
+          this.cdr.markForCheck();
+        });
+      };
+
+      if (typeof requestAnimationFrame === 'function') {
+        this.streamRecomputeHandle = requestAnimationFrame(() => flush());
+      } else {
+        this.streamRecomputeHandle = setTimeout(flush, 16) as unknown as number;
+      }
+    });
+  }
+
+  private cancelScheduledStreamRecompute(): void {
+    if (this.streamRecomputeHandle === null) return;
+    if (typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(this.streamRecomputeHandle);
+    } else {
+      clearTimeout(this.streamRecomputeHandle);
+    }
+    this.streamRecomputeHandle = null;
+    this.streamRecomputeScheduled = false;
   }
 
   private mapReport(doc: any, status: 'Pending' | 'Approved' | 'Flagged'): Report {
@@ -307,6 +602,27 @@ export class ReportsComponent implements OnInit, OnDestroy {
     const dateObj = this.coerceDate(reportedAt);
     const [dateStr, timeStr] = this.formatDateTime(dateObj);
     const sortTimestamp = dateObj ? dateObj.getTime() : 0;
+    const category = doc.incidentType ?? 'Uncategorized';
+    const categoryKey = category.toString().toLowerCase();
+    const incidentStatus = (doc.status ?? '').toString().toUpperCase();
+    const approvedAt = doc.approvedAt ? this.formatTimestamp(doc.approvedAt) : undefined;
+    const respondingAt = doc.respondingAt ? this.formatTimestamp(doc.respondingAt) : undefined;
+    const respondingBy = doc.respondingBy ?? undefined;
+    const arrivedAt = doc.arrivedAt ? this.formatTimestamp(doc.arrivedAt) : undefined;
+    const arrivedBy = doc.arrivedBy ?? undefined;
+    const resolvedAt = doc.resolvedAt ? this.formatTimestamp(doc.resolvedAt) : undefined;
+    const resolvedBy = doc.resolvedBy ?? undefined;
+    const flaggedAt = doc.flaggedAt ? this.formatTimestamp(doc.flaggedAt) : undefined;
+    const flaggedBy = doc.flaggedBy ?? undefined;
+    const isFlagged = incidentStatus === 'FLAGGED';
+    const imageSources = this.firebaseStorageService.getReportImageSources({
+      mediaUrl: doc.mediaUrl,
+      mediaPath: doc.mediaPath,
+      mediaThumbUrl: doc.mediaThumbUrl,
+      mediaThumbPath: doc.mediaThumbPath,
+      mediaThumbWebpUrl: doc.mediaThumbWebpUrl,
+      mediaThumbWebpPath: doc.mediaThumbWebpPath,
+    });
 
     // Normalize location display
     let locationStr = 'Unknown location';
@@ -323,29 +639,42 @@ export class ReportsComponent implements OnInit, OnDestroy {
     return {
       id: doc.id ?? '',
       title: doc.incidentType ?? doc.title ?? 'Incident',
-      category: doc.incidentType ?? 'Uncategorized',
+      category,
+      categoryKey,
+      incidentFilterKey: this.toIncidentFilterKey(categoryKey),
       location: locationStr,
       date: dateStr,
       time: timeStr,
       reporter: doc.name ?? doc.reporter ?? 'Unknown reporter',
       description: doc.details ?? doc.description ?? 'No description provided.',
-      image: this.firebaseStorageService.getDownloadUrl(doc.mediaUrl),
+      image: imageSources.image,
+      imageThumb: imageSources.imageThumb,
+      imageThumbWebp: imageSources.imageThumbWebp,
       greenFlags: doc.greenFlags ?? 0,
       redFlags: doc.redFlags ?? 0,
       comments: doc.comments ?? 0,
       status: status,
-      incidentStatus: (doc.status ?? '').toString().toUpperCase(),
+      incidentStatus,
       sortTimestamp,
       approvedBy: doc.approvedBy ?? undefined,
-      approvedAt: doc.approvedAt ? this.formatTimestamp(doc.approvedAt) : undefined,
-      respondingAt: doc.respondingAt ? this.formatTimestamp(doc.respondingAt) : undefined,
-      respondingBy: doc.respondingBy ?? undefined,
-      arrivedAt: doc.arrivedAt ? this.formatTimestamp(doc.arrivedAt) : undefined,
-      arrivedBy: doc.arrivedBy ?? undefined,
-      resolvedAt: doc.resolvedAt ? this.formatTimestamp(doc.resolvedAt) : undefined,
-      resolvedBy: doc.resolvedBy ?? undefined,
-      flaggedAt: doc.flaggedAt ? this.formatTimestamp(doc.flaggedAt) : undefined,
-      flaggedBy: doc.flaggedBy ?? undefined,
+      approvedAt,
+      respondingAt,
+      respondingBy,
+      arrivedAt,
+      arrivedBy,
+      resolvedAt,
+      resolvedBy,
+      flaggedAt,
+      flaggedBy,
+      activityResponderDisplay: this.valueOrDash(
+        respondingBy ?? arrivedBy ?? resolvedBy ?? flaggedBy,
+      ),
+      timeRespondingDisplay: this.valueOrDash(respondingAt),
+      timeOnSceneDisplay: this.valueOrDash(arrivedAt),
+      finalActivityLabelDisplay: isFlagged ? 'Time Flagged:' : 'Time Approved:',
+      finalActivityTimeDisplay: isFlagged
+        ? this.valueOrDash(flaggedAt)
+        : this.valueOrDash(resolvedAt ?? approvedAt),
     };
   }
 
@@ -373,6 +702,7 @@ export class ReportsComponent implements OnInit, OnDestroy {
   selectFilter(filter: FilterType) {
     this.currentFilter = filter;
     this.showFilterDropdown = false;
+    this.recomputeFilteredReports(true);
     this.cdr.markForCheck();
   }
 
@@ -386,18 +716,8 @@ export class ReportsComponent implements OnInit, OnDestroy {
   selectDateFilter(filter: DateFilterType) {
     this.dateFilter = filter;
     this.showDateDropdown = false;
+    this.recomputeFilteredReports(true);
     this.cdr.markForCheck();
-  }
-
-  getDateFilterLabel(): string {
-    const labels: Record<DateFilterType, string> = {
-      'all': 'ALL TIME',
-      'today': 'TODAY',
-      'week': 'THIS WEEK',
-      'month': 'THIS MONTH',
-      'year': 'THIS YEAR'
-    };
-    return labels[this.dateFilter];
   }
 
   // Incident type filter methods
@@ -410,19 +730,8 @@ export class ReportsComponent implements OnInit, OnDestroy {
   selectIncidentFilter(filter: IncidentFilterType) {
     this.incidentFilter = filter;
     this.showIncidentDropdown = false;
+    this.recomputeFilteredReports(true);
     this.cdr.markForCheck();
-  }
-
-  getIncidentFilterLabel(): string {
-    const labels: Record<IncidentFilterType, string> = {
-      'all': 'ALL TYPES',
-      'fire': 'FIRE',
-      'flood': 'FLOOD',
-      'vehicular': 'VEHICULAR',
-      'earthquake': 'EARTHQUAKE',
-      'other': 'OTHER'
-    };
-    return labels[this.incidentFilter];
   }
 
   // Approval actions (pending → approved)
@@ -524,42 +833,160 @@ export class ReportsComponent implements OnInit, OnDestroy {
   // Comments - load directly from Firestore
   async toggleComments(report: Report) {
     if (this.expandedReportId === report.id) {
+      this.detachCommentListener(report.id);
       this.expandedReportId = null;
+      this.loadingComments[report.id] = false;
+      this.loadingMoreComments[report.id] = false;
       this.cdr.markForCheck();
       return;
     }
 
-    this.expandedReportId = report.id;
-    this.cdr.markForCheck();
-    
-    if (this.reportComments[report.id]) {
-      return;
+    if (this.expandedReportId) {
+      this.detachCommentListener(this.expandedReportId);
     }
 
-    this.loadingComments[report.id] = true;
+    this.expandedReportId = report.id;
+    this.cdr.markForCheck();
+
+    const hasCachedComments = Array.isArray(this.reportComments[report.id]);
+    this.ensureCommentState(report.id, !hasCachedComments);
+    if (hasCachedComments) {
+      this.syncVisibleComments(report.id);
+    }
+    this.loadingComments[report.id] = !hasCachedComments;
+    this.cdr.markForCheck();
 
     try {
-    this.ngZone.runOutsideAngular(() => {
-      const commentsRef = collection(db, 'reports', report.id, 'comments');
-      const commentsQuery = query(commentsRef, orderBy('timestamp', 'desc'));
-      onSnapshot(commentsQuery, (snapshot) => {
-        const comments = snapshot.docs.map(doc => this.mapComment(doc, report.id));
+      this.ngZone.runOutsideAngular(() => {
+        const commentsRef = collection(db, 'reports', report.id, 'comments');
+        const commentsQuery = query(
+          commentsRef,
+          orderBy('timestamp', 'desc'),
+          limit(this.initialCommentsServerPageSize),
+        );
+        this.detachCommentListener(report.id);
+        let isInitialSnapshot = true;
+        const shouldResetVisibleWindow = !hasCachedComments;
 
-        this.ngZone.run(() => {
-          this.reportComments[report.id] = comments;
-          this.loadingComments[report.id] = false;
-          this.cdr.markForCheck();
-        });
+        const unsubscribe = onSnapshot(
+          commentsQuery,
+          (snapshot) => {
+            const currentLiveComments = isInitialSnapshot
+              ? []
+              : (this.liveReportComments[report.id] ?? []);
+            const resetVisibleWindow = isInitialSnapshot && shouldResetVisibleWindow;
+            const liveComments = this.applyCommentDocChanges(
+              currentLiveComments,
+              snapshot.docChanges(),
+              report.id,
+            );
+            isInitialSnapshot = false;
+            this.ngZone.run(() => {
+              this.liveReportComments[report.id] = liveComments;
+              const pagedComments = this.pagedReportComments[report.id] ?? [];
+              this.reportComments[report.id] = this.mergeCommentLists(liveComments, pagedComments);
+              this.touchCommentCache(report.id);
+              if (snapshot.docs.length > 0) {
+                this.commentPageCursors[report.id] = snapshot.docs[snapshot.docs.length - 1];
+              }
+              this.hasMoreServerComments[report.id] =
+                snapshot.docs.length === this.initialCommentsServerPageSize;
+              this.syncVisibleComments(report.id, resetVisibleWindow);
+              this.loadingComments[report.id] = false;
+              this.cdr.markForCheck();
+            });
+          },
+          (error) => {
+            console.error('Error in comments snapshot:', error);
+            this.ngZone.run(() => {
+              this.loadingComments[report.id] = false;
+              this.reportComments[report.id] = this.reportComments[report.id] ?? [];
+              this.hasMoreServerComments[report.id] = false;
+              this.syncVisibleComments(report.id);
+              this.cdr.markForCheck();
+            });
+          },
+        );
+
+        this.commentUnsubscribers[report.id] = unsubscribe;
       });
-    });
     } catch (err) {
       console.error('Error loading comments:', err);
       this.ngZone.run(() => {
         this.loadingComments[report.id] = false;
-        this.reportComments[report.id] = [];
+        this.reportComments[report.id] = this.reportComments[report.id] ?? [];
+        this.hasMoreServerComments[report.id] = false;
+        this.syncVisibleComments(report.id);
         this.cdr.markForCheck();
       });
     }
+  }
+
+  private applyCommentDocChanges(
+    currentComments: Comment[],
+    changes: any[],
+    reportId: string,
+  ): Comment[] {
+    if (!changes || changes.length === 0) {
+      return currentComments;
+    }
+
+    const nextComments = [...currentComments];
+
+    for (const change of changes) {
+      if (!change?.doc) continue;
+
+      const mappedComment = this.mapComment(change.doc, reportId);
+
+      switch (change.type) {
+        case 'added':
+          if (change.newIndex >= 0 && change.newIndex <= nextComments.length) {
+            nextComments.splice(change.newIndex, 0, mappedComment);
+          } else {
+            nextComments.push(mappedComment);
+          }
+          break;
+
+        case 'modified': {
+          if (change.oldIndex >= 0 && change.oldIndex < nextComments.length) {
+            nextComments.splice(change.oldIndex, 1);
+          } else {
+            const staleIndex = nextComments.findIndex(
+              (comment) => comment.id === mappedComment.id,
+            );
+            if (staleIndex >= 0) {
+              nextComments.splice(staleIndex, 1);
+            }
+          }
+
+          if (change.newIndex >= 0 && change.newIndex <= nextComments.length) {
+            nextComments.splice(change.newIndex, 0, mappedComment);
+          } else {
+            nextComments.push(mappedComment);
+          }
+          break;
+        }
+
+        case 'removed': {
+          if (change.oldIndex >= 0 && change.oldIndex < nextComments.length) {
+            nextComments.splice(change.oldIndex, 1);
+          } else {
+            const removedIndex = nextComments.findIndex(
+              (comment) => comment.id === change.doc.id,
+            );
+            if (removedIndex >= 0) {
+              nextComments.splice(removedIndex, 1);
+            }
+          }
+          break;
+        }
+
+        default:
+          break;
+      }
+    }
+
+    return nextComments;
   }
 
   private mapComment(doc: any, reportId: string): Comment {
@@ -578,6 +1005,7 @@ export class ReportsComponent implements OnInit, OnDestroy {
       text: data.text || '',
       author: data.author || 'Anonymous',
       timestamp: timestampDate,
+      displayTime: this.formatCommentTime(timestampDate),
       greenFlags: data.greenFlags || 0,
       redFlags: data.redFlags || 0,
       reportId: data.reportId || reportId,
@@ -603,3 +1031,4 @@ export class ReportsComponent implements OnInit, OnDestroy {
     return timestamp.toLocaleDateString();
   }
 }
+

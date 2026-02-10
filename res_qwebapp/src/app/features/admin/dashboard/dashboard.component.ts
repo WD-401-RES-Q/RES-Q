@@ -1,12 +1,10 @@
-import { Component, OnDestroy, OnInit, ViewChild, ElementRef } from '@angular/core';
+import { Component, OnDestroy, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { NgChartsModule } from 'ng2-charts';
 import { ChartConfiguration, ChartOptions } from 'chart.js';
 import 'chart.js/auto';
 import { FirestoreService } from '../../../core/services/firestore.service';
 import { Subscription } from 'rxjs';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 
 // FontAwesome
 import { FontAwesomeModule } from '@fortawesome/angular-fontawesome';
@@ -26,6 +24,9 @@ type ReportRecord = {
   timestamp?: any;
   [key: string]: any;
 };
+
+type JsPdfCtor = new (options?: any) => any;
+type Html2CanvasFn = (element: HTMLElement, options?: any) => Promise<HTMLCanvasElement>;
 
 @Component({
   selector: 'app-dashboard',
@@ -135,6 +136,15 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private allReports: ReportRecord[] = [];
   latestReports: ReportRecord[] = [];
   private sub?: Subscription;
+  private hasMoreReportsSub?: Subscription;
+  private hasMoreReports = true;
+  private dashboardHydrationInProgress = false;
+  private readonly dashboardReportsTarget = 600;
+  private readonly dashboardHydrationBatchLimit = 6;
+  private jsPdfCtorPromise?: Promise<JsPdfCtor>;
+  private html2CanvasPromise?: Promise<Html2CanvasFn>;
+  private readonly jsPdfScriptUrl = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js';
+  private readonly html2CanvasScriptUrl = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
 
   onTimeRangeChange(value: string) {
     this.selectedTimeRange = value;
@@ -155,6 +165,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
         this.computeStatusCounts(reports);
         this.computeCategoryCounts(reports);
         this.updateChartForRange();
+        void this.hydrateDashboardReports();
       },
       error: (err) => {
         console.error('Failed to load reports:', err);
@@ -167,10 +178,98 @@ export class DashboardComponent implements OnInit, OnDestroy {
         this.updateChartForRange();
       },
     });
+
+    this.hasMoreReportsSub = this.firestoreService.hasMoreReports$.subscribe({
+      next: (hasMore) => {
+        this.hasMoreReports = hasMore;
+        void this.hydrateDashboardReports();
+      },
+      error: () => {
+        this.hasMoreReports = false;
+      },
+    });
   }
 
   ngOnDestroy() {
     if (this.sub) this.sub.unsubscribe();
+    if (this.hasMoreReportsSub) this.hasMoreReportsSub.unsubscribe();
+  }
+
+  private async hydrateDashboardReports(): Promise<void> {
+    if (this.dashboardHydrationInProgress) return;
+    if (!this.hasMoreReports) return;
+    if (this.allReports.length >= this.dashboardReportsTarget) return;
+
+    this.dashboardHydrationInProgress = true;
+    try {
+      let batchesLoaded = 0;
+      while (
+        this.hasMoreReports &&
+        this.allReports.length < this.dashboardReportsTarget &&
+        batchesLoaded < this.dashboardHydrationBatchLimit
+      ) {
+        batchesLoaded += 1;
+        await this.firestoreService.loadMoreReportsPage();
+      }
+    } catch (error) {
+      console.error('Dashboard report hydration failed:', error);
+    } finally {
+      this.dashboardHydrationInProgress = false;
+    }
+  }
+
+  private getJsPdfCtor(): Promise<JsPdfCtor> {
+    if (!this.jsPdfCtorPromise) {
+      this.jsPdfCtorPromise = this.loadExternalScript(this.jsPdfScriptUrl, 'jspdf-umd')
+        .then(() => {
+          const ctor = (window as any)?.jspdf?.jsPDF as JsPdfCtor | undefined;
+          if (!ctor) {
+            throw new Error('jsPDF script loaded but constructor is unavailable');
+          }
+          return ctor;
+        });
+    }
+    return this.jsPdfCtorPromise;
+  }
+
+  private getHtml2CanvasFn(): Promise<Html2CanvasFn> {
+    if (!this.html2CanvasPromise) {
+      this.html2CanvasPromise = this.loadExternalScript(this.html2CanvasScriptUrl, 'html2canvas-umd')
+        .then(() => {
+          const fn = (window as any)?.html2canvas as Html2CanvasFn | undefined;
+          if (!fn) {
+            throw new Error('html2canvas script loaded but function is unavailable');
+          }
+          return fn;
+        });
+    }
+    return this.html2CanvasPromise;
+  }
+
+  private loadExternalScript(src: string, scriptId: string): Promise<void> {
+    const existingScript = document.getElementById(scriptId) as HTMLScriptElement | null;
+    if (existingScript) {
+      if (existingScript.dataset?.['loaded'] === 'true') {
+        return Promise.resolve();
+      }
+      return new Promise((resolve, reject) => {
+        existingScript.addEventListener('load', () => resolve(), { once: true });
+        existingScript.addEventListener('error', () => reject(new Error(`Failed to load script: ${src}`)), { once: true });
+      });
+    }
+
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.id = scriptId;
+      script.src = src;
+      script.async = true;
+      script.onload = () => {
+        script.dataset['loaded'] = 'true';
+        resolve();
+      };
+      script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+      document.head.appendChild(script);
+    });
   }
 
   private resetCategoryCounts() {
@@ -468,7 +567,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   async printToPDF() {
     try {
-      const pdf = new jsPDF({
+      const JsPdf = await this.getJsPdfCtor();
+      const pdf = new JsPdf({
         orientation: 'portrait',
         unit: 'mm',
         format: 'a4',
@@ -505,7 +605,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
   }
 
-  private async addPDFHeader(pdf: jsPDF, yPosition: number): Promise<number> {
+  private async addPDFHeader(pdf: any, yPosition: number): Promise<number> {
     const pageWidth = pdf.internal.pageSize.getWidth();
     const headerHeight = 52;
 
@@ -542,7 +642,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return headerHeight;
   }
 
-  private addPDFSummary(pdf: jsPDF, yPosition: number, contentWidth: number, margin: number) {
+  private addPDFSummary(pdf: any, yPosition: number, contentWidth: number, margin: number) {
     pdf.setTextColor(26, 26, 26);
     pdf.setFontSize(12);
     pdf.setFont('helvetica', 'bold');
@@ -579,7 +679,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     pdf.setTextColor(0, 0, 0);
   }
 
-  private addPDFCategoryBreakdown(pdf: jsPDF, yPosition: number, contentWidth: number, margin: number) {
+  private addPDFCategoryBreakdown(pdf: any, yPosition: number, contentWidth: number, margin: number) {
     pdf.setTextColor(26, 26, 26);
     pdf.setFontSize(12);
     pdf.setFont('helvetica', 'bold');
@@ -728,7 +828,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   async printGraphToPDF() {
     try {
-      const pdf = new jsPDF({
+      const JsPdf = await this.getJsPdfCtor();
+      const html2canvas = await this.getHtml2CanvasFn();
+
+      const pdf = new JsPdf({
         orientation: 'landscape',
         unit: 'mm',
         format: 'a4',
@@ -831,7 +934,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     });
   }
 
-  private addPDFReportsTable(pdf: jsPDF, yPosition: number, contentWidth: number, margin: number) {
+  private addPDFReportsTable(pdf: any, yPosition: number, contentWidth: number, margin: number) {
     pdf.setTextColor(26, 26, 26);
     pdf.setFontSize(12);
     pdf.setFont('helvetica', 'bold');

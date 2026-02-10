@@ -18,6 +18,14 @@ class _NotificationsPageState extends State<NotificationsPage> {
   static const appRed = Color(0xFFFFC806);
   static const appBlack = Color(0xFF212121);
   static const appWhite = Color(0xFFF7F8F3);
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  late final Stream<List<_NotificationItem>> _combinedNotificationsStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _combinedNotificationsStream = _getCombinedNotificationsStream();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -68,7 +76,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
   Widget _buildUnifiedNotificationFeed() {
     return StreamBuilder<List<_NotificationItem>>(
-      stream: _getCombinedNotificationsStream(),
+      stream: _combinedNotificationsStream,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
@@ -153,82 +161,204 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final isResponder = _isResponderSession();
     final responderDocId = _getResponderDocId();
     final reportOwnerId = _getCurrentUserReportOwnerId();
-
-    List<_NotificationItem> announcements = [];
-    List<_NotificationItem> reports = [];
+    final announcementsById = <String, _NotificationItem>{};
+    final reportsById = <String, _NotificationItem>{};
+    final announcementSignatureById = <String, int>{};
+    final reportSignatureById = <String, int>{};
+    int? previousSignature;
 
     void emitCombined() {
       if (controller.isClosed) return;
-      final combined = [...announcements, ...reports]
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      controller.add(combined);
+      final combined =
+          <_NotificationItem>[
+            ...announcementsById.values,
+            ...reportsById.values,
+          ]..sort((a, b) {
+            final timestampCompare = b.timestamp.compareTo(a.timestamp);
+            if (timestampCompare != 0) return timestampCompare;
+            return a.id.compareTo(b.id);
+          });
+      final signature = _calculateNotificationSignature(combined);
+      if (signature == previousSignature) return;
+      previousSignature = signature;
+      controller.add(List<_NotificationItem>.unmodifiable(combined));
     }
 
-    final announcementsSub = FirebaseFirestore.instance
+    void applyAnnouncementChanges(
+      QuerySnapshot<Map<String, dynamic>> snapshot,
+    ) {
+      if (snapshot.docChanges.isEmpty) {
+        final nextAnnouncementsById = <String, _NotificationItem>{};
+        final nextSignatureById = <String, int>{};
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          if (data['isPlaceholder'] == true) continue;
+          final item = _NotificationItem.fromAnnouncement(doc);
+          nextAnnouncementsById[doc.id] = item;
+          nextSignatureById[doc.id] = _calculateNotificationItemSignature(item);
+        }
+        final hasChanges = _hasSignatureDiff(
+          currentSignatures: announcementSignatureById,
+          nextSignatures: nextSignatureById,
+        );
+        if (!hasChanges) return;
+        announcementsById
+          ..clear()
+          ..addAll(nextAnnouncementsById);
+        announcementSignatureById
+          ..clear()
+          ..addAll(nextSignatureById);
+        emitCombined();
+        return;
+      }
+
+      var hasChanges = false;
+      for (final change in snapshot.docChanges) {
+        final doc = change.doc;
+        if (change.type == DocumentChangeType.removed) {
+          final removedAnnouncement = announcementsById.remove(doc.id) != null;
+          final removedSignature =
+              announcementSignatureById.remove(doc.id) != null;
+          hasChanges = removedAnnouncement || removedSignature || hasChanges;
+          continue;
+        }
+
+        final data = doc.data();
+        if (data == null || data['isPlaceholder'] == true) {
+          final removedAnnouncement = announcementsById.remove(doc.id) != null;
+          final removedSignature =
+              announcementSignatureById.remove(doc.id) != null;
+          hasChanges = removedAnnouncement || removedSignature || hasChanges;
+          continue;
+        }
+        final item = _NotificationItem.fromAnnouncement(doc);
+        final nextSignature = _calculateNotificationItemSignature(item);
+        final previousSignatureForDoc = announcementSignatureById[doc.id];
+        if (previousSignatureForDoc == nextSignature &&
+            announcementsById.containsKey(doc.id)) {
+          continue;
+        }
+        announcementsById[doc.id] = item;
+        announcementSignatureById[doc.id] = nextSignature;
+        hasChanges = true;
+      }
+      if (hasChanges) {
+        emitCombined();
+      }
+    }
+
+    void applyReportChanges(QuerySnapshot<Map<String, dynamic>> snapshot) {
+      if (snapshot.docChanges.isEmpty) {
+        final nextReportsById = <String, _NotificationItem>{};
+        final nextSignatureById = <String, int>{};
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          if (!_shouldIncludeReportForFeed(
+            data,
+            isResponder: isResponder,
+            reportOwnerId: reportOwnerId,
+          )) {
+            continue;
+          }
+          final item = _NotificationItem.fromReport(
+            doc,
+            deploymentNotification: isResponder,
+          );
+          nextReportsById[doc.id] = item;
+          nextSignatureById[doc.id] = _calculateNotificationItemSignature(item);
+        }
+        final hasChanges = _hasSignatureDiff(
+          currentSignatures: reportSignatureById,
+          nextSignatures: nextSignatureById,
+        );
+        if (!hasChanges) return;
+        reportsById
+          ..clear()
+          ..addAll(nextReportsById);
+        reportSignatureById
+          ..clear()
+          ..addAll(nextSignatureById);
+        emitCombined();
+        return;
+      }
+
+      var hasChanges = false;
+      for (final change in snapshot.docChanges) {
+        final doc = change.doc;
+        if (change.type == DocumentChangeType.removed) {
+          final removedReport = reportsById.remove(doc.id) != null;
+          final removedSignature = reportSignatureById.remove(doc.id) != null;
+          hasChanges = removedReport || removedSignature || hasChanges;
+          continue;
+        }
+
+        final data = doc.data();
+        if (data == null ||
+            !_shouldIncludeReportForFeed(
+              data,
+              isResponder: isResponder,
+              reportOwnerId: reportOwnerId,
+            )) {
+          final removedReport = reportsById.remove(doc.id) != null;
+          final removedSignature = reportSignatureById.remove(doc.id) != null;
+          hasChanges = removedReport || removedSignature || hasChanges;
+          continue;
+        }
+        final item = _NotificationItem.fromReport(
+          doc,
+          deploymentNotification: isResponder,
+        );
+        final nextSignature = _calculateNotificationItemSignature(item);
+        final previousSignatureForDoc = reportSignatureById[doc.id];
+        if (previousSignatureForDoc == nextSignature &&
+            reportsById.containsKey(doc.id)) {
+          continue;
+        }
+        reportsById[doc.id] = item;
+        reportSignatureById[doc.id] = nextSignature;
+        hasChanges = true;
+      }
+      if (hasChanges) {
+        emitCombined();
+      }
+    }
+
+    final announcementsSub = _firestore
         .collection('announcements')
         .orderBy('createdAt', descending: true)
         .limit(20)
         .snapshots()
-        .listen((snapshot) {
-          announcements = snapshot.docs
-              .where((doc) {
-                final data = doc.data();
-                return data['isPlaceholder'] != true;
-              })
-              .map((doc) => _NotificationItem.fromAnnouncement(doc))
-              .toList();
-          emitCombined();
-        }, onError: controller.addError);
+        .listen(applyAnnouncementChanges, onError: controller.addError);
 
     Query<Map<String, dynamic>> reportsQuery;
     if (isResponder && responderDocId != null && responderDocId.isNotEmpty) {
-      reportsQuery = FirebaseFirestore.instance
+      reportsQuery = _firestore
           .collection('reports')
           .where('responderId', isEqualTo: responderDocId)
           .limit(40);
     } else if (isResponder) {
-      reportsQuery = FirebaseFirestore.instance
+      reportsQuery = _firestore
           .collection('reports')
           .where('responderId', isEqualTo: '__none__')
           .limit(1);
     } else {
       if (reportOwnerId != null && reportOwnerId.isNotEmpty) {
-        reportsQuery = FirebaseFirestore.instance
+        reportsQuery = _firestore
             .collection('reports')
             .where('userId', isEqualTo: reportOwnerId)
             .limit(40);
       } else {
-        reportsQuery = FirebaseFirestore.instance
+        reportsQuery = _firestore
             .collection('reports')
             .orderBy('reportedAt', descending: true)
             .limit(30);
       }
     }
 
-    final reportsSub = reportsQuery.snapshots().listen((snapshot) {
-      reports = snapshot.docs
-          .where((doc) {
-            final data = doc.data();
-            if (isResponder) {
-              return (data['responderId'] as String?)?.trim().isNotEmpty ==
-                  true;
-            }
-            if (reportOwnerId != null && reportOwnerId.isNotEmpty) {
-              return true;
-            }
-            return data['location'] != null ||
-                data['incidentLocation'] != null ||
-                data['reporterLocation'] != null;
-          })
-          .map(
-            (doc) => _NotificationItem.fromReport(
-              doc,
-              deploymentNotification: isResponder,
-            ),
-          )
-          .toList();
-      emitCombined();
-    }, onError: controller.addError);
+    final reportsSub = reportsQuery.snapshots().listen(
+      applyReportChanges,
+      onError: controller.addError,
+    );
 
     controller.onCancel = () async {
       await announcementsSub.cancel();
@@ -236,6 +366,74 @@ class _NotificationsPageState extends State<NotificationsPage> {
     };
 
     return controller.stream;
+  }
+
+  bool _hasSignatureDiff({
+    required Map<String, int> currentSignatures,
+    required Map<String, int> nextSignatures,
+  }) {
+    if (currentSignatures.length != nextSignatures.length) {
+      return true;
+    }
+    for (final entry in nextSignatures.entries) {
+      if (currentSignatures[entry.key] != entry.value) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  int _calculateNotificationItemSignature(_NotificationItem notification) {
+    return Object.hash(
+      notification.id,
+      notification.type.index,
+      notification.timestamp.millisecondsSinceEpoch,
+      notification.title,
+      notification.subtitle,
+      notification.status,
+      notification.location,
+      notification.imageUrl,
+      notification.incidentType,
+      notification.reporter,
+      notification.isNew,
+    );
+  }
+
+  bool _shouldIncludeReportForFeed(
+    Map<String, dynamic> data, {
+    required bool isResponder,
+    required String? reportOwnerId,
+  }) {
+    if (isResponder) {
+      return (data['responderId'] as String?)?.trim().isNotEmpty == true;
+    }
+    if (reportOwnerId != null && reportOwnerId.isNotEmpty) {
+      return true;
+    }
+    return data['location'] != null ||
+        data['incidentLocation'] != null ||
+        data['reporterLocation'] != null;
+  }
+
+  int _calculateNotificationSignature(List<_NotificationItem> notifications) {
+    var signature = notifications.length;
+    for (final notification in notifications) {
+      signature = Object.hash(
+        signature,
+        notification.id,
+        notification.type.index,
+        notification.timestamp.millisecondsSinceEpoch,
+        notification.title,
+        notification.subtitle,
+        notification.status,
+        notification.location,
+        notification.imageUrl,
+        notification.incidentType,
+        notification.reporter,
+        notification.isNew,
+      );
+    }
+    return signature;
   }
 
   bool _isResponderSession() {
@@ -272,8 +470,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
   Widget _buildNotificationCard(_NotificationItem notification) {
     final isAnnouncement = notification.type == _NotificationType.announcement;
     final timeAgo = _getTimeAgo(notification.timestamp);
+    final incidentColor = _getIncidentColor(notification.incidentType);
+    final incidentIcon = _getIncidentIcon(notification.incidentType);
 
     return GestureDetector(
+      key: ValueKey(notification.feedKey),
       onTap: () => _showNotificationDetail(notification),
       child: Container(
         margin: const EdgeInsets.only(bottom: 2),
@@ -294,18 +495,12 @@ class _NotificationsPageState extends State<NotificationsPage> {
               decoration: BoxDecoration(
                 color: isAnnouncement
                     ? appRed.withOpacity(0.15)
-                    : _getIncidentColor(
-                        notification.incidentType,
-                      ).withOpacity(0.15),
+                    : incidentColor.withOpacity(0.15),
                 shape: BoxShape.circle,
               ),
               child: Icon(
-                isAnnouncement
-                    ? Icons.campaign
-                    : _getIncidentIcon(notification.incidentType),
-                color: isAnnouncement
-                    ? const Color(0xFFB8860B)
-                    : _getIncidentColor(notification.incidentType),
+                isAnnouncement ? Icons.campaign : incidentIcon,
+                color: isAnnouncement ? const Color(0xFFB8860B) : incidentColor,
                 size: 24,
               ),
             ),
@@ -436,6 +631,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
                   width: 60,
                   height: 60,
                   fit: BoxFit.cover,
+                  filterQuality: FilterQuality.low,
+                  cacheWidth: 120,
+                  cacheHeight: 120,
                   errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                 ),
               ),
@@ -447,17 +645,17 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<void> _markNotificationAsRead(_NotificationItem notification) async {
+    if (!notification.isNew) return;
     try {
       if (notification.type == _NotificationType.announcement) {
-        await FirebaseFirestore.instance
+        await _firestore
             .collection('announcements')
             .doc(notification.id)
             .update({'isNew': false});
       } else {
-        await FirebaseFirestore.instance
-            .collection('reports')
-            .doc(notification.id)
-            .update({'isNew': false});
+        await _firestore.collection('reports').doc(notification.id).update({
+          'isNew': false,
+        });
       }
     } catch (e) {
       debugPrint('Error marking notification as read: $e');
@@ -806,6 +1004,8 @@ class _NotificationItem {
     this.status,
     this.isNew = false,
   });
+
+  String get feedKey => '${type.index}:$id';
 
   factory _NotificationItem.fromAnnouncement(
     DocumentSnapshot<Map<String, dynamic>> doc,
