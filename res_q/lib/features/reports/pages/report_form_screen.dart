@@ -466,12 +466,17 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         );
       }
 
+      final profilePhotoUrl =
+          UserSession.currentUserData?['profilePhotoUrl']?.toString().trim() ??
+          '';
+
       final docRef = await FirebaseFirestore.instance
           .collection('reports')
           .add({
             'reportId': reportId, // Custom readable report ID
             'userId': userId, // User ID for tracking
             'name': _fullName ?? 'Unknown',
+            if (profilePhotoUrl.isNotEmpty) 'profilePhotoUrl': profilePhotoUrl,
             'contactNumber': _contactNumber ?? 'Unknown',
             'incidentType': incidentTypeValue,
             'details': _informationController.text.trim(),
@@ -555,6 +560,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 Navigator.of(context).pop(); // Close dialog
                 final reportData = {
                   'name': _fullName ?? 'Unknown',
+                  if (profilePhotoUrl.isNotEmpty)
+                    'profilePhotoUrl': profilePhotoUrl,
                   'contactNumber': _contactNumber ?? 'Unknown',
                   'incidentType': incidentTypeValue,
                   'details': _informationController.text.trim(),

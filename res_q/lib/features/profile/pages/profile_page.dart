@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,16 +13,18 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:http/http.dart' as http;
 import '../../../common/services/user_session.dart';
 import '../../../common/services/notification_service.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../auth/pages/login_page.dart';
 
-// ============================================================================
-// TODO: Replace with your actual email address for feedback/reports
-// This email will receive all user feedback and problem reports
-// ============================================================================
+// Support inbox for feedback and user queries.
 const String kFeedbackEmail = 'resq42649@gmail.com';
+const String kEmailJsServiceId = 'service_yoyvzs4';
+const String kEmailJsTemplateId = 'template_yekv4k9';
+const String kEmailJsPublicKey = 'JLaponS_oi9inmIDR';
+const String kEmailJsEndpoint = 'https://api.emailjs.com/api/v1.0/email/send';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -47,6 +50,58 @@ class _ProfilePageState extends State<ProfilePage>
     return trimmed.isNotEmpty &&
         trimmed.contains('@') &&
         !trimmed.contains('YOUR_EMAIL_HERE');
+  }
+
+  bool _hasConfiguredEmailJs() {
+    return kEmailJsServiceId.trim().isNotEmpty &&
+        kEmailJsTemplateId.trim().isNotEmpty &&
+        kEmailJsPublicKey.trim().isNotEmpty &&
+        !kEmailJsServiceId.contains('YOUR_') &&
+        !kEmailJsTemplateId.contains('YOUR_') &&
+        !kEmailJsPublicKey.contains('YOUR_');
+  }
+
+  Future<bool> _sendSupportEmail({
+    required String subject,
+    required String message,
+    required String senderName,
+    required String senderEmail,
+  }) async {
+    if (!_hasConfiguredSupportEmail() || !_hasConfiguredEmailJs()) {
+      return false;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse(kEmailJsEndpoint),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'service_id': kEmailJsServiceId,
+          'template_id': kEmailJsTemplateId,
+          'user_id': kEmailJsPublicKey,
+          'template_params': {
+            'to_email': kFeedbackEmail,
+            'to_name': 'RES-Q Support',
+            'subject': subject,
+            'message': message,
+            'from_name': senderName,
+            'reply_to': senderEmail,
+          },
+        }),
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return true;
+      }
+
+      debugPrint(
+        'EmailJS send failed [${response.statusCode}]: ${response.body}',
+      );
+      return false;
+    } catch (e) {
+      debugPrint('EmailJS send error: $e');
+      return false;
+    }
   }
 
   void _showSupportEmailNotConfiguredMessage() {
@@ -2684,51 +2739,50 @@ class _ProfilePageState extends State<ProfilePage>
                           final userData = UserSession.currentUserData ?? {};
                           final displayName =
                               userData['fullName']?.toString() ?? 'User';
-                          final email = userData['email']?.toString() ?? '';
-                          if (!_hasConfiguredSupportEmail()) {
+                          final email =
+                              userData['email']?.toString() ??
+                              'no-email@resq.local';
+                          final contact =
+                              userData['contactNumber']?.toString() ??
+                              userData['phoneNumber']?.toString() ??
+                              'N/A';
+                          if (!_hasConfiguredSupportEmail() ||
+                              !_hasConfiguredEmailJs()) {
                             setModalState(() {
                               isSubmitting = false;
                               errorMessage =
-                                  'Support email is not configured yet.';
+                                  'Support email service is not configured yet.';
                             });
                             return;
                           }
 
-                          final Uri emailUri = Uri(
-                            scheme: 'mailto',
-                            path: kFeedbackEmail,
-                            query: Uri.encodeFull(
-                              'subject=RESQ Problem Report: $problemType&'
-                              'body=Problem Type: $problemType\n\n'
-                              'Description:\n$description\n\n'
-                              '---\n'
-                              'Reported by: $displayName\n'
-                              'User email: $email',
-                            ),
+                          final sent = await _sendSupportEmail(
+                            subject: 'RESQ Problem Report: $problemType',
+                            senderName: displayName,
+                            senderEmail: email,
+                            message:
+                                'Problem Type: $problemType\n\n'
+                                'Description:\n$description\n\n'
+                                '---\n'
+                                'Reported by: $displayName\n'
+                                'User email: $email\n'
+                                'Contact number: $contact',
                           );
 
-                          try {
-                            if (await canLaunchUrl(emailUri)) {
-                              await launchUrl(emailUri);
-                              if (!context.mounted) return;
-                              Navigator.pop(context);
-                              AppSnackBar.show(
-                                context,
-                                'Email app opened. Please send your report.',
-                                type: AppSnackBarType.success,
-                                useRootOverlay: true,
-                              );
-                            } else {
-                              setModalState(() {
-                                isSubmitting = false;
-                                errorMessage = 'Could not open email app';
-                              });
-                            }
-                          } catch (e) {
-                            debugPrint('Failed to open email: $e');
+                          if (sent) {
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                            AppSnackBar.show(
+                              context,
+                              'Report sent successfully.',
+                              type: AppSnackBarType.success,
+                              useRootOverlay: true,
+                            );
+                          } else {
                             setModalState(() {
                               isSubmitting = false;
-                              errorMessage = 'Failed to open email app';
+                              errorMessage =
+                                  'Failed to send report. Please try again.';
                             });
                           }
                         },
@@ -2869,55 +2923,50 @@ class _ProfilePageState extends State<ProfilePage>
                               userData['fullName']?.toString() ??
                               userData['contactNumber']?.toString() ??
                               'User';
-                          final email = userData['email']?.toString() ?? '';
+                          final email =
+                              userData['email']?.toString() ??
+                              'no-email@resq.local';
+                          final contact =
+                              userData['contactNumber']?.toString() ??
+                              userData['phoneNumber']?.toString() ??
+                              'N/A';
 
-                          if (!_hasConfiguredSupportEmail()) {
+                          if (!_hasConfiguredSupportEmail() ||
+                              !_hasConfiguredEmailJs()) {
                             setModalState(() {
                               isSubmitting = false;
                               errorMessage =
-                                  'Support email is not configured yet.';
+                                  'Support email service is not configured yet.';
                             });
                             return;
                           }
-
-                          final ratingStars =
-                              '★' * feedbackRating + '☆' * (5 - feedbackRating);
-
-                          final Uri emailUri = Uri(
-                            scheme: 'mailto',
-                            path: kFeedbackEmail,
-                            query: Uri.encodeFull(
-                              'subject=RESQ App Feedback&'
-                              'body=Rating: $ratingStars ($feedbackRating/5)\n\n'
-                              'Feedback:\n$feedback\n\n'
-                              '---\n'
-                              'From: $displayName\n'
-                              'User email: $email',
-                            ),
+                          final sent = await _sendSupportEmail(
+                            subject: 'RESQ App Feedback',
+                            senderName: displayName,
+                            senderEmail: email,
+                            message:
+                                'Rating: $feedbackRating/5\n\n'
+                                'Feedback:\n$feedback\n\n'
+                                '---\n'
+                                'From: $displayName\n'
+                                'User email: $email\n'
+                                'Contact number: $contact',
                           );
 
-                          try {
-                            if (await canLaunchUrl(emailUri)) {
-                              await launchUrl(emailUri);
-                              if (!context.mounted) return;
-                              Navigator.pop(context);
-                              AppSnackBar.show(
-                                context,
-                                'Email app opened. Thank you for your feedback!',
-                                type: AppSnackBarType.success,
-                                useRootOverlay: true,
-                              );
-                            } else {
-                              setModalState(() {
-                                isSubmitting = false;
-                                errorMessage = 'Could not open email app';
-                              });
-                            }
-                          } catch (e) {
-                            debugPrint('Failed to open email: $e');
+                          if (sent) {
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                            AppSnackBar.show(
+                              context,
+                              'Feedback sent. Thank you!',
+                              type: AppSnackBarType.success,
+                              useRootOverlay: true,
+                            );
+                          } else {
                             setModalState(() {
                               isSubmitting = false;
-                              errorMessage = 'Failed to open email app';
+                              errorMessage =
+                                  'Failed to send feedback. Please try again.';
                             });
                           }
                         },
