@@ -26,6 +26,7 @@ class NotificationService {
   StreamSubscription<QuerySnapshot>? _reportsSubscription;
   Position? _lastKnownPosition;
   String? _currentUserId;
+  bool _isInitialized = false;
 
   // Notification channel for Android
   static const AndroidNotificationChannel _channel = AndroidNotificationChannel(
@@ -41,6 +42,13 @@ class NotificationService {
 
   /// Initialize the notification service
   Future<void> initialize({String? userId}) async {
+    if (_isInitialized) {
+      if (userId != null) {
+        setUserId(userId);
+      }
+      return;
+    }
+
     _currentUserId = userId;
 
     // Request notification permissions
@@ -61,6 +69,8 @@ class NotificationService {
 
     // Start listening for nearby reports
     await _startNearbyReportsListener();
+
+    _isInitialized = true;
   }
 
   /// Request notification permissions
@@ -72,12 +82,16 @@ class NotificationService {
       provisional: false,
     );
 
-    debugPrint('Notification permission status: ${settings.authorizationStatus}');
+    debugPrint(
+      'Notification permission status: ${settings.authorizationStatus}',
+    );
   }
 
   /// Initialize local notifications plugin
   Future<void> _initializeLocalNotifications() async {
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -97,7 +111,8 @@ class NotificationService {
     // Create notification channel for Android
     await _localNotifications
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.createNotificationChannel(_channel);
   }
 
@@ -118,7 +133,9 @@ class NotificationService {
 
     // Handle when app is opened from notification
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      debugPrint('App opened from notification: ${message.notification?.title}');
+      debugPrint(
+        'App opened from notification: ${message.notification?.title}',
+      );
     });
 
     // Set background handler
@@ -159,7 +176,8 @@ class NotificationService {
     const androidDetails = AndroidNotificationDetails(
       'resq_notifications',
       'RES-Q Notifications',
-      channelDescription: 'Notifications for nearby incidents and announcements',
+      channelDescription:
+          'Notifications for nearby incidents and announcements',
       importance: Importance.high,
       priority: Priority.high,
       playSound: true,
@@ -196,7 +214,8 @@ class NotificationService {
     const androidDetails = AndroidNotificationDetails(
       'resq_notifications',
       'RES-Q Notifications',
-      channelDescription: 'Notifications for nearby incidents and announcements',
+      channelDescription:
+          'Notifications for nearby incidents and announcements',
       importance: Importance.high,
       priority: Priority.high,
       playSound: true,
@@ -242,13 +261,13 @@ class NotificationService {
           .doc(_currentUserId)
           .collection('notifications')
           .add({
-        'title': message.notification?.title ?? '',
-        'body': message.notification?.body ?? '',
-        'type': message.data['type'] ?? 'announcement',
-        'data': message.data,
-        'read': false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+            'title': message.notification?.title ?? '',
+            'body': message.notification?.body ?? '',
+            'type': message.data['type'] ?? 'announcement',
+            'data': message.data,
+            'read': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
     } catch (e) {
       debugPrint('Error saving notification to Firestore: $e');
     }
@@ -269,14 +288,14 @@ class NotificationService {
           .doc(_currentUserId)
           .collection('notifications')
           .add({
-        'title': title,
-        'body': body,
-        'type': 'nearby_incident',
-        'reportId': reportId,
-        'incidentType': incidentType,
-        'read': false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+            'title': title,
+            'body': body,
+            'type': 'nearby_incident',
+            'reportId': reportId,
+            'incidentType': incidentType,
+            'read': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
     } catch (e) {
       debugPrint('Error saving incident notification: $e');
     }
@@ -299,50 +318,54 @@ class NotificationService {
         .limit(20)
         .snapshots()
         .listen((snapshot) async {
-      if (_lastKnownPosition == null) return;
+          if (_lastKnownPosition == null) return;
 
-      for (final change in snapshot.docChanges) {
-        if (change.type == DocumentChangeType.added) {
-          final doc = change.doc;
-          final data = doc.data();
-          if (data == null) continue;
+          for (final change in snapshot.docChanges) {
+            if (change.type == DocumentChangeType.added) {
+              final doc = change.doc;
+              final data = doc.data();
+              if (data == null) continue;
 
-          // Skip if already notified
-          if (notifiedReports.contains(doc.id)) continue;
+              // Skip if already notified
+              if (notifiedReports.contains(doc.id)) continue;
 
-          // Check if report is within vicinity
-          final reportLat = data['latitude'] as double?;
-          final reportLng = data['longitude'] as double?;
+              // Check if report is within vicinity
+              final reportLat = data['latitude'] as double?;
+              final reportLng = data['longitude'] as double?;
 
-          if (reportLat != null && reportLng != null) {
-            final distance = _calculateDistance(
-              _lastKnownPosition!.latitude,
-              _lastKnownPosition!.longitude,
-              reportLat,
-              reportLng,
-            );
+              if (reportLat != null && reportLng != null) {
+                final distance = _calculateDistance(
+                  _lastKnownPosition!.latitude,
+                  _lastKnownPosition!.longitude,
+                  reportLat,
+                  reportLng,
+                );
 
-            // If within 5km, show notification
-            if (distance <= defaultVicinityRadius) {
-              final incidentType = data['incidentType'] as String? ?? 'Incident';
-              final description = data['description'] as String? ?? '';
-              final distanceKm = (distance / 1000).toStringAsFixed(1);
+                // If within 5km, show notification
+                if (distance <= defaultVicinityRadius) {
+                  final incidentType =
+                      data['incidentType'] as String? ?? 'Incident';
+                  final description = data['description'] as String? ?? '';
+                  final distanceKm = (distance / 1000).toStringAsFixed(1);
 
-              await showNearbyIncidentNotification(
-                title: '$incidentType Reported Nearby',
-                body: '${distanceKm}km away: $description',
-                reportId: doc.id,
-                incidentType: incidentType,
-              );
+                  await showNearbyIncidentNotification(
+                    title: '$incidentType Reported Nearby',
+                    body: '${distanceKm}km away: $description',
+                    reportId: doc.id,
+                    incidentType: incidentType,
+                  );
 
-              // Mark as notified
-              notifiedReports.add(doc.id);
-              await prefs.setStringList('notified_reports', notifiedReports);
+                  // Mark as notified
+                  notifiedReports.add(doc.id);
+                  await prefs.setStringList(
+                    'notified_reports',
+                    notifiedReports,
+                  );
+                }
+              }
             }
           }
-        }
-      }
-    });
+        });
   }
 
   /// Update user's location
@@ -358,7 +381,8 @@ class NotificationService {
         desiredAccuracy: LocationAccuracy.medium,
       );
       debugPrint(
-          'User location updated: ${_lastKnownPosition?.latitude}, ${_lastKnownPosition?.longitude}');
+        'User location updated: ${_lastKnownPosition?.latitude}, ${_lastKnownPosition?.longitude}',
+      );
     } catch (e) {
       debugPrint('Error getting user location: $e');
     }
@@ -375,7 +399,8 @@ class NotificationService {
     final dLat = _toRadians(lat2 - lat1);
     final dLon = _toRadians(lon2 - lon1);
 
-    final a = sin(dLat / 2) * sin(dLat / 2) +
+    final a =
+        sin(dLat / 2) * sin(dLat / 2) +
         cos(_toRadians(lat1)) *
             cos(_toRadians(lat2)) *
             sin(dLon / 2) *

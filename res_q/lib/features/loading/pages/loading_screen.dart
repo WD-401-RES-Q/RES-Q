@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../auth/pages/login_page.dart';
 import '../../../common/services/location_service.dart';
+import '../../../common/services/notification_service.dart';
 
 class LoadingScreen extends StatefulWidget {
   const LoadingScreen({super.key});
@@ -20,6 +21,13 @@ class _LoadingScreenState extends State<LoadingScreen> {
   void _initializeApp() async {
     // Request location permission
     await LocationService.requestLocationPermission();
+
+    // Initialize notifications (permission + FCM handlers).
+    try {
+      await NotificationService().initialize();
+    } catch (e) {
+      debugPrint('Notification init failed: $e');
+    }
 
     // Wait 3 seconds then navigate
     Future.delayed(const Duration(seconds: 3), () {
@@ -48,7 +56,7 @@ class _LoadingContent extends StatelessWidget {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        SvgPicture.asset('assets/icons/RES-Q_LOGO.svg', height: 100),
+        SvgPicture.asset('assets/icons/logo/RES-Q_LOGO.svg', height: 100),
         const SizedBox(height: 20),
         const Text(
           "EVERY SECOND COUNTS",

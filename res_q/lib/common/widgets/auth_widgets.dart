@@ -1,4 +1,4 @@
-﻿import 'dart:io';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -44,7 +44,10 @@ class ResqLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SvgPicture.asset('assets/icons/RES-Q_LOGO.svg', height: fontSize);
+    return SvgPicture.asset(
+      'assets/icons/logo/RES-Q_LOGO.svg',
+      height: fontSize,
+    );
   }
 }
 
@@ -220,7 +223,7 @@ class IdPhotoUploadWidget extends StatelessWidget {
                   child: Text(
                     idPhotoPath == null
                         ? '(Required) UPLOAD GOVERNMENT ID'
-                        : '✓ ID UPLOADED',
+                        : '? ID UPLOADED',
                     style: const TextStyle(
                       fontSize: 14,
                       color: Colors.black,

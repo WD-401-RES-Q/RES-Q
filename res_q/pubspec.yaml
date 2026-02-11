@@ -75,9 +75,9 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/icons/RES-Q_APP_LOGO.png"
+  image_path: "assets/icons/logo/RES-Q_APP_LOGO.png"
   adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: "assets/icons/RES-Q_APP_LOGO.png"
+  adaptive_icon_foreground: "assets/icons/logo/RES-Q_APP_LOGO.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -91,39 +91,18 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
-    - assets/icons/RES-Q_LOGO.svg
+    - assets/icons/buttons/
+    - assets/icons/call/
+    - assets/icons/locations/
+    - assets/icons/logo/
+    - assets/icons/navbar/
+    - assets/icons/rating/
     - assets/images/COMMUNITY-IMAGE-1.png
     - assets/images/COMMUNITY-IMAGE-2.png
     - assets/images/COMMUNITY-IMAGE-3.png
-    - assets/icons/CALLING-ICON.svg
     - assets/images/NOTIF-1.png
     - assets/images/NOTIF-2.png
     - assets/images/NOTIF-3.png
-    - assets/icons/PHONE-ICON.png
-    - assets/icons/FINAL-OTHERS-ICON.png
-    - assets/icons/FINAL-EARTHQUAKE-ICON.png
-    - assets/icons/FINAL-FIRE-ICON.png
-    - assets/icons/FINAL-FLOOD-ICON.png
-    - assets/icons/FINAL-ROAD-ICON.png
-    - assets/icons/FINAL-CRASH-ICON.png
-    - assets/icons/COMMUNITY-ICON.png
-    - assets/icons/COMMUNITY-ICON-YELLOW.png
-    - assets/icons/HOME-ICON.png
-    - assets/icons/HOME-ICON-YELLOW.png
-    - assets/icons/PROFILE-ICON.png
-    - assets/icons/PROFILE-ICON-YELLOW.png
-    - assets/icons/MAPS-ICON.png
-    - assets/icons/MAPS-ICON-YELLOW.png
-    - assets/icons/NOTICATIONS-ICON.png
-    - assets/icons/NOTICATIONS-ICON-YELLOW.png
-    - assets/icons/LOC-FIRE.png
-    - assets/icons/LOC-EARTHQUAKE.png
-    - assets/icons/LOC-FLOOD.png
-    - assets/icons/LOC-ROAD.png
-    - assets/icons/LOC-CRASH.png
-    - assets/icons/LOC-OTHERS.png
-    - assets/icons/rating-star.png
-    - assets/icons/rating-empty-circle.png
 
   fonts:
     - family: Roboto

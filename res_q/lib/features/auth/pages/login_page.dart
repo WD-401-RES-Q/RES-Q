@@ -13,6 +13,7 @@ import '../../home/pages/home_page.dart';
 import '../../semi_admin/pages/semi_admin_main_page.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/registration_prefs.dart';
+import '../../../common/services/notification_service.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 class LoginPage extends StatefulWidget {
@@ -203,7 +204,7 @@ class _LoginPageState extends State<LoginPage>
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const SemiAdminMainPage()),
+            MaterialPageRoute(builder: (_) => const SemiAdminMainScreen()),
           );
         }
         return;
@@ -256,6 +257,7 @@ class _LoginPageState extends State<LoginPage>
           '';
       if (phoneNumber.isNotEmpty) {
         UserSession.setUserId(phoneNumber);
+        NotificationService().setUserId(phoneNumber);
         debugPrint('✅ UserSession userId set to phone number: $phoneNumber');
       } else {
         debugPrint('⚠️ No phone number found in userData');
@@ -502,7 +504,7 @@ class _LoginPageState extends State<LoginPage>
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const SemiAdminMainPage()),
+            MaterialPageRoute(builder: (_) => const SemiAdminMainScreen()),
           );
         }
         return;
@@ -556,6 +558,7 @@ class _LoginPageState extends State<LoginPage>
           '';
       if (phoneNumber.isNotEmpty) {
         UserSession.setUserId(phoneNumber);
+        NotificationService().setUserId(phoneNumber);
         debugPrint('✅ UserSession userId set to phone number: $phoneNumber');
       } else {
         debugPrint('⚠️ No phone number found in userData');
@@ -774,7 +777,7 @@ class _LoginPageState extends State<LoginPage>
   }
 
   Widget _logo() {
-    return SvgPicture.asset('assets/icons/RES-Q_LOGO.svg', height: 53);
+    return SvgPicture.asset('assets/icons/logo/RES-Q_LOGO.svg', height: 53);
   }
 
   void _handlePinKey(String value) {

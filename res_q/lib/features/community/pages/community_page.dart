@@ -2624,9 +2624,10 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     }
 
     try {
-      await FirebaseFirestore.instance.collection('userVotes').doc(userPhone).set({
-        'commentVotes': _commentVotes,
-      }, SetOptions(merge: true));
+      await FirebaseFirestore.instance
+          .collection('userVotes')
+          .doc(userPhone)
+          .set({'commentVotes': _commentVotes}, SetOptions(merge: true));
     } catch (_) {}
   }
 
@@ -2646,9 +2647,10 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     }
 
     try {
-      await FirebaseFirestore.instance.collection('userVotes').doc(userPhone).set({
-        'commentVotes': _commentVotes,
-      }, SetOptions(merge: true));
+      await FirebaseFirestore.instance
+          .collection('userVotes')
+          .doc(userPhone)
+          .set({'commentVotes': _commentVotes}, SetOptions(merge: true));
     } catch (_) {}
   }
 
@@ -2845,7 +2847,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     String commentId, {
     String? parentReplyId,
   }) {
-    final replies = _repliesByCommentId[commentId] ?? const <Map<String, dynamic>>[];
+    final replies =
+        _repliesByCommentId[commentId] ?? const <Map<String, dynamic>>[];
     return replies.where((reply) {
       final parentId = reply['parentReplyId']?.toString();
       if (parentReplyId == null) {
@@ -3148,7 +3151,6 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               .doc(targetParentReplyId)
               .update({'replyCount': FieldValue.increment(1)});
         } catch (_) {}
-
       }
 
       if (!mounted) return;
@@ -3216,7 +3218,11 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16, color: selected ? color : color.withOpacity(0.7)),
+            Icon(
+              icon,
+              size: 16,
+              color: selected ? color : color.withOpacity(0.7),
+            ),
             const SizedBox(width: 4),
             Text(
               label,
@@ -3270,9 +3276,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               child: TextField(
                 controller: _replyController,
                 maxLines: null,
-                inputFormatters: [
-                  LengthLimitingTextInputFormatter(256),
-                ],
+                inputFormatters: [LengthLimitingTextInputFormatter(256)],
                 style: const TextStyle(
                   fontFamily: 'RobotoCondensed',
                   fontSize: 13,
@@ -3321,11 +3325,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                           ),
                         ),
                       )
-                    : const Icon(
-                        Icons.send,
-                        color: Colors.white,
-                        size: 16,
-                      ),
+                    : const Icon(Icons.send, color: Colors.white, size: 16),
               ),
             ),
           ],
@@ -3367,8 +3367,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     final nestedReplies = _repliesForParent(commentId, parentReplyId: replyId);
     final directChildCount = nestedReplies.length;
     final storedReplyCount = reply['replyCount'] as int? ?? 0;
-    final replyCount =
-        storedReplyCount > directChildCount ? storedReplyCount : directChildCount;
+    final replyCount = storedReplyCount > directChildCount
+        ? storedReplyCount
+        : directChildCount;
     final level = depth + 1;
     final canReplyHere = level < _maxReplyDepth;
     final canShowChildren = level < _maxReplyDepth;
@@ -3377,7 +3378,10 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     );
     final showReplyInput =
         _replyingToCommentId == commentId && _replyingToReplyId == replyId;
-    final leftPadding = (10 + depth * 18).toDouble().clamp(10.0, 64.0).toDouble();
+    final leftPadding = (10 + depth * 18)
+        .toDouble()
+        .clamp(10.0, 64.0)
+        .toDouble();
 
     return Padding(
       padding: EdgeInsets.only(top: 8, left: leftPadding),
@@ -3482,7 +3486,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                     ),
                     if (replyCount > 0)
                       _buildCommentAction(
-                        icon: isExpanded ? Icons.expand_less : Icons.expand_more,
+                        icon: isExpanded
+                            ? Icons.expand_less
+                            : Icons.expand_more,
                         label: isExpanded ? 'Hide replies' : 'View replies',
                         color: appBlack,
                         selected: isExpanded,
@@ -3498,7 +3504,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                     replyingToAuthor: author,
                   ),
                 ],
-                if (isExpanded && nestedReplies.isNotEmpty && canShowChildren) ...[
+                if (isExpanded &&
+                    nestedReplies.isNotEmpty &&
+                    canShowChildren) ...[
                   const SizedBox(height: 4),
                   Column(
                     children: _buildReplyTree(
@@ -3508,7 +3516,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                     ),
                   ),
                 ],
-                if (isExpanded && nestedReplies.isNotEmpty && !canShowChildren) ...[
+                if (isExpanded &&
+                    nestedReplies.isNotEmpty &&
+                    !canShowChildren) ...[
                   const SizedBox(height: 4),
                   Text(
                     'Additional replies hidden (depth limit reached).',
@@ -3783,8 +3793,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                                                 : 'Reply',
                                             color: commentBlue,
                                             selected: showReplyInput,
-                                            onTap: () =>
-                                                _startReply(commentId),
+                                            onTap: () => _startReply(commentId),
                                           ),
                                           if (replyCount > 0)
                                             _buildCommentAction(
@@ -3833,7 +3842,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                                           )
                                         else
                                           Column(
-                                            children: _buildReplyTree(commentId),
+                                            children: _buildReplyTree(
+                                              commentId,
+                                            ),
                                           ),
                                       ],
                                       if (showReplyInput) ...[
@@ -4627,9 +4638,7 @@ class _CommentsPageState extends State<_CommentsPage> {
                   child: TextField(
                     controller: _commentController,
                     maxLines: null,
-                    inputFormatters: [
-                      LengthLimitingTextInputFormatter(256),
-                    ],
+                    inputFormatters: [LengthLimitingTextInputFormatter(256)],
                     style: const TextStyle(
                       fontFamily: 'RobotoCondensed',
                       fontSize: 13,

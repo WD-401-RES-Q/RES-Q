@@ -2025,17 +2025,17 @@ class _ReportMapPageState extends State<ReportMapPage>
   String _getMarkerAssetForIncidentType(String type) {
     switch (type.toUpperCase()) {
       case 'FIRE':
-        return 'assets/icons/LOC-FIRE.png';
+        return 'assets/icons/locations/LOC-FIRE.png';
       case 'FLOOD':
-        return 'assets/icons/LOC-FLOOD.png';
+        return 'assets/icons/locations/LOC-FLOOD.png';
       case 'EARTHQUAKE':
-        return 'assets/icons/LOC-EARTHQUAKE.png';
+        return 'assets/icons/locations/LOC-EARTHQUAKE.png';
       case 'VEHICULAR':
-        return 'assets/icons/LOC-CRASH.png';
+        return 'assets/icons/locations/LOC-CRASH.png';
       case 'ROAD OBSTRUCTION':
-        return 'assets/icons/LOC-ROAD.png';
+        return 'assets/icons/locations/LOC-OTHERS.png';
       default:
-        return 'assets/icons/LOC-OTHERS.png';
+        return 'assets/icons/locations/LOC-OTHERS.png';
     }
   }
 

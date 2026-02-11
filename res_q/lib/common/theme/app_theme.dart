@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 class AppColors {
   static const appRed = Color(0xFFAC1B22);
@@ -138,5 +138,3 @@ class AppTheme {
     ),
   );
 }
-
-

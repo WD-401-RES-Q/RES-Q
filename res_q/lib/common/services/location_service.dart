@@ -58,9 +58,7 @@ class LocationService {
   }
 
   /// Stream location updates for live tracking
-  static Stream<Position> getPositionStream({
-    int distanceFilterMeters = 5,
-  }) {
+  static Stream<Position> getPositionStream({int distanceFilterMeters = 5}) {
     return Geolocator.getPositionStream(
       locationSettings: LocationSettings(
         accuracy: LocationAccuracy.best,

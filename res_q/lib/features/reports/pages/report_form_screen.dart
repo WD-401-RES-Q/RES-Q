@@ -899,6 +899,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8F3),
       body: SafeArea(
+        bottom: false,
         child: SingleChildScrollView(
           child: GestureDetector(
             onTap: () => FocusScope.of(context).unfocus(),
@@ -919,7 +920,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                             child: Align(
                               alignment: Alignment.center,
                               child: SvgPicture.asset(
-                                "assets/icons/RES-Q_LOGO.svg",
+                                "assets/icons/logo/RES-Q_LOGO.svg",
                                 fit: BoxFit.contain,
                                 errorBuilder: (context, error, stackTrace) =>
                                     const Icon(

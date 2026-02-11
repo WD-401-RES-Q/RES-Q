@@ -61,6 +61,7 @@ class _MainPageState extends State<MainPage> {
         onTap: (i) => setState(() => _currentIndex = i),
       ),
       body: SafeArea(
+        bottom: false,
         child: IndexedStack(index: _currentIndex, children: pages),
       ),
     );
@@ -135,7 +136,7 @@ class _HomePageContentState extends State<_HomePageContent>
             child: SizedBox(
               height: 36,
               child: SvgPicture.asset(
-                "assets/icons/RES-Q_LOGO.svg",
+                "assets/icons/logo/RES-Q_LOGO.svg",
                 fit: BoxFit.contain,
                 errorBuilder: (context, error, stackTrace) => const Icon(
                   Icons.image_not_supported,
@@ -198,7 +199,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   child: _incidentCard(
                                     context,
                                     "EARTHQUAKE",
-                                    "assets/icons/FINAL-EARTHQUAKE-ICON.png",
+                                    "assets/icons/buttons/FINAL-EARTHQUAKE-ICON.png",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
                                   ),
@@ -210,7 +211,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   child: _incidentCard(
                                     context,
                                     "FLOOD",
-                                    "assets/icons/FINAL-FLOOD-ICON.png",
+                                    "assets/icons/buttons/FINAL-FLOOD-ICON.png",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
                                   ),
@@ -227,7 +228,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   child: _incidentCard(
                                     context,
                                     "FIRE",
-                                    "assets/icons/FINAL-FIRE-ICON.png",
+                                    "assets/icons/buttons/FINAL-FIRE-ICON.png",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
                                   ),
@@ -239,7 +240,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   child: _incidentCard(
                                     context,
                                     "ROAD CRASH",
-                                    "assets/icons/FINAL-CRASH-ICON.png",
+                                    "assets/icons/buttons/FINAL-CRASH-ICON.png",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
                                   ),
@@ -256,7 +257,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   child: _incidentCard(
                                     context,
                                     "OTHERS",
-                                    "assets/icons/FINAL-OTHERS-ICON.png",
+                                    "assets/icons/buttons/FINAL-OTHERS-ICON.png",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
                                   ),
