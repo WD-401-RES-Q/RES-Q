@@ -45,6 +45,7 @@ class ReportFormScreen extends StatefulWidget {
 }
 
 class _ReportFormScreenState extends State<ReportFormScreen> {
+  static const Distance _distanceCalculator = Distance();
   final TextEditingController _informationController = TextEditingController();
   final TextEditingController _barangayController = TextEditingController();
   final TextEditingController _otherIncidentController =
@@ -65,14 +66,27 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   CapturedMediaType? _capturedMediaType;
   final ImagePicker _picker = ImagePicker();
   bool _submitting = false;
-  int _navIndex = 0;
+  final int _navIndex = 0;
   int _injuredCount = 0;
   bool _needsAmbulance = false;
   final List<_VehicleInvolved> _vehicles = <_VehicleInvolved>[];
+  late final String _normalizedIncidentType;
+  late final bool _isVehicularIncidentType;
+  late final bool _isFireIncidentType;
+  late final bool _isFloodIncidentType;
+  late final bool _isOthersIncidentType;
 
   @override
   void initState() {
     super.initState();
+    _normalizedIncidentType = widget.incidentType.toUpperCase().trim();
+    _isVehicularIncidentType =
+        _normalizedIncidentType == 'VEHICULAR' ||
+        _normalizedIncidentType == 'ROAD CRASH' ||
+        _normalizedIncidentType == 'ROADCRASH';
+    _isFireIncidentType = _normalizedIncidentType == 'FIRE';
+    _isFloodIncidentType = _normalizedIncidentType == 'FLOOD';
+    _isOthersIncidentType = _normalizedIncidentType == 'OTHERS';
     _reportDate = _formatDate(DateTime.now());
     _loadUserInfo();
     if (_isVehicularIncident()) {
@@ -349,6 +363,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       return;
     }
 
+    final hasLocationAccess = await _ensureLocationAccessForReporting();
+    if (!hasLocationAccess) {
+      return;
+    }
+
     final hasReachedLimit = await _hasReachedReportLimit();
     if (hasReachedLimit) {
       if (!mounted) return;
@@ -366,6 +385,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
       String? mediaUrl;
       String? mediaType;
+      String? mediaPath;
 
       // Upload media only if captured (required by validation above)
       if (_capturedMedia != null) {
@@ -401,6 +421,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             .putData(data, metadata)
             .timeout(uploadTimeout);
 
+        mediaPath = uploadSnapshot.ref.fullPath;
         mediaUrl = await uploadSnapshot.ref.getDownloadURL().timeout(
           const Duration(seconds: 20),
         );
@@ -461,12 +482,17 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         );
       }
 
+      final profilePhotoUrl =
+          UserSession.currentUserData?['profilePhotoUrl']?.toString().trim() ??
+          '';
+
       final docRef = await FirebaseFirestore.instance
           .collection('reports')
           .add({
             'reportId': reportId, // Custom readable report ID
             'userId': userId, // User ID for tracking
             'name': _fullName ?? 'Unknown',
+            if (profilePhotoUrl.isNotEmpty) 'profilePhotoUrl': profilePhotoUrl,
             'contactNumber': _contactNumber ?? 'Unknown',
             'incidentType': incidentTypeValue,
             'details': _informationController.text.trim(),
@@ -492,6 +518,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 ? 'current'
                 : 'pin',
             'mediaUrl': mediaUrl,
+            'mediaPath': mediaPath,
             'mediaType': mediaType,
             // Keep incident pin immutable for maps/admin even when user shares
             // live location updates later.
@@ -550,6 +577,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                 Navigator.of(context).pop(); // Close dialog
                 final reportData = {
                   'name': _fullName ?? 'Unknown',
+                  if (profilePhotoUrl.isNotEmpty)
+                    'profilePhotoUrl': profilePhotoUrl,
                   'contactNumber': _contactNumber ?? 'Unknown',
                   'incidentType': incidentTypeValue,
                   'details': _informationController.text.trim(),
@@ -570,6 +599,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                     'otherIncidentType': _otherIncidentController.text.trim(),
                   },
                   'mediaUrl': mediaUrl,
+                  'mediaPath': mediaPath,
                   'mediaType': mediaType,
                   'reportedAt': now,
                   'locationSource':
@@ -786,6 +816,20 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         );
         return null;
       }
+      final position = await LocationService.getCurrentPosition();
+      if (position == null) {
+        _showLocationError(
+          'Unable to verify your current location. Please turn location on and try again.',
+        );
+        return null;
+      }
+      final userPoint = LatLng(position.latitude, position.longitude);
+      if (!_isWithinAngeles(userPoint)) {
+        _showLocationError(
+          'You must be physically inside Angeles City coverage to submit a report.',
+        );
+        return null;
+      }
       return _selectedLocation;
     } finally {
       if (mounted) {
@@ -797,7 +841,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   bool _isWithinAngeles(LatLng point) {
     const center = LatLng(15.1450, 120.5887);
     const radiusMeters = 6000.0;
-    final distance = const Distance().as(LengthUnit.Meter, center, point);
+    final distance = _distanceCalculator.as(LengthUnit.Meter, center, point);
     return distance <= radiusMeters;
   }
 
@@ -847,11 +891,117 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     );
   }
 
+  Future<bool> _ensureLocationAccessForReporting() async {
+    final serviceEnabled = await LocationService.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      await _showLocationSettingsDialog(
+        message:
+            'Location services are turned off. You must enable location to submit a report.',
+        settingsLabel: 'Open Location Settings',
+        onOpenSettings: Geolocator.openLocationSettings,
+      );
+      return false;
+    }
+
+    var permission = await LocationService.checkLocationPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      await _showLocationSettingsDialog(
+        message:
+            'Location permission is permanently denied for RES-Q. Enable it in app settings to submit a report.',
+        settingsLabel: 'Open App Settings',
+        onOpenSettings: Geolocator.openAppSettings,
+      );
+      return false;
+    }
+
+    if (permission != LocationPermission.always &&
+        permission != LocationPermission.whileInUse) {
+      await _showLocationSettingsDialog(
+        message:
+            'Location permission is required to submit a report. Please allow location access in app settings.',
+        settingsLabel: 'Open App Settings',
+        onOpenSettings: Geolocator.openAppSettings,
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  Future<void> _showLocationSettingsDialog({
+    required String message,
+    required String settingsLabel,
+    required Future<bool> Function() onOpenSettings,
+  }) async {
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Location Required',
+          style: TextStyle(
+            fontFamily: 'Roboto',
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            color: Color(0xFF111827),
+          ),
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF4B5563),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await onOpenSettings();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFAC1B22),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: Text(
+              settingsLabel,
+              style: const TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openPinPicker() async {
     final picked = await Navigator.of(
       context,
     ).push<LatLng>(MaterialPageRoute(builder: (_) => const _PinPickerPage()));
     if (picked == null) return;
+    if (_selectedLocation != null &&
+        _selectedLocation!.latitude == picked.latitude &&
+        _selectedLocation!.longitude == picked.longitude) {
+      return;
+    }
     setState(() {
       _selectedLocation = picked;
     });
@@ -932,9 +1082,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 44),
-                    ],
+                      ],
+                    ),
                   ),
 
                   const SizedBox(height: 32),
@@ -1163,6 +1312,10 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                             isSelected:
                                 _locationMode == LocationSelectionMode.current,
                             onTap: () {
+                              if (_locationMode ==
+                                  LocationSelectionMode.current) {
+                                return;
+                              }
                               setState(() {
                                 _locationMode = LocationSelectionMode.current;
                               });
@@ -1174,6 +1327,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                             isSelected:
                                 _locationMode == LocationSelectionMode.pin,
                             onTap: () {
+                              if (_locationMode == LocationSelectionMode.pin) {
+                                return;
+                              }
                               setState(() {
                                 _locationMode = LocationSelectionMode.pin;
                               });
@@ -1340,9 +1496,6 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       bottomNavigationBar: BottomNavBar(
         currentIndex: _navIndex,
         onTap: (index) {
-          setState(() {
-            _navIndex = index;
-          });
           // Navigate back to MainPage with selected tab
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => MainPage(initialIndex: index)),
@@ -1436,14 +1589,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   };
 
   bool _isVehicularIncident() {
-    final incident = widget.incidentType.toUpperCase().trim();
-    return incident == 'VEHICULAR' ||
-        incident == 'ROAD CRASH' ||
-        incident == 'ROADCRASH';
+    return _isVehicularIncidentType;
   }
 
   bool _isFireIncident() {
-    return widget.incidentType.toUpperCase().trim() == 'FIRE';
+    return _isFireIncidentType;
   }
 
   String _incidentTypeForStorage() {
@@ -1452,11 +1602,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   bool _isFloodIncident() {
-    return widget.incidentType.toUpperCase() == 'FLOOD';
+    return _isFloodIncidentType;
   }
 
   bool _isOthersIncident() {
-    return widget.incidentType.toUpperCase() == 'OTHERS';
+    return _isOthersIncidentType;
   }
 
   Widget _buildInjuredCounterField() {
@@ -2136,12 +2286,16 @@ class _PinPickerPage extends StatefulWidget {
 class _PinPickerPageState extends State<_PinPickerPage> {
   static const LatLng _center = LatLng(15.1450, 120.5887);
   static const double _radiusMeters = 6000;
+  static const Distance _distanceCalculator = Distance();
+  static const double _minUiUpdateDistanceMeters = 12;
+  static const Duration _minUiUpdateInterval = Duration(seconds: 2);
 
   final MapController _mapController = MapController();
   LatLng? _selected;
   LatLng? _currentLocation;
   bool _locationChecked = false;
   StreamSubscription<Position>? _locationSubscription;
+  DateTime? _lastLocationUiUpdateAt;
 
   @override
   void initState() {
@@ -2161,9 +2315,7 @@ class _PinPickerPageState extends State<_PinPickerPage> {
       final position = await LocationService.getCurrentPosition();
       if (position != null && mounted) {
         final currentPos = LatLng(position.latitude, position.longitude);
-        setState(() {
-          _currentLocation = currentPos;
-        });
+        _applyCurrentLocationUpdate(currentPos);
 
         // Check if user is outside Angeles City (only show once)
         if (!_locationChecked && !_isWithinAngeles(currentPos)) {
@@ -2173,25 +2325,25 @@ class _PinPickerPageState extends State<_PinPickerPage> {
       }
 
       // Start listening to location updates
-      _locationSubscription = LocationService.getPositionStream().listen(
-        (position) {
-          if (mounted) {
-            final newPos = LatLng(position.latitude, position.longitude);
-            setState(() {
-              _currentLocation = newPos;
-            });
+      _locationSubscription =
+          LocationService.getPositionStream(
+            distanceFilterMeters: _minUiUpdateDistanceMeters.toInt(),
+          ).listen(
+            (position) {
+              if (!mounted) return;
+              final newPos = LatLng(position.latitude, position.longitude);
+              _applyCurrentLocationUpdate(newPos);
 
-            // Check if user moved outside Angeles City
-            if (!_locationChecked && !_isWithinAngeles(newPos)) {
-              _locationChecked = true;
-              _showOutsideAreaError();
-            }
-          }
-        },
-        onError: (e) {
-          debugPrint('Location stream error: $e');
-        },
-      );
+              // Check if user moved outside Angeles City
+              if (!_locationChecked && !_isWithinAngeles(newPos)) {
+                _locationChecked = true;
+                _showOutsideAreaError();
+              }
+            },
+            onError: (e) {
+              debugPrint('Location stream error: $e');
+            },
+          );
     } catch (e) {
       debugPrint('Error starting location tracking: $e');
     }
@@ -2264,8 +2416,34 @@ class _PinPickerPageState extends State<_PinPickerPage> {
   }
 
   bool _isWithinAngeles(LatLng point) {
-    final distance = const Distance().as(LengthUnit.Meter, _center, point);
+    final distance = _distanceCalculator.as(LengthUnit.Meter, _center, point);
     return distance <= _radiusMeters;
+  }
+
+  bool _shouldUpdateCurrentLocation(LatLng newPos) {
+    final current = _currentLocation;
+    if (current == null) return true;
+
+    final movedMeters = _distanceCalculator.as(
+      LengthUnit.Meter,
+      current,
+      newPos,
+    );
+    if (movedMeters >= _minUiUpdateDistanceMeters) {
+      return true;
+    }
+
+    final lastUpdate = _lastLocationUiUpdateAt;
+    if (lastUpdate == null) return true;
+    return DateTime.now().difference(lastUpdate) >= _minUiUpdateInterval;
+  }
+
+  void _applyCurrentLocationUpdate(LatLng newPos) {
+    if (!_shouldUpdateCurrentLocation(newPos)) return;
+    setState(() {
+      _currentLocation = newPos;
+    });
+    _lastLocationUiUpdateAt = DateTime.now();
   }
 
   void _confirmSelection() {
@@ -2313,9 +2491,21 @@ class _PinPickerPageState extends State<_PinPickerPage> {
     Navigator.pop(context, _selected);
   }
 
-  // RESTORED: Show error when user is outside Angeles City
-  void _showUserLocationError() {
-    showDialog(
+  Future<void> _showUserLocationError() async {
+    final locationEnabled = await LocationService.isLocationServiceEnabled();
+    var permission = await LocationService.checkLocationPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    final shouldShowSettings =
+        !locationEnabled ||
+        permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever;
+
+    if (!mounted) return;
+
+    await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
@@ -2345,14 +2535,16 @@ class _PinPickerPageState extends State<_PinPickerPage> {
             ),
           ],
         ),
-        content: const Text(
-          'You cannot submit a report because your current location appears to be outside Angeles City. '
-          'To submit a report, you must be physically present within the Angeles City coverage area.\n\n'
-          'If you believe this is a GPS error, please:\n'
-          '• Ensure location services are enabled\n'
-          '• Move to an open area for better GPS signal\n'
-          '• Wait a moment for GPS to stabilize',
-          style: TextStyle(
+        content: Text(
+          shouldShowSettings
+              ? 'Location access is required before you can continue. Enable location settings, then try again.'
+              : 'You cannot submit a report because your current location appears to be outside Angeles City. '
+                    'To submit a report, you must be physically present within the Angeles City coverage area.\n\n'
+                    'If you believe this is a GPS error, please:\n'
+                    '- Ensure location services are enabled\n'
+                    '- Move to an open area for better GPS signal\n'
+                    '- Wait a moment for GPS to stabilize',
+          style: const TextStyle(
             fontFamily: 'RobotoCondensed',
             fontWeight: FontWeight.w400,
             fontSize: 14,
@@ -2360,6 +2552,38 @@ class _PinPickerPageState extends State<_PinPickerPage> {
           ),
         ),
         actions: [
+          if (shouldShowSettings)
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+          if (shouldShowSettings)
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                if (!locationEnabled) {
+                  await Geolocator.openLocationSettings();
+                } else {
+                  await Geolocator.openAppSettings();
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFAC1B22),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              child: Text(
+                !locationEnabled
+                    ? 'Open Location Settings'
+                    : 'Open App Settings',
+                style: const TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context),
             style: ElevatedButton.styleFrom(

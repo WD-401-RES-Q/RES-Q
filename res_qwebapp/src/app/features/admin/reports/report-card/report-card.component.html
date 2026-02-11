@@ -1,0 +1,170 @@
+<article class="report-card">
+  <div class="image-wrap">
+    <picture class="report-picture">
+      <source
+        *ngIf="report.imageThumbWebp"
+        [srcset]="report.imageThumbWebp"
+        type="image/webp" />
+      <img
+        [src]="report.imageThumb || report.image"
+        [attr.data-fallback-src]="report.image"
+        [alt]="report.title"
+        class="report-image"
+        loading="lazy"
+        decoding="async"
+        fetchpriority="low"
+        width="280"
+        height="190"
+        (error)="onImageError($event)" />
+    </picture>
+  </div>
+
+  <div class="details">
+    <h2 class="report-title">{{ report.title }}</h2>
+
+    <div class="meta-group">
+      <span class="meta-label">Category:</span>
+      <span class="meta-value">{{ report.category }}</span>
+    </div>
+
+    <div class="meta-group">
+      <span class="meta-label">Reporter:</span>
+      <span class="meta-value">{{ report.reporter }}</span>
+    </div>
+
+    <div class="meta-group">
+      <span class="meta-label">Date:</span>
+      <span class="meta-value">{{ report.date }}</span>
+    </div>
+
+    <div class="meta-group">
+      <span class="meta-label">Time:</span>
+      <span class="meta-value">{{ report.time }}</span>
+    </div>
+
+    <p class="description">{{ report.description }}</p>
+
+    <div class="counters">
+      <div class="counter counter-green">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+        </svg>
+        <span>{{ report.greenFlags || 0 }}</span>
+      </div>
+      <div class="counter counter-red">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z"/>
+        </svg>
+        <span>{{ report.redFlags || 0 }}</span>
+      </div>
+      <div class="counter counter-comments">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+        </svg>
+        <span>{{ report.comments || 0 }}</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-comments" (click)="onToggleComments()">
+        {{ isExpanded ? 'Hide Comments' : 'View Comments' }}
+      </button>
+
+      <ng-container *ngIf="report.status === 'Pending'">
+        <button class="btn btn-approve" (click)="onApprove()">
+          Approve
+        </button>
+        <button class="btn btn-reject" (click)="onReject()">
+          Reject
+        </button>
+      </ng-container>
+
+      <ng-container *ngIf="report.status === 'Approved'">
+        <button class="btn btn-revert" (click)="onRevert()">
+          Revert to Pending
+        </button>
+      </ng-container>
+
+      <ng-container *ngIf="report.status === 'Flagged'">
+        <button class="btn btn-revert" (click)="onRevert()">
+          Revert to Pending
+        </button>
+      </ng-container>
+    </div>
+
+  </div>
+
+  <div class="activity-card">
+    <h3 class="activity-title">Activity</h3>
+
+    <div class="activity-item">
+      <span class="activity-label">Responded by:</span>
+      <span class="activity-value">{{ report.activityResponderDisplay }}</span>
+    </div>
+
+    <div class="activity-item">
+      <span class="activity-label">Time Responding:</span>
+      <span class="activity-value">{{ report.timeRespondingDisplay }}</span>
+    </div>
+
+    <div class="activity-item">
+      <span class="activity-label">Time On Scene:</span>
+      <span class="activity-value">{{ report.timeOnSceneDisplay }}</span>
+    </div>
+
+    <div class="activity-item">
+      <span class="activity-label">{{ report.finalActivityLabelDisplay }}</span>
+      <span class="activity-value">{{ report.finalActivityTimeDisplay }}</span>
+    </div>
+  </div>
+
+  @defer (when isExpanded) {
+    <div *ngIf="isExpanded" class="comments-section">
+      <div *ngIf="commentsLoading" class="loading-comments">
+        <p>Loading comments...</p>
+      </div>
+
+      <div *ngIf="!commentsLoading && totalComments === 0" class="no-comments">
+        <p>No comments yet for this report.</p>
+      </div>
+
+      <div class="comments-list" *ngIf="!commentsLoading && visibleComments.length > 0">
+        <div class="comment-item" *ngFor="let comment of visibleComments; trackBy: trackByCommentId">
+          <div class="comment-header">
+            <span class="comment-author">{{ comment.author }}</span>
+            <span class="comment-time">{{ comment.displayTime }}</span>
+          </div>
+          <p class="comment-text">{{ comment.text }}</p>
+          <div class="comment-flags">
+            <span class="flag-green">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+              </svg>
+              {{ comment.greenFlags }}
+            </span>
+            <span class="flag-red">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z"/>
+              </svg>
+              {{ comment.redFlags }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="comments-pagination" *ngIf="!commentsLoading && totalComments > 0">
+        <p class="comments-count">
+          Showing {{ visibleComments.length }} of {{ totalComments }} comments
+        </p>
+        <button
+          type="button"
+          class="btn btn-load-more-comments"
+          *ngIf="hasMoreComments"
+          [disabled]="loadingMoreComments"
+          (click)="onShowMoreComments()">
+          {{ loadingMoreComments ? 'Loading...' : 'Load More Comments' }}
+        </button>
+      </div>
+    </div>
+  }
+</article>

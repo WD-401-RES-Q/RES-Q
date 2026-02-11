@@ -19,6 +19,7 @@ class _OTPPageState extends State<OTPPage> {
   final TextEditingController _otpCtl = TextEditingController();
   bool _loading = false;
   bool _argsInitialized = false;
+  bool _isLoginVerification = false;
 
   String? _verificationId;
   String? _phoneNumber;
@@ -32,29 +33,43 @@ class _OTPPageState extends State<OTPPage> {
     if (_argsInitialized) return;
     _argsInitialized = true;
 
-    final args = ModalRoute.of(context)?.settings.arguments as Map?;
-    if (args != null) {
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is Map) {
       _verificationId = args['verificationId'] as String?;
       _phoneNumber = args['phoneNumber'] as String?;
       _userData = args['userData'] as Map<String, dynamic>?;
+      _isLoginVerification = args['isLoginVerification'] == true;
     }
 
     final hasRequiredArgs =
         _verificationId != null &&
         _phoneNumber != null &&
         _phoneNumber!.isNotEmpty &&
-        _userData != null;
+        (_isLoginVerification || _userData != null);
     if (!hasRequiredArgs) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        AppSnackBar.show(
-          context,
-          'Registration session expired. Please start again.',
-          type: AppSnackBarType.warning,
-        );
-        Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+        _handleExpiredSession();
       });
     }
+  }
+
+  void _handleExpiredSession() {
+    final message = _isLoginVerification
+        ? 'Phone verification session expired. Please log in again.'
+        : 'Registration session expired. Please start again.';
+    AppSnackBar.show(context, message, type: AppSnackBarType.warning);
+
+    if (_isLoginVerification) {
+      if (Navigator.canPop(context)) {
+        Navigator.pop(context, false);
+      } else {
+        Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
+      }
+      return;
+    }
+
+    Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
   }
 
   @override
@@ -64,13 +79,10 @@ class _OTPPageState extends State<OTPPage> {
   }
 
   Future<void> _verify() async {
-    if (_verificationId == null || _phoneNumber == null || _userData == null) {
-      AppSnackBar.show(
-        context,
-        'Registration session expired. Please start again.',
-        type: AppSnackBarType.warning,
-      );
-      Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+    if (_verificationId == null ||
+        _phoneNumber == null ||
+        (!_isLoginVerification && _userData == null)) {
+      _handleExpiredSession();
       return;
     }
 
@@ -119,16 +131,20 @@ class _OTPPageState extends State<OTPPage> {
       await RegistrationPrefs.savePhoneNumber(_phoneNumber!);
       if (!mounted) return;
 
-      // Navigate to PIN creation page.
-      Navigator.pushReplacementNamed(
-        context,
-        '/pin-creation',
-        arguments: {
-          'phoneNumber': _phoneNumber,
-          'userData': _userData,
-          'uid': user.uid,
-        },
-      );
+      if (_isLoginVerification) {
+        Navigator.pop(context, true);
+      } else {
+        // Navigate to PIN creation page.
+        Navigator.pushReplacementNamed(
+          context,
+          '/pin-creation',
+          arguments: {
+            'phoneNumber': _phoneNumber,
+            'userData': _userData,
+            'uid': user.uid,
+          },
+        );
+      }
     } on FirebaseAuthException catch (e) {
       if (mounted) {
         setState(() => _loading = false);
@@ -232,13 +248,27 @@ class _OTPPageState extends State<OTPPage> {
                 left: AppDimensions.paddingXLarge,
                 right: AppDimensions.paddingXLarge,
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const ResqBackButton.outline(),
-                  const ResqLogo(fontSize: 53),
-                  const SizedBox(width: 44), // Balance the row
-                ],
+              child: SizedBox(
+                height: 44,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: ResqBackButton.outline(),
+                    ),
+                    Align(
+                      alignment: Alignment.center,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 190),
+                        child: const FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: ResqLogo(fontSize: 53),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: AppDimensions.paddingSmall),

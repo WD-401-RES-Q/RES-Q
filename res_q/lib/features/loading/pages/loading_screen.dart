@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../auth/pages/login_page.dart';
 import '../../../common/services/location_service.dart';
 import '../../../common/services/notification_service.dart';
@@ -18,8 +19,8 @@ class _LoadingScreenState extends State<LoadingScreen> {
     _initializeApp();
   }
 
-  void _initializeApp() async {
-    // Request location permission
+  Future<void> _initializeApp() async {
+    await _promptEnableLocationServiceIfNeeded();
     await LocationService.requestLocationPermission();
 
     // Initialize notifications (permission + FCM handlers).
@@ -32,11 +33,66 @@ class _LoadingScreenState extends State<LoadingScreen> {
     // Wait 3 seconds then navigate
     Future.delayed(const Duration(seconds: 3), () {
       if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginPage()),
-      );
-    });
+      final shouldOpenSettings = await _showEnableLocationDialog();
+      if (!shouldOpenSettings) {
+        return;
+      }
+
+      await Geolocator.openLocationSettings();
+      await Future.delayed(const Duration(milliseconds: 600));
+    }
+  }
+
+  Future<bool> _showEnableLocationDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Location Required',
+          style: TextStyle(
+            fontFamily: 'Roboto',
+            fontWeight: FontWeight.w900,
+            fontSize: 18,
+            color: Color(0xFF111827),
+          ),
+        ),
+        content: const Text(
+          'Location is currently turned off. Please turn on location services so RES-Q can verify reports accurately.',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF4B5563),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Not Now'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFAC1B22),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'Open Settings',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
   }
 
   @override

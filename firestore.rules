@@ -44,6 +44,38 @@ service cloud.firestore {
           request.resource.data.status in ['online', 'offline', 'available', 'unavailable', 'busy'];
     }
 
+    // Semi-admin profile photo update
+    function isValidSemiAdminProfilePhotoUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['profilePhotoUrl']) &&
+          request.resource.data.profilePhotoUrl is string &&
+          request.resource.data.profilePhotoUrl.size() > 0;
+    }
+
+    // Semi-admin profile info update from Profile page
+    function isValidSemiAdminProfileInfoUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['fullName', 'email', 'address', 'updatedAt']) &&
+          (!('fullName' in request.resource.data) ||
+            (request.resource.data.fullName is string &&
+             request.resource.data.fullName.size() > 0)) &&
+          (!('email' in request.resource.data) ||
+            request.resource.data.email == null ||
+            request.resource.data.email is string) &&
+          (!('address' in request.resource.data) ||
+            request.resource.data.address is string) &&
+          (!('updatedAt' in request.resource.data) ||
+            request.resource.data.updatedAt is timestamp);
+    }
+
+    // Semi-admin PIN update from Account Security
+    function isValidSemiAdminPinUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['pin']) &&
+          request.resource.data.pin is string &&
+          request.resource.data.pin.matches('^[0-9]{4}$');
+    }
+
     // Basic comment payload checks for authored content
     function isValidCommentCreate() {
       return request.resource.data.author is string &&
@@ -78,7 +110,10 @@ service cloud.firestore {
     // Semi-admins collection - allow read for mobile login checks
     match /semi_admins/{docId} {
       allow read: if true;
-      allow update: if isValidSemiAdminPresenceUpdate();
+      allow update: if isValidSemiAdminPresenceUpdate() ||
+        isValidSemiAdminProfilePhotoUpdate() ||
+        isValidSemiAdminProfileInfoUpdate() ||
+        isValidSemiAdminPinUpdate();
       allow create, delete: if false; // Only backend scripts
     }
 
@@ -121,18 +156,66 @@ service cloud.firestore {
       // Nested comments subcollection
       match /comments/{commentId} {
         allow read: if true;
-        allow create: if isAuthenticated() && isValidCommentCreate();
+        allow create: if isValidCommentCreate();
         allow update: if isAuthenticated();
         allow delete: if false;
 
         // Nested replies under report comments
         match /replies/{replyId} {
           allow read: if true;
-          allow create: if isAuthenticated() && isValidReplyCreate();
+          allow create: if isValidReplyCreate();
           allow update: if isAuthenticated();
           allow delete: if false;
         }
       }
+    }
+
+    // FCM token registry for push notifications
+    // NOTE: userId is app-level (phone/docId), not Firebase Auth uid.
+    match /user_tokens/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if false;
+    }
+
+    // User/app preferences (biometrics + notification toggles)
+    match /userPreferences/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() &&
+        request.resource.data.keys().hasOnly([
+          'biometricsEnabled',
+          'biometricsUpdatedAt',
+          'pushNotifications',
+          'soundEnabled',
+          'vibrationEnabled',
+          'notificationPrefsUpdatedAt'
+        ]) &&
+        (!('biometricsEnabled' in request.resource.data) ||
+          request.resource.data.biometricsEnabled is bool) &&
+        (!('pushNotifications' in request.resource.data) ||
+          request.resource.data.pushNotifications is bool) &&
+        (!('soundEnabled' in request.resource.data) ||
+          request.resource.data.soundEnabled is bool) &&
+        (!('vibrationEnabled' in request.resource.data) ||
+          request.resource.data.vibrationEnabled is bool);
+      allow update: if isAuthenticated() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'biometricsEnabled',
+          'biometricsUpdatedAt',
+          'pushNotifications',
+          'soundEnabled',
+          'vibrationEnabled',
+          'notificationPrefsUpdatedAt'
+        ]) &&
+        (!('biometricsEnabled' in request.resource.data) ||
+          request.resource.data.biometricsEnabled is bool) &&
+        (!('pushNotifications' in request.resource.data) ||
+          request.resource.data.pushNotifications is bool) &&
+        (!('soundEnabled' in request.resource.data) ||
+          request.resource.data.soundEnabled is bool) &&
+        (!('vibrationEnabled' in request.resource.data) ||
+          request.resource.data.vibrationEnabled is bool);
+      allow delete: if false;
     }
 
     // User votes (verify/report selections per user)

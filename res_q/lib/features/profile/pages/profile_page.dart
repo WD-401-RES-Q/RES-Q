@@ -1,7 +1,9 @@
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_cropper/image_cropper.dart';
@@ -12,15 +14,18 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:http/http.dart' as http;
 import '../../../common/services/user_session.dart';
+import '../../../common/services/notification_service.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../auth/pages/login_page.dart';
 
-// ============================================================================
-// TODO: Replace with your actual email address for feedback/reports
-// This email will receive all user feedback and problem reports
-// ============================================================================
-const String kFeedbackEmail = 'YOUR_EMAIL_HERE@example.com';
+// Support inbox for feedback and user queries.
+const String kFeedbackEmail = 'resq42649@gmail.com';
+const String kEmailJsServiceId = 'service_yoyvzs4';
+const String kEmailJsTemplateId = 'template_yekv4k9';
+const String kEmailJsPublicKey = 'JLaponS_oi9inmIDR';
+const String kEmailJsEndpoint = 'https://api.emailjs.com/api/v1.0/email/send';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -34,25 +39,393 @@ class _ProfilePageState extends State<ProfilePage>
   bool _pushNotifications = true;
   bool _soundEnabled = true;
   bool _vibrationEnabled = true;
+  static const Duration _notificationPersistDebounceDelay = Duration(
+    milliseconds: 400,
+  );
   final ImagePicker _imagePicker = ImagePicker();
   XFile? _profilePhoto;
   Uint8List? _profilePhotoBytes;
   String? _profilePhotoUrl; // URL from Firebase Storage
   bool _isUploadingPhoto = false;
+  static const String _profilePhotoCachePrefix = 'profile_photo_url_';
+  Timer? _notificationPersistDebounce;
+  Future<List<dynamic>>? _accountSecurityFuture;
+  bool? _cachedBiometricsAvailable;
+  bool? _cachedBiometricsEnabled;
+
+  bool _hasConfiguredSupportEmail() {
+    final trimmed = kFeedbackEmail.trim();
+    return trimmed.isNotEmpty &&
+        trimmed.contains('@') &&
+        !trimmed.contains('YOUR_EMAIL_HERE');
+  }
+
+  bool _hasConfiguredEmailJs() {
+    return kEmailJsServiceId.trim().isNotEmpty &&
+        kEmailJsTemplateId.trim().isNotEmpty &&
+        kEmailJsPublicKey.trim().isNotEmpty &&
+        !kEmailJsServiceId.contains('YOUR_') &&
+        !kEmailJsTemplateId.contains('YOUR_') &&
+        !kEmailJsPublicKey.contains('YOUR_');
+  }
+
+  Future<bool> _sendSupportEmail({
+    required String subject,
+    required String message,
+    required String senderName,
+    required String senderEmail,
+  }) async {
+    if (!_hasConfiguredSupportEmail() || !_hasConfiguredEmailJs()) {
+      return false;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse(kEmailJsEndpoint),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'service_id': kEmailJsServiceId,
+          'template_id': kEmailJsTemplateId,
+          'user_id': kEmailJsPublicKey,
+          'template_params': {
+            'to_email': kFeedbackEmail,
+            'to_name': 'RES-Q Support',
+            'subject': subject,
+            'message': message,
+            'from_name': senderName,
+            'reply_to': senderEmail,
+          },
+        }),
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return true;
+      }
+
+      debugPrint(
+        'EmailJS send failed [${response.statusCode}]: ${response.body}',
+      );
+      return false;
+    } catch (e) {
+      debugPrint('EmailJS send error: $e');
+      return false;
+    }
+  }
+
+  void _showSupportEmailNotConfiguredMessage() {
+    if (!mounted) return;
+    AppSnackBar.show(
+      context,
+      'Support email is not configured yet. Please contact your admin.',
+      type: AppSnackBarType.warning,
+      useRootOverlay: true,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
-    _loadSavedProfilePhoto();
+    _accountSecurityFuture = _loadAccountSecurityState(forceRefresh: true);
+    _initializeProfilePhoto();
+    _initializeNotificationSettings();
   }
 
-  /// Load the saved profile photo URL from UserSession
-  void _loadSavedProfilePhoto() {
-    final savedUrl = UserSession.currentUserData?['profilePhotoUrl'] as String?;
-    if (savedUrl != null && savedUrl.isNotEmpty) {
+  @override
+  void dispose() {
+    final pendingPersist = _notificationPersistDebounce;
+    if (pendingPersist?.isActive == true) {
+      _notificationPersistDebounce?.cancel();
+      unawaited(_persistNotificationSettings());
+    } else {
+      _notificationPersistDebounce?.cancel();
+    }
+    super.dispose();
+  }
+
+  Future<void> _initializeProfilePhoto() async {
+    await _loadSavedProfilePhoto();
+    await _refreshProfilePhotoFromFirestore();
+  }
+
+  /// Load the saved profile photo URL from UserSession/local cache.
+  Future<void> _loadSavedProfilePhoto() async {
+    final savedUrl = UserSession.currentUserData?['profilePhotoUrl']
+        ?.toString()
+        .trim();
+    if (savedUrl != null && savedUrl.isNotEmpty && mounted) {
       setState(() {
         _profilePhotoUrl = savedUrl;
       });
+      return;
+    }
+
+    final cacheKey = _profilePhotoCacheKey();
+    if (cacheKey == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedUrl = prefs.getString(cacheKey);
+      if (!mounted || cachedUrl == null || cachedUrl.isEmpty) return;
+      setState(() {
+        _profilePhotoUrl = cachedUrl;
+      });
+      UserSession.currentUserData?['profilePhotoUrl'] = cachedUrl;
+    } catch (e) {
+      debugPrint('Failed to load cached profile photo URL: $e');
+    }
+  }
+
+  String? _profilePhotoCacheKey() {
+    final userData = UserSession.currentUserData;
+    final contact = (userData?['contactNumber'] ?? userData?['phoneNumber'])
+        ?.toString()
+        .trim();
+    final docId = (userData?['docId'] ?? userData?['id'])?.toString().trim();
+    final rawKey = (contact != null && contact.isNotEmpty) ? contact : docId;
+    if (rawKey == null || rawKey.isEmpty) return null;
+    final normalized = rawKey.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    if (normalized.isEmpty) return null;
+    return '$_profilePhotoCachePrefix$normalized';
+  }
+
+  Future<void> _saveProfilePhotoUrlToCache(String url) async {
+    final cacheKey = _profilePhotoCacheKey();
+    if (cacheKey == null || url.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(cacheKey, url);
+    } catch (e) {
+      debugPrint('Failed to cache profile photo URL: $e');
+    }
+  }
+
+  bool _isResponderRole() {
+    final role = (UserSession.currentUserData?['role'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    return role == 'semi-admin' || role == 'semi_admin' || role == 'responder';
+  }
+
+  String _currentContactNumber() {
+    return (UserSession.currentUserData?['contactNumber'] ??
+                UserSession.currentUserData?['phoneNumber'])
+            ?.toString()
+            .trim() ??
+        '';
+  }
+
+  String _currentUserDocId() {
+    return (UserSession.currentUserData?['docId'] ??
+                UserSession.currentUserData?['id'])
+            ?.toString()
+            .trim() ??
+        '';
+  }
+
+  Future<bool> _ensureFirebaseAuthSession() async {
+    final user = FirebaseAuth.instance.currentUser;
+    return user != null && !user.isAnonymous;
+  }
+
+  String? _notificationPrefsLocalKeyBase() {
+    final raw = _currentContactNumber().isNotEmpty
+        ? _currentContactNumber()
+        : _currentUserDocId();
+    if (raw.isEmpty) return null;
+    final normalized = raw.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    if (normalized.isEmpty) return null;
+    return 'notif_prefs_$normalized';
+  }
+
+  String? _notificationPrefsDocId() {
+    final contactNumber = _currentContactNumber();
+    if (contactNumber.isNotEmpty) {
+      final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+      if (cleanPhone.isNotEmpty) return cleanPhone;
+    }
+    final docId = _currentUserDocId();
+    if (docId.isNotEmpty) return docId;
+    return null;
+  }
+
+  Future<void> _initializeNotificationSettings() async {
+    final localKeyBase = _notificationPrefsLocalKeyBase();
+    if (localKeyBase != null) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final localPush = prefs.getBool('${localKeyBase}_push');
+        final localSound = prefs.getBool('${localKeyBase}_sound');
+        final localVibration = prefs.getBool('${localKeyBase}_vibration');
+        if (mounted) {
+          setState(() {
+            _pushNotifications = localPush ?? _pushNotifications;
+            _soundEnabled = localSound ?? _soundEnabled;
+            _vibrationEnabled = localVibration ?? _vibrationEnabled;
+          });
+        } else {
+          _pushNotifications = localPush ?? _pushNotifications;
+          _soundEnabled = localSound ?? _soundEnabled;
+          _vibrationEnabled = localVibration ?? _vibrationEnabled;
+        }
+      } catch (e) {
+        debugPrint('Failed to load local notification settings: $e');
+      }
+    }
+
+    final docId = _notificationPrefsDocId();
+    if (docId == null) return;
+    try {
+      if (!await _ensureFirebaseAuthSession()) return;
+      final doc = await FirebaseFirestore.instance
+          .collection('userPreferences')
+          .doc(docId)
+          .get();
+      final data = doc.data();
+      if (data == null) return;
+      final remotePush = data['pushNotifications'] as bool?;
+      final remoteSound = data['soundEnabled'] as bool?;
+      final remoteVibration = data['vibrationEnabled'] as bool?;
+
+      if (mounted) {
+        setState(() {
+          _pushNotifications = remotePush ?? _pushNotifications;
+          _soundEnabled = remoteSound ?? _soundEnabled;
+          _vibrationEnabled = remoteVibration ?? _vibrationEnabled;
+        });
+      } else {
+        _pushNotifications = remotePush ?? _pushNotifications;
+        _soundEnabled = remoteSound ?? _soundEnabled;
+        _vibrationEnabled = remoteVibration ?? _vibrationEnabled;
+      }
+      await _persistNotificationSettings();
+    } catch (e) {
+      debugPrint('Failed to load remote notification settings: $e');
+    }
+  }
+
+  Future<void> _persistNotificationSettings() async {
+    final localKeyBase = _notificationPrefsLocalKeyBase();
+    if (localKeyBase != null) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('${localKeyBase}_push', _pushNotifications);
+        await prefs.setBool('${localKeyBase}_sound', _soundEnabled);
+        await prefs.setBool('${localKeyBase}_vibration', _vibrationEnabled);
+      } catch (e) {
+        debugPrint('Failed to save local notification settings: $e');
+      }
+    }
+
+    final docId = _notificationPrefsDocId();
+    if (docId == null) return;
+    try {
+      if (!await _ensureFirebaseAuthSession()) return;
+      await FirebaseFirestore.instance
+          .collection('userPreferences')
+          .doc(docId)
+          .set({
+            'pushNotifications': _pushNotifications,
+            'soundEnabled': _soundEnabled,
+            'vibrationEnabled': _vibrationEnabled,
+            'notificationPrefsUpdatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Failed to save remote notification settings: $e');
+    }
+  }
+
+  Future<List<DocumentReference<Map<String, dynamic>>>>
+  _resolveCurrentUserDocRefs() async {
+    final refs = <DocumentReference<Map<String, dynamic>>>[];
+    final seenPaths = <String>{};
+    void addRef(DocumentReference<Map<String, dynamic>> ref) {
+      if (seenPaths.add(ref.path)) {
+        refs.add(ref);
+      }
+    }
+
+    final userData = UserSession.currentUserData;
+    final contactNumber =
+        (userData?['contactNumber'] ?? userData?['phoneNumber'])
+            ?.toString()
+            .trim();
+    final docId = (userData?['docId'] ?? userData?['id'])?.toString().trim();
+
+    if (_isResponderRole()) {
+      if (docId != null && docId.isNotEmpty) {
+        addRef(FirebaseFirestore.instance.collection('semi_admins').doc(docId));
+      }
+      if (contactNumber != null && contactNumber.isNotEmpty) {
+        final snapshot = await FirebaseFirestore.instance
+            .collection('semi_admins')
+            .where('contactNumber', isEqualTo: contactNumber)
+            .limit(1)
+            .get();
+        if (snapshot.docs.isNotEmpty) {
+          addRef(snapshot.docs.first.reference);
+        }
+      }
+    } else {
+      if (docId != null && docId.isNotEmpty) {
+        addRef(
+          FirebaseFirestore.instance.collection('approved_users').doc(docId),
+        );
+      }
+      if (contactNumber != null && contactNumber.isNotEmpty) {
+        final snapshot = await FirebaseFirestore.instance
+            .collection('approved_users')
+            .where('contactNumber', isEqualTo: contactNumber)
+            .limit(1)
+            .get();
+        if (snapshot.docs.isNotEmpty) {
+          addRef(snapshot.docs.first.reference);
+        }
+      }
+    }
+
+    if (contactNumber != null && contactNumber.isNotEmpty) {
+      final approvedSnapshot = await FirebaseFirestore.instance
+          .collection('approved_users')
+          .where('contactNumber', isEqualTo: contactNumber)
+          .limit(1)
+          .get();
+      if (approvedSnapshot.docs.isNotEmpty) {
+        addRef(approvedSnapshot.docs.first.reference);
+      }
+      final responderSnapshot = await FirebaseFirestore.instance
+          .collection('semi_admins')
+          .where('contactNumber', isEqualTo: contactNumber)
+          .limit(1)
+          .get();
+      if (responderSnapshot.docs.isNotEmpty) {
+        addRef(responderSnapshot.docs.first.reference);
+      }
+    }
+
+    return refs;
+  }
+
+  Future<void> _refreshProfilePhotoFromFirestore() async {
+    try {
+      final refs = await _resolveCurrentUserDocRefs();
+      if (refs.isEmpty) return;
+      for (final ref in refs) {
+        final snapshot = await ref.get();
+        final data = snapshot.data();
+        final url = data?['profilePhotoUrl']?.toString().trim();
+        if (url != null && url.isNotEmpty) {
+          UserSession.currentUserData?['profilePhotoUrl'] = url;
+          await _saveProfilePhotoUrlToCache(url);
+          if (mounted) {
+            setState(() {
+              _profilePhotoUrl = url;
+            });
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to refresh profile photo URL from Firestore: $e');
     }
   }
 
@@ -108,6 +481,9 @@ class _ProfilePageState extends State<ProfilePage>
     final content = _getModalContent(title);
     int feedbackRating = 4;
     String? selectedProblemType;
+    if (title == 'Account Security' && _accountSecurityFuture == null) {
+      _accountSecurityFuture = _loadAccountSecurityState(forceRefresh: false);
+    }
 
     // Prevent swipe to dismiss for Personal Information modal
     final bool canDismiss = title != 'Personal Information';
@@ -296,9 +672,9 @@ class _ProfilePageState extends State<ProfilePage>
                       child: ElevatedButton(
                         onPressed: () async {
                           await _updateSemiAdminPresenceOnLogout();
+                          await NotificationService().clearCurrentUserToken();
                           UserSession.clear();
-                          await FirebaseAuth.instance.signOut();
-                          if (!mounted) return;
+                          if (!context.mounted) return;
                           Navigator.of(context).pushAndRemoveUntil(
                             MaterialPageRoute(
                               builder: (_) => const LoginPage(),
@@ -591,18 +967,27 @@ class _ProfilePageState extends State<ProfilePage>
 
   /// Upload profile photo to Firebase Storage and save URL to Firestore
   Future<void> _uploadProfilePhotoToFirebase(String filePath) async {
-    final contactNumber =
-        UserSession.currentUserData?['contactNumber'] as String?;
-    if (contactNumber == null) {
-      debugPrint('❌ Cannot upload profile photo: No contact number found');
+    final userData = UserSession.currentUserData;
+    final identity =
+        (userData?['contactNumber'] ??
+                userData?['phoneNumber'] ??
+                userData?['id'])
+            ?.toString()
+            .trim();
+    if (identity == null || identity.isEmpty) {
+      debugPrint('Cannot upload profile photo: No user identity found');
       return;
     }
 
     setState(() => _isUploadingPhoto = true);
 
     try {
-      // Create a unique filename using contact number
-      final fileName = 'profile_${contactNumber.replaceAll('+', '')}.jpg';
+      // Create a stable filename using the user's identity
+      final sanitizedIdentity = identity.replaceAll(
+        RegExp(r'[^a-zA-Z0-9]'),
+        '',
+      );
+      final fileName = 'profile_$sanitizedIdentity.jpg';
       final storageRef = FirebaseStorage.instance
           .ref()
           .child('profile_photos')
@@ -617,23 +1002,24 @@ class _ProfilePageState extends State<ProfilePage>
 
       // Get the download URL
       final downloadUrl = await uploadTask.ref.getDownloadURL();
-      debugPrint('✅ Profile photo uploaded: $downloadUrl');
+      debugPrint('Profile photo uploaded: $downloadUrl');
+      final refs = await _resolveCurrentUserDocRefs();
+      if (refs.isEmpty) {
+        debugPrint('No user document found for saving profile photo URL');
+      } else {
+        await Future.wait(
+          refs.map(
+            (ref) => ref.set({
+              'profilePhotoUrl': downloadUrl,
+            }, SetOptions(merge: true)),
+          ),
+        );
+        debugPrint('Profile photo URL saved to Firestore');
+      }
 
-      // Save URL to Firestore in approved_users collection
-      final userQuery = await FirebaseFirestore.instance
-          .collection('approved_users')
-          .where('contactNumber', isEqualTo: contactNumber)
-          .limit(1)
-          .get();
-
-      if (userQuery.docs.isNotEmpty) {
-        await userQuery.docs.first.reference.update({
-          'profilePhotoUrl': downloadUrl,
-        });
-        debugPrint('✅ Profile photo URL saved to Firestore');
-
-        // Update local UserSession data
-        UserSession.currentUserData?['profilePhotoUrl'] = downloadUrl;
+      await _saveProfilePhotoUrlToCache(downloadUrl);
+      UserSession.currentUserData?['profilePhotoUrl'] = downloadUrl;
+      if (mounted) {
         setState(() {
           _profilePhotoUrl = downloadUrl;
         });
@@ -648,7 +1034,7 @@ class _ProfilePageState extends State<ProfilePage>
         );
       }
     } catch (e) {
-      debugPrint('❌ Failed to upload profile photo: $e');
+      debugPrint('Failed to upload profile photo: $e');
       if (mounted) {
         AppSnackBar.show(
           context,
@@ -849,9 +1235,9 @@ class _ProfilePageState extends State<ProfilePage>
     final addressCtl = TextEditingController(
       text: userData['address']?.toString() ?? '',
     );
-    final phoneNumber = userData['contactNumber']?.toString() ?? '';
-    // Get the Firestore document ID (set during login)
-    final docId = userData['docId']?.toString() ?? '';
+    final phoneNumber =
+        (userData['contactNumber'] ?? userData['phoneNumber'])?.toString() ??
+        '';
     bool isEditing = false;
     bool isSaving = false;
     String? errorMessage;
@@ -1008,40 +1394,46 @@ class _ProfilePageState extends State<ProfilePage>
                                     return;
                                   }
 
-                                  // Check if we have a valid document ID
-                                  if (docId.isEmpty) {
-                                    setModalState(() {
-                                      errorMessage =
-                                          'User session error. Please log out and log in again.';
-                                    });
-                                    return;
-                                  }
-
                                   setModalState(() {
                                     isSaving = true;
                                     errorMessage = null;
                                   });
 
                                   try {
-                                    // Use set with merge to handle both create and update
-                                    await FirebaseFirestore.instance
-                                        .collection('approved_users')
-                                        .doc(docId)
-                                        .set({
-                                          'fullName': newFullName,
-                                          'email': newEmail.isEmpty
-                                              ? null
-                                              : newEmail,
-                                          'address': newAddress,
-                                          'updatedAt':
-                                              FieldValue.serverTimestamp(),
-                                        }, SetOptions(merge: true));
+                                    final refs =
+                                        await _resolveCurrentUserDocRefs();
+                                    if (refs.isEmpty) {
+                                      setModalState(() {
+                                        isSaving = false;
+                                        errorMessage =
+                                            'Unable to locate your profile record. Please log in again.';
+                                      });
+                                      return;
+                                    }
+
+                                    final payload = <String, dynamic>{
+                                      'fullName': newFullName,
+                                      'email': newEmail.isEmpty
+                                          ? null
+                                          : newEmail,
+                                      'address': newAddress,
+                                      'updatedAt': FieldValue.serverTimestamp(),
+                                    };
+
+                                    await Future.wait(
+                                      refs.map(
+                                        (ref) => ref.set(
+                                          payload,
+                                          SetOptions(merge: true),
+                                        ),
+                                      ),
+                                    );
 
                                     // Update local session
                                     UserSession.currentUserData?['fullName'] =
                                         newFullName;
                                     UserSession.currentUserData?['email'] =
-                                        newEmail;
+                                        newEmail.isEmpty ? null : newEmail;
                                     UserSession.currentUserData?['address'] =
                                         newAddress;
 
@@ -1050,16 +1442,15 @@ class _ProfilePageState extends State<ProfilePage>
                                       isSaving = false;
                                     });
 
-                                    if (mounted) {
-                                      AppSnackBar.show(
-                                        context,
-                                        'Profile updated successfully!',
-                                        type: AppSnackBarType.success,
-                                        useRootOverlay: true,
-                                      );
-                                      // Refresh the main page
-                                      setState(() {});
-                                    }
+                                    if (!context.mounted) return;
+                                    AppSnackBar.show(
+                                      context,
+                                      'Profile updated successfully!',
+                                      type: AppSnackBarType.success,
+                                      useRootOverlay: true,
+                                    );
+                                    // Refresh the main page
+                                    setState(() {});
                                   } on FirebaseException catch (e) {
                                     debugPrint(
                                       'Firebase error updating profile: ${e.code} - ${e.message}',
@@ -1252,19 +1643,34 @@ class _ProfilePageState extends State<ProfilePage>
 
   Widget _buildAccountSecurityContent() {
     final userData = UserSession.currentUserData ?? {};
-    final docId = userData['docId']?.toString() ?? '';
-    final contactNumber = userData['contactNumber']?.toString() ?? '';
+    final docId = (userData['docId'] ?? userData['id'])?.toString() ?? '';
+    final contactNumber =
+        (userData['contactNumber'] ?? userData['phoneNumber'])?.toString() ??
+        '';
+
+    _accountSecurityFuture ??= _loadAccountSecurityState(forceRefresh: false);
 
     return StatefulBuilder(
       builder: (context, setModalState) {
         return FutureBuilder<List<dynamic>>(
-          future: Future.wait([
-            _checkBiometricsAvailable(),
-            _getBiometricsEnabled(),
-          ]),
+          future: _accountSecurityFuture,
           builder: (context, snapshot) {
-            final biometricsAvailable = snapshot.data?[0] as bool? ?? false;
-            final biometricsEnabled = snapshot.data?[1] as bool? ?? false;
+            if (snapshot.connectionState == ConnectionState.waiting &&
+                _cachedBiometricsAvailable == null &&
+                _cachedBiometricsEnabled == null) {
+              return const Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFAC1B22)),
+                ),
+              );
+            }
+
+            final biometricsAvailable =
+                _cachedBiometricsAvailable ??
+                (snapshot.data?[0] as bool? ?? false);
+            final biometricsEnabled =
+                _cachedBiometricsEnabled ??
+                (snapshot.data?[1] as bool? ?? false);
 
             return SingleChildScrollView(
               child: Column(
@@ -1325,23 +1731,43 @@ class _ProfilePageState extends State<ProfilePage>
                               value: biometricsEnabled,
                               onChanged: biometricsAvailable
                                   ? (value) async {
-                                      await _setBiometricsEnabled(value);
-                                      setModalState(() {});
-                                      if (mounted) {
+                                      final previousValue =
+                                          _cachedBiometricsEnabled ??
+                                          biometricsEnabled;
+                                      setModalState(() {
+                                        _cachedBiometricsEnabled = value;
+                                      });
+                                      final saved = await _setBiometricsEnabled(
+                                        value,
+                                      );
+                                      if (!saved) {
+                                        if (!context.mounted) return;
+                                        setModalState(() {
+                                          _cachedBiometricsEnabled =
+                                              previousValue;
+                                        });
                                         AppSnackBar.show(
                                           context,
-                                          value
-                                              ? 'Biometric login enabled'
-                                              : 'Biometric login disabled',
-                                          type: value
-                                              ? AppSnackBarType.success
-                                              : AppSnackBarType.info,
+                                          'Failed to update biometric setting.',
+                                          type: AppSnackBarType.error,
                                           useRootOverlay: true,
                                         );
+                                        return;
                                       }
+                                      if (!context.mounted) return;
+                                      AppSnackBar.show(
+                                        context,
+                                        value
+                                            ? 'Biometric login enabled'
+                                            : 'Biometric login disabled',
+                                        type: value
+                                            ? AppSnackBarType.success
+                                            : AppSnackBarType.info,
+                                        useRootOverlay: true,
+                                      );
                                     }
                                   : null,
-                              activeColor: const Color(0xFFAC1B22),
+                              activeThumbColor: const Color(0xFFAC1B22),
                             ),
                           ],
                         ),
@@ -1391,7 +1817,7 @@ class _ProfilePageState extends State<ProfilePage>
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    'Update your 6-digit security PIN',
+                                    'Update your 4-digit security PIN',
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: Colors.grey[600],
@@ -1408,6 +1834,16 @@ class _ProfilePageState extends State<ProfilePage>
                           height: 44,
                           child: ElevatedButton(
                             onPressed: () {
+                              if (contactNumber.trim().isEmpty &&
+                                  docId.trim().isEmpty) {
+                                AppSnackBar.show(
+                                  context,
+                                  'No account identity found for this account.',
+                                  type: AppSnackBarType.warning,
+                                  useRootOverlay: true,
+                                );
+                                return;
+                              }
                               Navigator.pop(context);
                               _showChangePinDialog(docId, contactNumber);
                             },
@@ -1469,6 +1905,24 @@ class _ProfilePageState extends State<ProfilePage>
     );
   }
 
+  Future<List<dynamic>> _loadAccountSecurityState({
+    required bool forceRefresh,
+  }) async {
+    if (!forceRefresh &&
+        _cachedBiometricsAvailable != null &&
+        _cachedBiometricsEnabled != null) {
+      return [_cachedBiometricsAvailable!, _cachedBiometricsEnabled!];
+    }
+
+    final results = await Future.wait<dynamic>([
+      _checkBiometricsAvailable(),
+      _getBiometricsEnabled(),
+    ]);
+    _cachedBiometricsAvailable = results[0] as bool;
+    _cachedBiometricsEnabled = results[1] as bool;
+    return results;
+  }
+
   Future<bool> _checkBiometricsAvailable() async {
     if (kIsWeb) return false;
     try {
@@ -1483,12 +1937,18 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Future<bool> _getBiometricsEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
     try {
-      final contactNumber =
-          UserSession.currentUserData?['contactNumber'] as String?;
-      if (contactNumber == null) return false;
+      final contactNumber = _currentContactNumber();
+      if (contactNumber.isEmpty) return false;
 
       final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+      final localEnabled = prefs.getBool('biometrics_enabled') ?? false;
+      final localPhone = prefs.getString('biometrics_phone') ?? '';
+
+      if (!await _ensureFirebaseAuthSession()) {
+        return localEnabled && localPhone == cleanPhone;
+      }
 
       // First check Firestore for persistent preference
       final doc = await FirebaseFirestore.instance
@@ -1499,29 +1959,28 @@ class _ProfilePageState extends State<ProfilePage>
       if (doc.exists) {
         final firestoreEnabled =
             doc.data()?['biometricsEnabled'] as bool? ?? false;
-        if (firestoreEnabled) {
-          // Sync to local SharedPreferences
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setBool('biometrics_enabled', true);
-          await prefs.setString('biometrics_phone', cleanPhone);
-          return true;
-        }
+        // Always sync local cache with latest remote value.
+        await prefs.setBool('biometrics_enabled', firestoreEnabled);
+        await prefs.setString('biometrics_phone', cleanPhone);
+        return firestoreEnabled;
       }
 
-      // Fall back to SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getBool('biometrics_enabled') ?? false;
+      // Fall back to SharedPreferences, but only for this exact phone.
+      return localEnabled && localPhone == cleanPhone;
     } catch (e) {
       debugPrint('Error getting biometrics setting: $e');
-      return false;
+      final contactNumber = _currentContactNumber();
+      final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+      final localEnabled = prefs.getBool('biometrics_enabled') ?? false;
+      final localPhone = prefs.getString('biometrics_phone') ?? '';
+      return localEnabled && localPhone == cleanPhone;
     }
   }
 
-  Future<void> _setBiometricsEnabled(bool enabled) async {
+  Future<bool> _setBiometricsEnabled(bool enabled) async {
     try {
-      final contactNumber =
-          UserSession.currentUserData?['contactNumber'] as String?;
-      if (contactNumber == null) return;
+      final contactNumber = _currentContactNumber();
+      if (contactNumber.isEmpty) return false;
 
       final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
 
@@ -1529,6 +1988,14 @@ class _ProfilePageState extends State<ProfilePage>
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('biometrics_enabled', enabled);
       await prefs.setString('biometrics_phone', cleanPhone);
+
+      if (!await _ensureFirebaseAuthSession()) {
+        debugPrint(
+          'Biometrics preference saved locally only (no Firebase auth session).',
+        );
+        _cachedBiometricsEnabled = enabled;
+        return true;
+      }
 
       // Save to Firestore for persistence across devices (like votes)
       await FirebaseFirestore.instance
@@ -1539,25 +2006,38 @@ class _ProfilePageState extends State<ProfilePage>
             'biometricsUpdatedAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
 
-      debugPrint('✅ Biometrics preference saved: $enabled for $cleanPhone');
+      _cachedBiometricsEnabled = enabled;
+      debugPrint('Biometrics preference saved.');
+      return true;
     } catch (e) {
       debugPrint('Error setting biometrics: $e');
+      return false;
     }
   }
 
   void _showChangePinDialog(String docId, String contactNumber) {
+    final collectionName = _isResponderRole()
+        ? 'semi_admins'
+        : 'approved_users';
+    final resolvedDocId = docId.trim().isNotEmpty
+        ? docId.trim()
+        : _currentUserDocId();
+    final resolvedContactNumber = contactNumber.trim().isNotEmpty
+        ? contactNumber.trim()
+        : _currentContactNumber();
+
     final currentPinControllers = List.generate(
-      6,
+      4,
       (_) => TextEditingController(),
     );
-    final newPinControllers = List.generate(6, (_) => TextEditingController());
+    final newPinControllers = List.generate(4, (_) => TextEditingController());
     final confirmPinControllers = List.generate(
-      6,
+      4,
       (_) => TextEditingController(),
     );
-    final currentPinFocusNodes = List.generate(6, (_) => FocusNode());
-    final newPinFocusNodes = List.generate(6, (_) => FocusNode());
-    final confirmPinFocusNodes = List.generate(6, (_) => FocusNode());
+    final currentPinFocusNodes = List.generate(4, (_) => FocusNode());
+    final newPinFocusNodes = List.generate(4, (_) => FocusNode());
+    final confirmPinFocusNodes = List.generate(4, (_) => FocusNode());
 
     int step = 1; // 1: current PIN, 2: new PIN, 3: confirm PIN
     String? errorMessage;
@@ -1587,9 +2067,9 @@ class _ProfilePageState extends State<ProfilePage>
             String getSubtitle() {
               switch (step) {
                 case 1:
-                  return 'Enter your current 6-digit PIN';
+                  return 'Enter your current 4-digit PIN';
                 case 2:
-                  return 'Create a new 6-digit PIN';
+                  return 'Create a new 4-digit PIN';
                 case 3:
                   return 'Re-enter your new PIN to confirm';
                 default:
@@ -1721,24 +2201,34 @@ class _ProfilePageState extends State<ProfilePage>
                     // PIN Input Fields
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(6, (index) {
+                      children: List.generate(4, (index) {
                         return Container(
                           width: 40,
-                          height: 48,
+                          height: 56,
                           margin: const EdgeInsets.symmetric(horizontal: 4),
                           child: TextField(
                             controller: getControllers()[index],
                             focusNode: getFocusNodes()[index],
                             keyboardType: TextInputType.number,
                             textAlign: TextAlign.center,
+                            textAlignVertical: TextAlignVertical.center,
                             maxLength: 1,
+                            showCursor: false,
                             obscureText: true,
+                            obscuringCharacter: '\u2022',
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(1),
+                            ],
                             style: const TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
+                              height: 1.0,
                             ),
                             decoration: InputDecoration(
                               counterText: '',
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
                               filled: true,
                               fillColor: Colors.white,
                               border: OutlineInputBorder(
@@ -1762,11 +2252,32 @@ class _ProfilePageState extends State<ProfilePage>
                               ),
                             ),
                             onChanged: (value) {
-                              if (value.isNotEmpty && index < 5) {
-                                getFocusNodes()[index + 1].requestFocus();
+                              final cleanValue = value.replaceAll(
+                                RegExp(r'[^0-9]'),
+                                '',
+                              );
+                              if (cleanValue.isEmpty) {
+                                getControllers()[index].clear();
+                                if (index > 0) {
+                                  getFocusNodes()[index - 1].requestFocus();
+                                }
+                                setDialogState(() => errorMessage = null);
+                                return;
                               }
-                              if (value.isEmpty && index > 0) {
-                                getFocusNodes()[index - 1].requestFocus();
+
+                              final singleChar = cleanValue.substring(
+                                cleanValue.length - 1,
+                              );
+                              if (getControllers()[index].text != singleChar) {
+                                getControllers()[index].text = singleChar;
+                                getControllers()[index].selection =
+                                    const TextSelection.collapsed(offset: 1);
+                              }
+
+                              if (index < 3) {
+                                getFocusNodes()[index + 1].requestFocus();
+                              } else {
+                                FocusScope.of(context).unfocus();
                               }
                               setDialogState(() => errorMessage = null);
                             },
@@ -1818,10 +2329,10 @@ class _ProfilePageState extends State<ProfilePage>
                                     .map((c) => c.text)
                                     .join();
 
-                                if (pin.length != 6) {
+                                if (pin.length != 4) {
                                   setDialogState(
                                     () => errorMessage =
-                                        'Please enter all 6 digits',
+                                        'Please enter all 4 digits',
                                   );
                                   return;
                                 }
@@ -1830,18 +2341,32 @@ class _ProfilePageState extends State<ProfilePage>
                                   // Verify current PIN
                                   setDialogState(() => isLoading = true);
                                   try {
-                                    final query = await FirebaseFirestore
-                                        .instance
-                                        .collection('approved_users')
-                                        .where(
-                                          'contactNumber',
-                                          isEqualTo: contactNumber,
-                                        )
-                                        .where('pin', isEqualTo: pin)
-                                        .limit(1)
-                                        .get();
+                                    bool hasMatchingPin = false;
+                                    if (resolvedContactNumber.isNotEmpty) {
+                                      final query = await FirebaseFirestore
+                                          .instance
+                                          .collection(collectionName)
+                                          .where(
+                                            'contactNumber',
+                                            isEqualTo: resolvedContactNumber,
+                                          )
+                                          .where('pin', isEqualTo: pin)
+                                          .limit(1)
+                                          .get();
+                                      hasMatchingPin = query.docs.isNotEmpty;
+                                    } else if (resolvedDocId.isNotEmpty) {
+                                      final snapshot = await FirebaseFirestore
+                                          .instance
+                                          .collection(collectionName)
+                                          .doc(resolvedDocId)
+                                          .get();
+                                      final existingPin =
+                                          snapshot.data()?['pin']?.toString() ??
+                                          '';
+                                      hasMatchingPin = existingPin == pin;
+                                    }
 
-                                    if (query.docs.isEmpty) {
+                                    if (!hasMatchingPin) {
                                       setDialogState(() {
                                         isLoading = false;
                                         errorMessage = 'Incorrect PIN';
@@ -1899,25 +2424,54 @@ class _ProfilePageState extends State<ProfilePage>
                                   // Update PIN in Firestore
                                   setDialogState(() => isLoading = true);
                                   try {
-                                    await FirebaseFirestore.instance
-                                        .collection('approved_users')
-                                        .doc(docId)
-                                        .update({'pin': newPinEntered});
+                                    if (resolvedDocId.isNotEmpty) {
+                                      await FirebaseFirestore.instance
+                                          .collection(collectionName)
+                                          .doc(resolvedDocId)
+                                          .set({
+                                            'pin': newPinEntered,
+                                          }, SetOptions(merge: true));
+                                    } else if (resolvedContactNumber
+                                        .isNotEmpty) {
+                                      final query = await FirebaseFirestore
+                                          .instance
+                                          .collection(collectionName)
+                                          .where(
+                                            'contactNumber',
+                                            isEqualTo: resolvedContactNumber,
+                                          )
+                                          .limit(1)
+                                          .get();
+                                      if (query.docs.isEmpty) {
+                                        throw Exception(
+                                          'Account record not found',
+                                        );
+                                      }
+                                      await query.docs.first.reference.set({
+                                        'pin': newPinEntered,
+                                      }, SetOptions(merge: true));
+                                    } else {
+                                      throw Exception(
+                                        'No account identity found for PIN update',
+                                      );
+                                    }
 
                                     // Update local session
                                     UserSession.currentUserData?['pin'] =
                                         newPinEntered;
 
                                     // Close dialog
-                                    if (mounted) {
-                                      Navigator.pop(dialogContext);
-                                      AppSnackBar.show(
-                                        context,
-                                        'PIN changed successfully!',
-                                        type: AppSnackBarType.success,
-                                        useRootOverlay: true,
-                                      );
+                                    if (!dialogContext.mounted ||
+                                        !context.mounted) {
+                                      return;
                                     }
+                                    Navigator.pop(dialogContext);
+                                    AppSnackBar.show(
+                                      context,
+                                      'PIN changed successfully!',
+                                      type: AppSnackBarType.success,
+                                      useRootOverlay: true,
+                                    );
                                   } catch (e) {
                                     debugPrint('Error updating PIN: $e');
                                     setDialogState(() {
@@ -2009,6 +2563,15 @@ class _ProfilePageState extends State<ProfilePage>
       setState(() {});
     }
     setDialogState(() {});
+    _scheduleNotificationSettingsPersist();
+  }
+
+  void _scheduleNotificationSettingsPersist() {
+    _notificationPersistDebounce?.cancel();
+    _notificationPersistDebounce = Timer(
+      _notificationPersistDebounceDelay,
+      () => unawaited(_persistNotificationSettings()),
+    );
   }
 
   Widget _buildNotificationToggle(
@@ -2044,7 +2607,7 @@ class _ProfilePageState extends State<ProfilePage>
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: const Color(0xFFAC1B22),
+            activeThumbColor: const Color(0xFFAC1B22),
           ),
         ],
       ),
@@ -2074,6 +2637,10 @@ class _ProfilePageState extends State<ProfilePage>
             'Contact Support',
             'Get in touch with our team',
             onTap: () async {
+              if (!_hasConfiguredSupportEmail()) {
+                _showSupportEmailNotConfiguredMessage();
+                return;
+              }
               final Uri emailUri = Uri(
                 scheme: 'mailto',
                 path: kFeedbackEmail,
@@ -2260,44 +2827,50 @@ class _ProfilePageState extends State<ProfilePage>
                           final userData = UserSession.currentUserData ?? {};
                           final displayName =
                               userData['fullName']?.toString() ?? 'User';
-                          final email = userData['email']?.toString() ?? '';
-
-                          final Uri emailUri = Uri(
-                            scheme: 'mailto',
-                            path: kFeedbackEmail,
-                            query: Uri.encodeFull(
-                              'subject=RESQ Problem Report: $problemType&'
-                              'body=Problem Type: $problemType\n\n'
-                              'Description:\n$description\n\n'
-                              '---\n'
-                              'Reported by: $displayName\n'
-                              'User email: $email',
-                            ),
-                          );
-
-                          try {
-                            if (await canLaunchUrl(emailUri)) {
-                              await launchUrl(emailUri);
-                              if (mounted) {
-                                Navigator.pop(context);
-                                AppSnackBar.show(
-                                  context,
-                                  'Email app opened. Please send your report.',
-                                  type: AppSnackBarType.success,
-                                  useRootOverlay: true,
-                                );
-                              }
-                            } else {
-                              setModalState(() {
-                                isSubmitting = false;
-                                errorMessage = 'Could not open email app';
-                              });
-                            }
-                          } catch (e) {
-                            debugPrint('Failed to open email: $e');
+                          final email =
+                              userData['email']?.toString() ??
+                              'no-email@resq.local';
+                          final contact =
+                              userData['contactNumber']?.toString() ??
+                              userData['phoneNumber']?.toString() ??
+                              'N/A';
+                          if (!_hasConfiguredSupportEmail() ||
+                              !_hasConfiguredEmailJs()) {
                             setModalState(() {
                               isSubmitting = false;
-                              errorMessage = 'Failed to open email app';
+                              errorMessage =
+                                  'Support email service is not configured yet.';
+                            });
+                            return;
+                          }
+
+                          final sent = await _sendSupportEmail(
+                            subject: 'RESQ Problem Report: $problemType',
+                            senderName: displayName,
+                            senderEmail: email,
+                            message:
+                                'Problem Type: $problemType\n\n'
+                                'Description:\n$description\n\n'
+                                '---\n'
+                                'Reported by: $displayName\n'
+                                'User email: $email\n'
+                                'Contact number: $contact',
+                          );
+
+                          if (sent) {
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                            AppSnackBar.show(
+                              context,
+                              'Report sent successfully.',
+                              type: AppSnackBarType.success,
+                              useRootOverlay: true,
+                            );
+                          } else {
+                            setModalState(() {
+                              isSubmitting = false;
+                              errorMessage =
+                                  'Failed to send report. Please try again.';
                             });
                           }
                         },
@@ -2438,47 +3011,50 @@ class _ProfilePageState extends State<ProfilePage>
                               userData['fullName']?.toString() ??
                               userData['contactNumber']?.toString() ??
                               'User';
-                          final email = userData['email']?.toString() ?? '';
+                          final email =
+                              userData['email']?.toString() ??
+                              'no-email@resq.local';
+                          final contact =
+                              userData['contactNumber']?.toString() ??
+                              userData['phoneNumber']?.toString() ??
+                              'N/A';
 
-                          final ratingStars =
-                              '★' * feedbackRating + '☆' * (5 - feedbackRating);
-
-                          final Uri emailUri = Uri(
-                            scheme: 'mailto',
-                            path: kFeedbackEmail,
-                            query: Uri.encodeFull(
-                              'subject=RESQ App Feedback&'
-                              'body=Rating: $ratingStars ($feedbackRating/5)\n\n'
-                              'Feedback:\n$feedback\n\n'
-                              '---\n'
-                              'From: $displayName\n'
-                              'User email: $email',
-                            ),
-                          );
-
-                          try {
-                            if (await canLaunchUrl(emailUri)) {
-                              await launchUrl(emailUri);
-                              if (mounted) {
-                                Navigator.pop(context);
-                                AppSnackBar.show(
-                                  context,
-                                  'Email app opened. Thank you for your feedback!',
-                                  type: AppSnackBarType.success,
-                                  useRootOverlay: true,
-                                );
-                              }
-                            } else {
-                              setModalState(() {
-                                isSubmitting = false;
-                                errorMessage = 'Could not open email app';
-                              });
-                            }
-                          } catch (e) {
-                            debugPrint('Failed to open email: $e');
+                          if (!_hasConfiguredSupportEmail() ||
+                              !_hasConfiguredEmailJs()) {
                             setModalState(() {
                               isSubmitting = false;
-                              errorMessage = 'Failed to open email app';
+                              errorMessage =
+                                  'Support email service is not configured yet.';
+                            });
+                            return;
+                          }
+                          final sent = await _sendSupportEmail(
+                            subject: 'RESQ App Feedback',
+                            senderName: displayName,
+                            senderEmail: email,
+                            message:
+                                'Rating: $feedbackRating/5\n\n'
+                                'Feedback:\n$feedback\n\n'
+                                '---\n'
+                                'From: $displayName\n'
+                                'User email: $email\n'
+                                'Contact number: $contact',
+                          );
+
+                          if (sent) {
+                            if (!context.mounted) return;
+                            Navigator.pop(context);
+                            AppSnackBar.show(
+                              context,
+                              'Feedback sent. Thank you!',
+                              type: AppSnackBarType.success,
+                              useRootOverlay: true,
+                            );
+                          } else {
+                            setModalState(() {
+                              isSubmitting = false;
+                              errorMessage =
+                                  'Failed to send feedback. Please try again.';
                             });
                           }
                         },
@@ -2532,7 +3108,7 @@ class _ProfilePageState extends State<ProfilePage>
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 8,
             offset: const Offset(0, 4),
           ),
@@ -2731,7 +3307,7 @@ class _ProfilePageState extends State<ProfilePage>
                       borderRadius: BorderRadius.circular(18),
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withOpacity(0.12),
+                          color: Colors.black.withValues(alpha: 0.12),
                           blurRadius: 12,
                           spreadRadius: 1,
                           offset: const Offset(0, 6),
