@@ -13,12 +13,15 @@ import 'features/auth/pages/forgot_pin_page.dart';
 // services
 import 'common/services/notification_service.dart';
 
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   // Initialize notification service for background messages
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  await NotificationService().initialize(navigatorKey: appNavigatorKey);
 
   runApp(const MyApp());
 }
@@ -30,6 +33,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      navigatorKey: appNavigatorKey,
       theme: ThemeData(
         textTheme: const TextTheme(
           displayLarge: TextStyle(fontSize: 48.0, fontWeight: FontWeight.bold),

@@ -1,24 +1,24 @@
-import 'dart:async';
-import 'dart:math';
-import 'package:flutter/material.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-/// Background message handler - must be top-level function
+import '../../features/reports/pages/report_map_page.dart';
+
+/// Background message handler - must be top-level and entry-point.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  debugPrint('Background message received: ${message.messageId}');
+  debugPrint('Background FCM message received: ${message.messageId}');
 }
 
 class NotificationService {
+  NotificationService._internal();
   static final NotificationService _instance = NotificationService._internal();
   factory NotificationService() => _instance;
-  NotificationService._internal();
 
   final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -28,17 +28,18 @@ class NotificationService {
   String? _currentUserId;
   bool _isInitialized = false;
 
-  // Notification channel for Android
   static const AndroidNotificationChannel _channel = AndroidNotificationChannel(
-    'resq_notifications',
-    'RES-Q Notifications',
-    description: 'Notifications for nearby incidents and announcements',
+    'resq_dispatch_updates',
+    'RES-Q Dispatch Updates',
+    description: 'Deployment, responder status, and responder comments',
     importance: Importance.high,
-    playSound: true,
   );
 
-  // Default vicinity radius in meters (5km)
-  static const double defaultVicinityRadius = 5000;
+  GlobalKey<NavigatorState>? _navigatorKey;
+  String? _currentUserId;
+  String? _currentRole;
+  bool _initialized = false;
+  String? _lastHandledMessageId;
 
   /// Initialize the notification service
   Future<void> initialize({String? userId}) async {
@@ -51,21 +52,30 @@ class NotificationService {
 
     _currentUserId = userId;
 
-    // Request notification permissions
     await _requestPermissions();
-
-    // Initialize local notifications
     await _initializeLocalNotifications();
+    _setupForegroundAndTapHandlers();
+    await _handleInitialMessage();
+    _initialized = true;
+  }
 
-    // Set up FCM handlers
-    _setupFCMHandlers();
+  Future<void> setUserId(String? userId, {String? role}) async {
+    _currentUserId = userId?.trim().isNotEmpty == true ? userId!.trim() : null;
+    _currentRole = role?.trim();
+    if (_currentUserId == null) {
+      return;
+    }
+    await _saveCurrentToken();
+    _messaging.onTokenRefresh.listen((_) {
+      _saveCurrentToken();
+    });
+  }
 
-    // Subscribe to FCM topic for announcements
-    await _messaging.subscribeToTopic('announcements');
-    debugPrint('Subscribed to announcements topic');
-
-    // Get and save FCM token
-    await _saveFCMToken();
+  Future<void> clearCurrentUserToken() async {
+    final userId = _currentUserId;
+    if (userId == null || userId.isEmpty) {
+      return;
+    }
 
     // Start listening for nearby reports
     await _startNearbyReportsListener();
@@ -73,7 +83,6 @@ class NotificationService {
     _isInitialized = true;
   }
 
-  /// Request notification permissions
   Future<void> _requestPermissions() async {
     final settings = await _messaging.requestPermission(
       alert: true,
@@ -87,7 +96,6 @@ class NotificationService {
     );
   }
 
-  /// Initialize local notifications plugin
   Future<void> _initializeLocalNotifications() async {
     const androidSettings = AndroidInitializationSettings(
       '@mipmap/ic_launcher',
@@ -97,19 +105,22 @@ class NotificationService {
       requestBadgePermission: true,
       requestSoundPermission: true,
     );
-
-    const initSettings = InitializationSettings(
-      android: androidSettings,
-      iOS: iosSettings,
-    );
+    const init = InitializationSettings(android: androidInit, iOS: iosInit);
 
     await _localNotifications.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: _onNotificationTap,
+      init,
+      onDidReceiveNotificationResponse: (response) {
+        final payload = response.payload ?? '';
+        if (payload.startsWith('report:')) {
+          final reportId = payload.substring('report:'.length).trim();
+          if (reportId.isNotEmpty) {
+            _openReportMap(reportId);
+          }
+        }
+      },
     );
 
-    // Create notification channel for Android
-    await _localNotifications
+    final androidPlugin = _localNotifications
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >()
@@ -122,13 +133,9 @@ class NotificationService {
     // Handle navigation based on payload if needed
   }
 
-  /// Set up FCM message handlers
-  void _setupFCMHandlers() {
-    // Handle foreground messages
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      debugPrint('Foreground message received: ${message.notification?.title}');
-      _showLocalNotification(message);
-      _saveNotificationToFirestore(message);
+  void _setupForegroundAndTapHandlers() {
+    FirebaseMessaging.onMessage.listen((message) {
+      _showForegroundNotification(message);
     });
 
     // Handle when app is opened from notification
@@ -137,39 +144,42 @@ class NotificationService {
         'App opened from notification: ${message.notification?.title}',
       );
     });
-
-    // Set background handler
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   }
 
-  /// Save FCM token to Firestore for the user
-  Future<void> _saveFCMToken() async {
+  Future<void> _handleInitialMessage() async {
     try {
-      final token = await _messaging.getToken();
-      if (token != null && _currentUserId != null) {
-        await _firestore.collection('user_tokens').doc(_currentUserId).set({
-          'fcmToken': token,
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-        debugPrint('FCM token saved: ${token.substring(0, 20)}...');
+      final initial = await _messaging.getInitialMessage();
+      if (initial != null) {
+        _handleMessageTap(initial);
       }
-
-      // Listen for token refresh
-      _messaging.onTokenRefresh.listen((newToken) async {
-        if (_currentUserId != null) {
-          await _firestore.collection('user_tokens').doc(_currentUserId).set({
-            'fcmToken': newToken,
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-        }
-      });
     } catch (e) {
-      debugPrint('Error saving FCM token: $e');
+      debugPrint('Failed to handle initial FCM message: $e');
     }
   }
 
-  /// Show a local notification
-  Future<void> _showLocalNotification(RemoteMessage message) async {
+  Future<void> _saveCurrentToken() async {
+    final userId = _currentUserId;
+    if (userId == null || userId.isEmpty) return;
+
+    try {
+      final token = await _messaging.getToken();
+      if (token == null || token.isEmpty) return;
+      final platform = defaultTargetPlatform.name;
+      await _firestore.collection('user_tokens').doc(userId).set({
+        'userId': userId,
+        'role': _currentRole,
+        'platform': platform,
+        'fcmToken': token,
+        'lastToken': token,
+        'tokens': FieldValue.arrayUnion([token]),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Failed to save FCM token: $e');
+    }
+  }
+
+  Future<void> _showForegroundNotification(RemoteMessage message) async {
     final notification = message.notification;
     if (notification == null) return;
 
@@ -182,21 +192,21 @@ class NotificationService {
       priority: Priority.high,
       playSound: true,
       icon: '@mipmap/ic_launcher',
+      color: Color(0xFFAC1B22),
     );
-
     const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
     );
-
     const details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
 
+    final reportId = _extractReportIdFromData(message.data);
     await _localNotifications.show(
-      notification.hashCode,
+      DateTime.now().millisecondsSinceEpoch.remainder(1 << 31),
       notification.title,
       notification.body,
       details,
@@ -299,6 +309,7 @@ class NotificationService {
     } catch (e) {
       debugPrint('Error saving incident notification: $e');
     }
+    _openReportMap(reportId);
   }
 
   /// Start listening for nearby reports
@@ -368,17 +379,26 @@ class NotificationService {
         });
   }
 
-  /// Update user's location
-  Future<void> _updateUserLocation() async {
-    try {
-      final permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return;
-      }
+  Future<void> _openReportMap(String reportId) async {
+    final navigator = _navigatorKey?.currentState;
+    if (navigator == null) return;
 
-      _lastKnownPosition = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
+    try {
+      final snapshot = await _firestore
+          .collection('reports')
+          .doc(reportId)
+          .get();
+      final data = snapshot.data();
+      if (data == null) return;
+
+      navigator.push(
+        MaterialPageRoute(
+          builder: (_) => ReportMapPage(
+            reportId: reportId,
+            reportData: Map<String, dynamic>.from(data),
+            showBottomNav: false,
+          ),
+        ),
       );
       debugPrint(
         'User location updated: ${_lastKnownPosition?.latitude}, ${_lastKnownPosition?.longitude}',
@@ -418,10 +438,5 @@ class NotificationService {
     if (userId != null) {
       _saveFCMToken();
     }
-  }
-
-  /// Dispose resources
-  void dispose() {
-    _reportsSubscription?.cancel();
   }
 }

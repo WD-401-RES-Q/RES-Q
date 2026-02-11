@@ -51,6 +51,8 @@ class _LoginPageState extends State<LoginPage>
   bool _canUseBiometrics = false;
   bool _biometricsEnabled = false;
   String? _biometricsPhone;
+  static const Duration _phoneReverifyWindow = Duration(days: 30);
+  static const String _phoneAuthVerifiedAtKeyPrefix = 'phone_auth_verified_at_';
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
@@ -191,12 +193,22 @@ class _LoginPageState extends State<LoginPage>
         debugPrint('✅ Semi-admin biometric login successful!');
         // Persist phone locally for faster next login.
         await RegistrationPrefs.savePhoneNumber(phoneInput);
+        try {
+          await _ensureFirebaseAuthSession();
+        } catch (authError) {
+          debugPrint('Semi-admin anonymous sign-in failed: $authError');
+        }
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
         UserSession.setUserData({
           ...semiAdminData,
           'id': semiAdminQuery.docs.first.id,
+          'authMethod': 'pin',
         });
+        await _bindSessionPushNotifications(
+          userData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
+          explicitUserId: semiAdminQuery.docs.first.id,
+        );
         await _updateSemiAdminPresence(
           semiAdminData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
           isLoggedIn: true,
@@ -232,21 +244,22 @@ class _LoginPageState extends State<LoginPage>
         _showPendingApprovalDialog();
         return;
       }
-
-      // Sign in to Firebase Auth anonymously
-      try {
-        final userCredential = await FirebaseAuth.instance.signInAnonymously();
-        debugPrint(
-          '✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}',
-        );
-      } catch (authError) {
-        debugPrint('⚠️ Firebase Anonymous Sign-In failed: $authError');
+      final isResponderAccount = _isResponderRole(userData['role']);
+      if (!isResponderAccount) {
+        final phoneVerified = await _ensurePhoneAuthForLogin(phone);
+        if (!phoneVerified) {
+          setState(() => _loading = false);
+          return;
+        }
       }
 
       // Login successful
       // Persist phone locally for faster next login.
       await RegistrationPrefs.savePhoneNumber(phoneInput);
-      UserSession.setUserData(userData);
+      UserSession.setUserData({
+        ...userData,
+        'authMethod': isResponderAccount ? 'pin' : 'phone_pin',
+      });
 
       // Use phone number as user ID for easier tracking
       // Note: Firestore uses 'contactNumber' as the field name
@@ -263,6 +276,10 @@ class _LoginPageState extends State<LoginPage>
         debugPrint('⚠️ No phone number found in userData');
         debugPrint('   Available fields: ${userData.keys.toList()}');
       }
+      await _bindSessionPushNotifications(
+        userData: userData,
+        explicitUserId: phoneNumber,
+      );
       _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
@@ -288,6 +305,212 @@ class _LoginPageState extends State<LoginPage>
     if (mounted) {
       AppSnackBar.show(context, message, type: AppSnackBarType.error);
     }
+  }
+
+  String _normalizePhoneForMatch(String value) {
+    var digits = value.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('63')) {
+      digits = digits.substring(2);
+    }
+    return digits;
+  }
+
+  String _phoneAuthVerificationKey(String phone) {
+    final cleanPhone = phone.replaceAll(RegExp(r'[^0-9+]'), '');
+    return '$_phoneAuthVerifiedAtKeyPrefix$cleanPhone';
+  }
+
+  Future<void> _markPhoneAuthVerified(String phone) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+      _phoneAuthVerificationKey(phone),
+      DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  Future<bool> _isPhoneAuthVerificationFresh(String phone) async {
+    final prefs = await SharedPreferences.getInstance();
+    final lastVerifiedMs = prefs.getInt(_phoneAuthVerificationKey(phone));
+    if (lastVerifiedMs == null) return false;
+    final lastVerifiedAt = DateTime.fromMillisecondsSinceEpoch(lastVerifiedMs);
+    final age = DateTime.now().difference(lastVerifiedAt);
+    return age <= _phoneReverifyWindow;
+  }
+
+  bool _isCurrentPhoneAuthenticated(String phone) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) return false;
+    final authPhone = user.phoneNumber ?? '';
+    if (authPhone.isEmpty) return false;
+    return _normalizePhoneForMatch(authPhone) == _normalizePhoneForMatch(phone);
+  }
+
+  Future<bool> _openOtpVerificationPage({
+    required String phone,
+    required String verificationId,
+  }) async {
+    if (!mounted) return false;
+    final result = await Navigator.pushNamed(
+      context,
+      '/otp',
+      arguments: {
+        'verificationId': verificationId,
+        'phoneNumber': phone,
+        'isLoginVerification': true,
+      },
+    );
+    return result == true;
+  }
+
+  Future<bool> _ensurePhoneAuthForLogin(String phone) async {
+    final hasMatchingPhoneSession = _isCurrentPhoneAuthenticated(phone);
+    if (hasMatchingPhoneSession) {
+      final prefs = await SharedPreferences.getInstance();
+      final hasVerificationStamp =
+          prefs.getInt(_phoneAuthVerificationKey(phone)) != null;
+      if (!hasVerificationStamp) {
+        await _markPhoneAuthVerified(phone);
+        return true;
+      }
+      final isVerificationFresh = await _isPhoneAuthVerificationFresh(phone);
+      if (isVerificationFresh) return true;
+    }
+
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null) {
+      try {
+        await FirebaseAuth.instance.signOut();
+      } catch (e) {
+        debugPrint('Failed to clear previous auth user: $e');
+      }
+    }
+
+    final completer = Completer<bool>();
+
+    try {
+      await FirebaseAuth.instance.verifyPhoneNumber(
+        phoneNumber: phone,
+        timeout: const Duration(seconds: 60),
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          try {
+            await FirebaseAuth.instance.signInWithCredential(credential);
+            if (!completer.isCompleted) {
+              await _markPhoneAuthVerified(phone);
+              completer.complete(_isCurrentPhoneAuthenticated(phone));
+            }
+          } catch (_) {
+            if (!completer.isCompleted) completer.complete(false);
+          }
+        },
+        verificationFailed: (FirebaseAuthException e) {
+          if (completer.isCompleted) return;
+          if (mounted) {
+            _showError(e.message ?? 'Phone verification failed.');
+          }
+          completer.complete(false);
+        },
+        codeSent: (String verificationId, int? resendToken) async {
+          if (completer.isCompleted) return;
+          if (!mounted) {
+            completer.complete(false);
+            return;
+          }
+          final otpVerified = await _openOtpVerificationPage(
+            phone: phone,
+            verificationId: verificationId,
+          );
+          if (completer.isCompleted) return;
+          if (!otpVerified) {
+            completer.complete(false);
+            return;
+          }
+
+          try {
+            if (!completer.isCompleted) {
+              await _markPhoneAuthVerified(phone);
+              completer.complete(_isCurrentPhoneAuthenticated(phone));
+            }
+          } on FirebaseAuthException catch (e) {
+            if (completer.isCompleted) return;
+            if (mounted) {
+              _showError(e.message ?? 'Invalid OTP code.');
+            }
+            completer.complete(false);
+          } catch (_) {
+            if (completer.isCompleted) return;
+            completer.complete(false);
+          }
+        },
+        codeAutoRetrievalTimeout: (_) {},
+      );
+    } on FirebaseAuthException catch (e) {
+      if (mounted) {
+        _showError(e.message ?? 'Phone verification failed.');
+      }
+      if (!completer.isCompleted) completer.complete(false);
+    } catch (e) {
+      debugPrint('Unexpected phone verification error: $e');
+      if (!completer.isCompleted) completer.complete(false);
+    }
+
+    final verified = await completer.future.timeout(
+      const Duration(minutes: 2),
+      onTimeout: () => false,
+    );
+    if (!verified && mounted) {
+      _showError('Phone verification is required before PIN login.');
+    }
+    return verified;
+  }
+
+  bool _isResponderRole(Object? roleValue) {
+    final role = (roleValue ?? '').toString().trim().toLowerCase();
+    return role == 'semi-admin' || role == 'semi_admin' || role == 'responder';
+  }
+
+  String _normalizeDigits(Object? value) {
+    return (value?.toString() ?? '').replaceAll(RegExp(r'\D'), '');
+  }
+
+  Future<void> _bindSessionPushNotifications({
+    required Map<String, dynamic> userData,
+    String? explicitUserId,
+  }) async {
+    final role = (userData['role'] ?? '').toString().trim().toLowerCase();
+    final isResponder =
+        role == 'semi-admin' || role == 'semi_admin' || role == 'responder';
+
+    String tokenOwnerId = (explicitUserId ?? '').trim();
+    if (tokenOwnerId.isEmpty) {
+      if (isResponder) {
+        tokenOwnerId =
+            (userData['id'] ?? userData['contactNumber'])?.toString().trim() ??
+            '';
+      } else {
+        tokenOwnerId = _normalizeDigits(
+          userData['userId'] ??
+              userData['contactNumber'] ??
+              userData['phoneNumber'],
+        );
+      }
+    }
+
+    if (tokenOwnerId.isEmpty) {
+      return;
+    }
+
+    if (FirebaseAuth.instance.currentUser == null) {
+      return;
+    }
+
+    await NotificationService().setUserId(tokenOwnerId, role: role);
+  }
+
+  Future<void> _ensureFirebaseAuthSession() async {
+    if (FirebaseAuth.instance.currentUser != null) {
+      return;
+    }
+    await FirebaseAuth.instance.signInAnonymously();
   }
 
   @override
@@ -491,12 +714,22 @@ class _LoginPageState extends State<LoginPage>
         debugPrint('✅ Semi-admin login successful via PIN!');
         // Persist phone locally for faster next login.
         await RegistrationPrefs.savePhoneNumber(phoneInput);
+        try {
+          await _ensureFirebaseAuthSession();
+        } catch (authError) {
+          debugPrint('Semi-admin anonymous sign-in failed: $authError');
+        }
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
         UserSession.setUserData({
           ...semiAdminData,
           'id': semiAdminQuery.docs.first.id,
+          'authMethod': 'pin',
         });
+        await _bindSessionPushNotifications(
+          userData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
+          explicitUserId: semiAdminQuery.docs.first.id,
+        );
         await _updateSemiAdminPresence(
           semiAdminData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
           isLoggedIn: true,
@@ -533,21 +766,22 @@ class _LoginPageState extends State<LoginPage>
         _showPendingApprovalDialog();
         return;
       }
-
-      // Sign in to Firebase Auth anonymously
-      try {
-        final userCredential = await FirebaseAuth.instance.signInAnonymously();
-        debugPrint(
-          '✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}',
-        );
-      } catch (authError) {
-        debugPrint('⚠️ Firebase Anonymous Sign-In failed: $authError');
+      final isResponderAccount = _isResponderRole(userData['role']);
+      if (!isResponderAccount) {
+        final phoneVerified = await _ensurePhoneAuthForLogin(phone);
+        if (!phoneVerified) {
+          setState(() => _loading = false);
+          return;
+        }
       }
 
       // Login successful
       // Persist phone locally for faster next login.
       await RegistrationPrefs.savePhoneNumber(phoneInput);
-      UserSession.setUserData(userData);
+      UserSession.setUserData({
+        ...userData,
+        'authMethod': isResponderAccount ? 'pin' : 'phone_pin',
+      });
 
       // Use phone number as user ID for easier tracking
       // Note: Firestore uses 'contactNumber' as the field name
@@ -564,6 +798,10 @@ class _LoginPageState extends State<LoginPage>
         debugPrint('⚠️ No phone number found in userData');
         debugPrint('   Available fields: ${userData.keys.toList()}');
       }
+      await _bindSessionPushNotifications(
+        userData: userData,
+        explicitUserId: phoneNumber,
+      );
       _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {

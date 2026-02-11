@@ -7,7 +7,93 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
+
+String? _extractProfilePhotoUrl(Map<String, dynamic>? data) {
+  if (data == null) return null;
+  const keys = <String>[
+    'profilePhotoUrl',
+    'authorProfilePhotoUrl',
+    'photoUrl',
+    'avatarUrl',
+    'profileImageUrl',
+  ];
+
+  for (final key in keys) {
+    final value = data[key]?.toString().trim() ?? '';
+    if (value.isNotEmpty) return value;
+  }
+  return null;
+}
+
+Widget _buildUserAvatar({
+  required String displayName,
+  String? profilePhotoUrl,
+  required double radius,
+  required Color fallbackColor,
+  required double fontSize,
+}) {
+  final trimmedName = displayName.trim();
+  final initial = trimmedName.isNotEmpty ? trimmedName[0].toUpperCase() : '?';
+  final photoUrl = profilePhotoUrl?.trim() ?? '';
+  final hasPhoto = photoUrl.isNotEmpty;
+  final views = WidgetsBinding.instance.platformDispatcher.views;
+  final devicePixelRatio = views.isNotEmpty
+      ? views.first.devicePixelRatio
+      : 1.0;
+  final cacheExtent = (radius * 2 * devicePixelRatio).round();
+
+  if (!hasPhoto) {
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: fallbackColor,
+      child: Text(
+        initial,
+        style: TextStyle(
+          fontFamily: 'Roboto',
+          fontSize: fontSize,
+          fontWeight: FontWeight.w700,
+          color: Colors.white,
+        ),
+      ),
+    );
+  }
+
+  final diameter = radius * 2;
+  return CircleAvatar(
+    radius: radius,
+    backgroundColor: Colors.grey.shade200,
+    child: ClipOval(
+      child: Image.network(
+        photoUrl,
+        width: diameter,
+        height: diameter,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.low,
+        cacheWidth: cacheExtent,
+        cacheHeight: cacheExtent,
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            width: diameter,
+            height: diameter,
+            color: fallbackColor,
+            alignment: Alignment.center,
+            child: Text(
+              initial,
+              style: TextStyle(
+                fontFamily: 'Roboto',
+                fontSize: fontSize,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          );
+        },
+      ),
+    ),
+  );
+}
 
 class CommunityPage extends StatefulWidget {
   const CommunityPage({super.key});
@@ -35,13 +121,157 @@ class _CommunityPageState extends State<CommunityPage>
   String _selectedTimeFilter = 'All Time';
   bool _showFilterSheet = false;
   List<Map<String, dynamic>> _reports = [];
+  final Map<String, Map<String, dynamic>> _reportById = {};
+  final List<String> _reportOrder = <String>[];
+  final Map<String, int> _reportSignatureById = {};
   List<Map<String, dynamic>> _announcements = [];
+  final Map<String, Map<String, dynamic>> _announcementById = {};
+  final List<String> _announcementOrder = <String>[];
+  final Map<String, int> _announcementSignatureById = {};
+  int _reportListViewSignature = 0;
+  int? _visibleReportsCacheKey;
+  List<Map<String, dynamic>> _visibleReportsCache =
+      const <Map<String, dynamic>>[];
   Map<String, String> _userVotes = {}; // reportId -> 'green' or 'red'
   bool _checkedLegacyVotes = false;
   bool _votesLoaded = false; // Track if votes have been loaded
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _announcementsSubscription;
+
+  DateTime _reportedAtForSort(Map<String, dynamic>? report) {
+    final reportedAt = report?['reportedAt'];
+    if (reportedAt is DateTime) {
+      return reportedAt;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  void _sortReportOrderByReportedAt() {
+    _reportOrder.sort((a, b) {
+      final aTime = _reportedAtForSort(_reportById[a]);
+      final bTime = _reportedAtForSort(_reportById[b]);
+      final timeCompare = bTime.compareTo(aTime);
+      if (timeCompare != 0) {
+        return timeCompare;
+      }
+      return b.compareTo(a);
+    });
+  }
+
+  int _reportSignature(Map<String, dynamic> report) {
+    final reportedAt =
+        (report['reportedAt'] as DateTime?)?.millisecondsSinceEpoch ?? 0;
+    final resolvedAt =
+        (report['resolvedAt'] as DateTime?)?.millisecondsSinceEpoch ?? 0;
+    return Object.hash(
+      report['reportId'],
+      report['image'],
+      reportedAt,
+      report['location'],
+      report['title'],
+      report['desc'],
+      report['greenFlags'],
+      report['redFlags'],
+      report['status'],
+      resolvedAt,
+      report['comments'],
+      report['name'],
+      report['profilePhotoUrl'],
+      report['mediaType'],
+      report['userVote'],
+    );
+  }
+
+  int _calculateOrderedReportSignature() {
+    var signature = _reportOrder.length;
+    for (final reportId in _reportOrder) {
+      signature = Object.hash(
+        signature,
+        reportId,
+        _reportSignatureById[reportId] ?? 0,
+      );
+    }
+    return signature;
+  }
+
+  void _commitReportsFromCache() {
+    final orderedReports = _reportOrder
+        .map((id) => _reportById[id])
+        .whereType<Map<String, dynamic>>()
+        .toList(growable: false);
+    _reportListViewSignature = _calculateOrderedReportSignature();
+    _visibleReportsCacheKey = null;
+    if (!mounted) {
+      _reports = orderedReports;
+      return;
+    }
+    setState(() {
+      _reports = orderedReports;
+    });
+  }
+
+  DateTime _announcementCreatedAtForSort(Map<String, dynamic>? announcement) {
+    final createdAt = announcement?['createdAt'];
+    if (createdAt is Timestamp) {
+      return createdAt.toDate();
+    }
+    if (createdAt is DateTime) {
+      return createdAt;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  void _sortAnnouncementOrderByCreatedAt() {
+    _announcementOrder.sort((a, b) {
+      final aTime = _announcementCreatedAtForSort(_announcementById[a]);
+      final bTime = _announcementCreatedAtForSort(_announcementById[b]);
+      final timeCompare = bTime.compareTo(aTime);
+      if (timeCompare != 0) {
+        return timeCompare;
+      }
+      return b.compareTo(a);
+    });
+  }
+
+  void _commitAnnouncementsFromCache() {
+    final orderedAnnouncements = _announcementOrder
+        .map((id) => _announcementById[id])
+        .whereType<Map<String, dynamic>>()
+        .toList(growable: false);
+    if (!mounted) {
+      _announcements = orderedAnnouncements;
+      return;
+    }
+    setState(() {
+      _announcements = orderedAnnouncements;
+    });
+  }
+
+  Map<String, dynamic> _mapAnnouncementFromDoc(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data() ?? const <String, dynamic>{};
+    return {
+      'id': doc.id,
+      'title': data['title'] ?? '',
+      'content': data['content'] ?? '',
+      'imageUrl': data['imageUrl'] ?? '',
+      'createdAt': data['createdAt'],
+    };
+  }
+
+  int _announcementSignature(Map<String, dynamic> announcement) {
+    final createdAtMillis = _announcementCreatedAtForSort(
+      announcement,
+    ).millisecondsSinceEpoch;
+    return Object.hash(
+      announcement['title'],
+      announcement['content'],
+      announcement['imageUrl'],
+      createdAtMillis,
+    );
+  }
 
   @override
   void initState() {
@@ -108,25 +338,93 @@ class _CommunityPageState extends State<CommunityPage>
   }
 
   void _subscribeToAnnouncements() {
+    _announcementsSubscription?.cancel();
     _announcementsSubscription = FirebaseFirestore.instance
         .collection('announcements')
         .orderBy('createdAt', descending: true)
         .snapshots()
         .listen(
           (snapshot) {
-            if (!mounted) return;
-            setState(() {
-              _announcements = snapshot.docs.map((doc) {
-                final data = doc.data();
-                return {
-                  'id': doc.id,
-                  'title': data['title'] ?? '',
-                  'content': data['content'] ?? '',
-                  'imageUrl': data['imageUrl'] ?? '',
-                  'createdAt': data['createdAt'],
-                };
-              }).toList();
-            });
+            if (snapshot.docChanges.isEmpty) {
+              final nextAnnouncementById = <String, Map<String, dynamic>>{};
+              final nextAnnouncementOrder = <String>[];
+              final nextAnnouncementSignatures = <String, int>{};
+
+              for (final doc in snapshot.docs) {
+                final announcement = _mapAnnouncementFromDoc(doc);
+                final announcementId = doc.id;
+                nextAnnouncementById[announcementId] = announcement;
+                nextAnnouncementOrder.add(announcementId);
+                nextAnnouncementSignatures[announcementId] =
+                    _announcementSignature(announcement);
+              }
+
+              var hasChanges =
+                  _announcementOrder.length != nextAnnouncementOrder.length ||
+                  _announcementSignatureById.length !=
+                      nextAnnouncementSignatures.length;
+              if (!hasChanges) {
+                for (final entry in nextAnnouncementSignatures.entries) {
+                  if (_announcementSignatureById[entry.key] != entry.value) {
+                    hasChanges = true;
+                    break;
+                  }
+                }
+              }
+              if (!hasChanges) return;
+
+              _announcementById
+                ..clear()
+                ..addAll(nextAnnouncementById);
+              _announcementOrder
+                ..clear()
+                ..addAll(nextAnnouncementOrder);
+              _announcementSignatureById
+                ..clear()
+                ..addAll(nextAnnouncementSignatures);
+              _sortAnnouncementOrderByCreatedAt();
+              _commitAnnouncementsFromCache();
+              return;
+            }
+
+            var hasChanges = false;
+            for (final change in snapshot.docChanges) {
+              final announcementId = change.doc.id;
+              if (change.type == DocumentChangeType.removed) {
+                final removedAnnouncement =
+                    _announcementById.remove(announcementId) != null;
+                final removedOrder = _announcementOrder.remove(announcementId);
+                final removedSignature =
+                    _announcementSignatureById.remove(announcementId) != null;
+                hasChanges =
+                    removedAnnouncement ||
+                    removedOrder ||
+                    removedSignature ||
+                    hasChanges;
+                continue;
+              }
+
+              final announcement = _mapAnnouncementFromDoc(change.doc);
+              final nextSignature = _announcementSignature(announcement);
+              final previousSignature =
+                  _announcementSignatureById[announcementId];
+              final existed = _announcementById.containsKey(announcementId);
+              if (existed && previousSignature == nextSignature) {
+                continue;
+              }
+
+              _announcementById[announcementId] = announcement;
+              _announcementSignatureById[announcementId] = nextSignature;
+              if (!existed) {
+                _announcementOrder.add(announcementId);
+              }
+              hasChanges = true;
+            }
+
+            if (hasChanges) {
+              _sortAnnouncementOrderByCreatedAt();
+              _commitAnnouncementsFromCache();
+            }
           },
           onError: (e) {
             debugPrint('❌ Failed to load announcements: $e');
@@ -181,19 +479,22 @@ class _CommunityPageState extends State<CommunityPage>
   }
 
   void _applyUserVotesToReports() {
-    if (_reports.isEmpty) return;
+    if (_reportById.isEmpty) return;
 
-    setState(() {
-      for (int i = 0; i < _reports.length; i++) {
-        final reportId = _reports[i]['id'] as String?;
-        if (reportId != null) {
-          // Apply vote from _userVotes, default to 'none' if not found
-          _reports[i]['userVote'] = _userVotes[reportId] ?? 'none';
-        }
+    var hasChanges = false;
+    for (final entry in _reportById.entries) {
+      final nextVote = _userVotes[entry.key] ?? 'none';
+      if (entry.value['userVote'] != nextVote) {
+        entry.value['userVote'] = nextVote;
+        _reportSignatureById[entry.key] = _reportSignature(entry.value);
+        hasChanges = true;
       }
-    });
+    }
+    if (hasChanges) {
+      _commitReportsFromCache();
+    }
     debugPrint(
-      '🔄 Applied ${_userVotes.length} user votes to ${_reports.length} reports',
+      'Applied ${_userVotes.length} user votes to ${_reportById.length} reports',
     );
   }
 
@@ -248,10 +549,12 @@ class _CommunityPageState extends State<CommunityPage>
   ) async {
     try {
       // Find the report for better tracking
-      final report = _reports.firstWhere(
-        (r) => r['id'] == reportId,
-        orElse: () => <String, dynamic>{},
-      );
+      final report =
+          _reportById[reportId] ??
+          _reports.firstWhere(
+            (r) => r['id'] == reportId,
+            orElse: () => <String, dynamic>{},
+          );
       final reportTitle = report['title']?.toString() ?? 'Unknown';
       // Use custom reportId if available, otherwise use Firestore doc ID
       final customReportId = report['reportId']?.toString() ?? reportId;
@@ -314,32 +617,91 @@ class _CommunityPageState extends State<CommunityPage>
         .snapshots()
         .listen(
           (snapshot) {
-            final previousVotes = {
-              for (final report in _reports)
-                report['id']?.toString() ?? '': report['userVote'],
-            };
-            final reports = snapshot.docs.map(_mapReportFromDoc).toList();
-            for (final report in reports) {
-              final reportId = report['id']?.toString() ?? '';
-              report['userVote'] =
-                  _userVotes[reportId] ?? previousVotes[reportId] ?? 'none';
+            var hasChanges = false;
+            for (final change in snapshot.docChanges) {
+              final reportId = change.doc.id;
+              if (change.type == DocumentChangeType.removed) {
+                final removed = _reportById.remove(reportId) != null;
+                final removedFromOrder = _reportOrder.remove(reportId);
+                final removedSignature =
+                    _reportSignatureById.remove(reportId) != null;
+                hasChanges =
+                    removed ||
+                    removedFromOrder ||
+                    removedSignature ||
+                    hasChanges;
+                continue;
+              }
+
+              final report = _mapReportFromDoc(change.doc);
+              final existingEntry = _reportById[reportId];
+              final existingVote =
+                  existingEntry?['userVote'] as String? ?? 'none';
+              report['userVote'] = _userVotes[reportId] ?? existingVote;
+              final nextSignature = _reportSignature(report);
+              final previousSignature = _reportSignatureById[reportId];
+              final existed = _reportById.containsKey(reportId);
+              if (existed && previousSignature == nextSignature) {
+                continue;
+              }
+              _reportById[reportId] = report;
+              _reportSignatureById[reportId] = nextSignature;
+              if (!existed) {
+                _reportOrder.add(reportId);
+              }
+              hasChanges = true;
             }
-            if (!mounted) return;
-            setState(() {
-              _reports = reports;
-            });
-            debugPrint('✅ Loaded ${reports.length} reports from Firestore');
+            if (hasChanges) {
+              _sortReportOrderByReportedAt();
+              _commitReportsFromCache();
+              debugPrint('Loaded ${_reportById.length} reports from Firestore');
+              return;
+            }
+            final hasCacheDrift =
+                _reportById.length != snapshot.docs.length ||
+                snapshot.docs.any((doc) => !_reportById.containsKey(doc.id));
+            if (!hasCacheDrift) {
+              return;
+            }
+            _rebuildReportsFromSnapshot(snapshot);
+            debugPrint(
+              'Loaded ${_reportById.length} reports from Firestore (cache rebuild)',
+            );
           },
           onError: (e) {
-            debugPrint('❌ Failed to load reports: $e');
+            debugPrint('Failed to load reports: $e');
           },
         );
   }
 
-  Map<String, dynamic> _mapReportFromDoc(
-    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+  void _rebuildReportsFromSnapshot(
+    QuerySnapshot<Map<String, dynamic>> snapshot,
   ) {
-    final data = doc.data();
+    final previousVotes = {
+      for (final entry in _reportById.entries)
+        entry.key: entry.value['userVote'],
+    };
+    _reportById.clear();
+    _reportOrder.clear();
+    _reportSignatureById.clear();
+    for (final doc in snapshot.docs) {
+      final report = _mapReportFromDoc(doc);
+      final reportId = report['id']?.toString() ?? '';
+      if (reportId.isEmpty) continue;
+      report['userVote'] =
+          _userVotes[reportId] ?? previousVotes[reportId] ?? 'none';
+      _reportById[reportId] = report;
+      _reportOrder.add(reportId);
+      _reportSignatureById[reportId] = _reportSignature(report);
+    }
+    _sortReportOrderByReportedAt();
+    _commitReportsFromCache();
+  }
+
+  Map<String, dynamic> _mapReportFromDoc(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
+    final data = doc.data() ?? const <String, dynamic>{};
     final reportedAtRaw = data['reportedAt'];
     final reportedAt = reportedAtRaw is Timestamp
         ? reportedAtRaw.toDate()
@@ -377,6 +739,7 @@ class _CommunityPageState extends State<CommunityPage>
       'commentsList': <Map<String, dynamic>>[],
       'userVote': 'none',
       'name': data['name'] ?? 'Unknown',
+      'profilePhotoUrl': _extractProfilePhotoUrl(data),
       'mediaType': data['mediaType'] ?? 'photo',
     };
   }
@@ -398,8 +761,7 @@ class _CommunityPageState extends State<CommunityPage>
     'This Year',
   ];
 
-  bool _matchesTimeFilter(DateTime reportedAt) {
-    final now = DateTime.now();
+  bool _matchesTimeFilter(DateTime reportedAt, DateTime now) {
     switch (_selectedTimeFilter) {
       case 'Today':
         return reportedAt.year == now.year &&
@@ -418,7 +780,22 @@ class _CommunityPageState extends State<CommunityPage>
   }
 
   List<Map<String, dynamic>> _getVisibleReports() {
-    final filtered = _reports.where((report) {
+    final now = DateTime.now();
+    final minuteBucket = now.millisecondsSinceEpoch ~/ 60000;
+    final cacheKey = Object.hash(
+      _reportListViewSignature,
+      _selectedFilter,
+      _selectedCategory,
+      _selectedTimeFilter,
+      minuteBucket,
+    );
+    if (_visibleReportsCacheKey == cacheKey) {
+      return _visibleReportsCache;
+    }
+
+    final selectedCategoryLower = _selectedCategory.toLowerCase();
+    final filtered = <Map<String, dynamic>>[];
+    for (final report in _reports) {
       final status = (report['status'] as String? ?? '').toLowerCase();
       final category = (report['title'] as String? ?? '').toLowerCase();
       final resolvedAt = report['resolvedAt'] as DateTime?;
@@ -426,9 +803,9 @@ class _CommunityPageState extends State<CommunityPage>
 
       if ((status == 'resolved' || status == 'incident resolved') &&
           resolvedAt != null) {
-        final elapsed = DateTime.now().difference(resolvedAt);
+        final elapsed = now.difference(resolvedAt);
         if (elapsed >= const Duration(hours: 1)) {
-          return false;
+          continue;
         }
       }
 
@@ -449,24 +826,27 @@ class _CommunityPageState extends State<CommunityPage>
         default:
           matchesFilter = true;
       }
+      if (!matchesFilter) {
+        continue;
+      }
 
       final matchesCategory =
-          _selectedCategory == 'All' ||
-          category == _selectedCategory.toLowerCase();
+          _selectedCategory == 'All' || category == selectedCategoryLower;
+      if (!matchesCategory) {
+        continue;
+      }
 
-      final matchesTime = reportedAt == null || _matchesTimeFilter(reportedAt);
+      final matchesTime =
+          reportedAt == null || _matchesTimeFilter(reportedAt, now);
+      if (!matchesTime) {
+        continue;
+      }
 
-      return matchesFilter && matchesCategory && matchesTime;
-    }).toList();
-
-    // Sort by most recent first
-    filtered.sort((a, b) {
-      final aTime = a['reportedAt'] as DateTime? ?? DateTime(1970);
-      final bTime = b['reportedAt'] as DateTime? ?? DateTime(1970);
-      return bTime.compareTo(aTime);
-    });
-
-    return filtered;
+      filtered.add(report);
+    }
+    _visibleReportsCache = List<Map<String, dynamic>>.unmodifiable(filtered);
+    _visibleReportsCacheKey = cacheKey;
+    return _visibleReportsCache;
   }
 
   String _normalizeFilter(String value) {
@@ -1067,24 +1447,6 @@ class _CommunityPageState extends State<CommunityPage>
 
   Widget _buildMediaWidget(Map<String, dynamic> report) {
     final mediaUrl = (report['image'] as String? ?? '').trim();
-    final resolvedBy =
-        (report['resolvedBy'] ??
-                report['resolvedByName'] ??
-                report['resolved_by'] ??
-                '')
-            .toString()
-            .trim();
-    final approvedBy =
-        (report['approvedBy'] ??
-                report['approvedByName'] ??
-                report['approved_by'] ??
-                '')
-            .toString()
-            .trim();
-    final mediaType = (report['mediaType'] as String? ?? 'photo').toLowerCase();
-
-    // Debug: log what we're trying to load
-    debugPrint('🖼️ Media load -> type: ' + mediaType + ', url: ' + mediaUrl);
 
     // Handle empty URL
     if (mediaUrl.isEmpty) {
@@ -1101,11 +1463,14 @@ class _CommunityPageState extends State<CommunityPage>
       final bucket = 'res-q-93ca6.firebasestorage.app';
       downloadUrl =
           'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(mediaUrl)}?alt=media';
-      debugPrint('🔗 Converted storage path to download URL: $downloadUrl');
     }
 
     // Firebase Storage URLs are network images
-    return _NetworkImageLoader(url: downloadUrl);
+    return _NetworkImageLoader(
+      url: downloadUrl,
+      cacheWidth: 1280,
+      cacheHeight: 720,
+    );
   }
 
   String _resolveMediaUrl(String mediaUrl) {
@@ -1147,10 +1512,7 @@ class _CommunityPageState extends State<CommunityPage>
                 '')
             .toString()
             .trim();
-    final sourceIndex = _reports.indexWhere(
-      (item) => item['id'] == report['id'],
-    );
-    final int reportIndex = sourceIndex == -1 ? 0 : sourceIndex;
+    final reportId = report['id']?.toString() ?? '';
     final vote = report['userVote'] as String? ?? 'none';
     final bool greenSelected = vote == 'green';
     final bool redSelected = vote == 'red';
@@ -1301,7 +1663,9 @@ class _CommunityPageState extends State<CommunityPage>
                           Row(
                             children: [
                               InkWell(
-                                onTap: () => _onGreenFlagPressed(reportIndex),
+                                onTap: reportId.isEmpty
+                                    ? null
+                                    : () => _onGreenFlagPressed(reportId),
                                 borderRadius: BorderRadius.circular(8),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -1329,7 +1693,9 @@ class _CommunityPageState extends State<CommunityPage>
                               ),
                               const SizedBox(width: 12),
                               InkWell(
-                                onTap: () => _onRedFlagPressed(reportIndex),
+                                onTap: reportId.isEmpty
+                                    ? null
+                                    : () => _onRedFlagPressed(reportId),
                                 borderRadius: BorderRadius.circular(8),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -1357,7 +1723,9 @@ class _CommunityPageState extends State<CommunityPage>
                               ),
                               const SizedBox(width: 12),
                               InkWell(
-                                onTap: () => _openComments(reportIndex),
+                                onTap: reportId.isEmpty
+                                    ? null
+                                    : () => _openComments(reportId),
                                 borderRadius: BorderRadius.circular(8),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -1423,10 +1791,10 @@ class _CommunityPageState extends State<CommunityPage>
 
   // ───────────────── FLAG LOGIC (WITH DIALOG) ─────────────────
 
-  Future<void> _onGreenFlagPressed(int index) async {
-    final report = _reports[index];
-    final String vote = report['userVote'];
-    final reportId = report['id']?.toString() ?? '';
+  Future<void> _onGreenFlagPressed(String reportId) async {
+    final report = _reportById[reportId];
+    if (report == null) return;
+    final String vote = report['userVote'] as String? ?? 'none';
 
     // Already green → quick unverify
     if (vote == 'green') {
@@ -1492,10 +1860,10 @@ class _CommunityPageState extends State<CommunityPage>
     await _saveUserVote(reportId, 'green');
   }
 
-  Future<void> _onRedFlagPressed(int index) async {
-    final report = _reports[index];
-    final String vote = report['userVote'];
-    final reportId = report['id']?.toString() ?? '';
+  Future<void> _onRedFlagPressed(String reportId) async {
+    final report = _reportById[reportId];
+    if (report == null) return;
+    final String vote = report['userVote'] as String? ?? 'none';
 
     // Already red → quick unflag
     if (vote == 'red') {
@@ -1588,8 +1956,9 @@ class _CommunityPageState extends State<CommunityPage>
 
   // ───────────────── COMMENTS BOTTOM SHEET ─────────────────
 
-  void _openComments(int index) {
-    final report = _reports[index];
+  void _openComments(String reportId) {
+    final report = _reportById[reportId];
+    if (report == null) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1636,6 +2005,10 @@ class _CommunityPageState extends State<CommunityPage>
   }
 
   void _showFilterBottomSheet() {
+    var selectedFilter = _selectedFilter;
+    var selectedCategory = _selectedCategory;
+    var selectedTimeFilter = _selectedTimeFilter;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1680,11 +2053,10 @@ class _CommunityPageState extends State<CommunityPage>
                     TextButton(
                       onPressed: () {
                         setStateSheet(() {
-                          _selectedFilter = 'All';
-                          _selectedCategory = 'All';
-                          _selectedTimeFilter = 'All Time';
+                          selectedFilter = 'All';
+                          selectedCategory = 'All';
+                          selectedTimeFilter = 'All Time';
                         });
-                        setState(() {});
                       },
                       child: const Text(
                         'Reset',
@@ -1716,15 +2088,14 @@ class _CommunityPageState extends State<CommunityPage>
                       .map(
                         (status) => ChoiceChip(
                           label: Text(status),
-                          selected: _selectedFilter == status,
+                          selected: selectedFilter == status,
                           onSelected: (selected) {
-                            setStateSheet(() => _selectedFilter = status);
-                            setState(() {});
+                            setStateSheet(() => selectedFilter = status);
                           },
                           selectedColor: appBlue,
                           labelStyle: TextStyle(
                             fontFamily: 'RobotoCondensed',
-                            color: _selectedFilter == status
+                            color: selectedFilter == status
                                 ? Colors.white
                                 : appBlack,
                           ),
@@ -1752,15 +2123,14 @@ class _CommunityPageState extends State<CommunityPage>
                       .map(
                         (category) => ChoiceChip(
                           label: Text(category),
-                          selected: _selectedCategory == category,
+                          selected: selectedCategory == category,
                           onSelected: (selected) {
-                            setStateSheet(() => _selectedCategory = category);
-                            setState(() {});
+                            setStateSheet(() => selectedCategory = category);
                           },
                           selectedColor: appBlue,
                           labelStyle: TextStyle(
                             fontFamily: 'RobotoCondensed',
-                            color: _selectedCategory == category
+                            color: selectedCategory == category
                                 ? Colors.white
                                 : appBlack,
                           ),
@@ -1788,15 +2158,14 @@ class _CommunityPageState extends State<CommunityPage>
                       .map(
                         (time) => ChoiceChip(
                           label: Text(time),
-                          selected: _selectedTimeFilter == time,
+                          selected: selectedTimeFilter == time,
                           onSelected: (selected) {
-                            setStateSheet(() => _selectedTimeFilter = time);
-                            setState(() {});
+                            setStateSheet(() => selectedTimeFilter = time);
                           },
                           selectedColor: appBlue,
                           labelStyle: TextStyle(
                             fontFamily: 'RobotoCondensed',
-                            color: _selectedTimeFilter == time
+                            color: selectedTimeFilter == time
                                 ? Colors.white
                                 : appBlack,
                           ),
@@ -1811,7 +2180,20 @@ class _CommunityPageState extends State<CommunityPage>
                   width: double.infinity,
                   height: 48,
                   child: ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
+                    onPressed: () {
+                      Navigator.pop(context);
+                      if (!mounted) return;
+                      if (selectedFilter == _selectedFilter &&
+                          selectedCategory == _selectedCategory &&
+                          selectedTimeFilter == _selectedTimeFilter) {
+                        return;
+                      }
+                      setState(() {
+                        _selectedFilter = selectedFilter;
+                        _selectedCategory = selectedCategory;
+                        _selectedTimeFilter = selectedTimeFilter;
+                      });
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: appBlue,
                       shape: RoundedRectangleBorder(
@@ -1899,6 +2281,9 @@ class _CommunityPageState extends State<CommunityPage>
                             height: 150,
                             width: double.infinity,
                             fit: BoxFit.cover,
+                            filterQuality: FilterQuality.low,
+                            cacheWidth: 720,
+                            cacheHeight: 360,
                             errorBuilder: (_, __, ___) =>
                                 const SizedBox.shrink(),
                           ),
@@ -1983,6 +2368,8 @@ class _CommunityPageState extends State<CommunityPage>
                 height: 100,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
+                  cacheExtent: 320,
+                  addAutomaticKeepAlives: false,
                   itemCount: _announcements.length,
                   separatorBuilder: (_, __) => const SizedBox(width: 12),
                   itemBuilder: (context, index) {
@@ -2112,18 +2499,15 @@ class _CommunityPageState extends State<CommunityPage>
             // REPORT LIST
             Expanded(
               child: ListView.separated(
+                cacheExtent: 700,
+                addAutomaticKeepAlives: false,
                 itemCount: visibleReports.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 14),
                 itemBuilder: (context, index) {
                   final report = visibleReports[index];
                   final statusLower = (report['status'] as String? ?? '')
                       .toLowerCase();
-                  final sourceIndex = _reports.indexWhere(
-                    (item) => item['id'] == report['id'],
-                  );
-                  final int reportIndex = sourceIndex == -1
-                      ? index
-                      : sourceIndex;
+                  final reportId = report['id']?.toString() ?? '';
                   final vote = report['userVote'] as String;
                   final bool greenSelected = vote == 'green';
                   final bool redSelected = vote == 'red';
@@ -2137,9 +2521,8 @@ class _CommunityPageState extends State<CommunityPage>
 
                   // Get reporter info
                   final reporterName = report['name'] ?? 'Unknown';
-                  final reporterInitial = reporterName.isNotEmpty
-                      ? reporterName[0].toUpperCase()
-                      : '?';
+                  final reporterPhotoUrl = report['profilePhotoUrl']
+                      ?.toString();
                   final reportedAt = report['reportedAt'] as DateTime?;
                   final timeAgo = reportedAt != null
                       ? _formatTimeAgo(reportedAt)
@@ -2163,18 +2546,12 @@ class _CommunityPageState extends State<CommunityPage>
                             child: Row(
                               children: [
                                 // Profile Avatar
-                                CircleAvatar(
+                                _buildUserAvatar(
+                                  displayName: reporterName,
+                                  profilePhotoUrl: reporterPhotoUrl,
                                   radius: 20,
-                                  backgroundColor: appBlue,
-                                  child: Text(
-                                    reporterInitial,
-                                    style: const TextStyle(
-                                      fontFamily: 'Roboto',
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                    ),
-                                  ),
+                                  fallbackColor: appBlue,
+                                  fontSize: 16,
                                 ),
                                 const SizedBox(width: 10),
                                 // Name + Time + Status
@@ -2339,8 +2716,9 @@ class _CommunityPageState extends State<CommunityPage>
                                 // GREEN FLAG (Verify)
                                 Expanded(
                                   child: InkWell(
-                                    onTap: () =>
-                                        _onGreenFlagPressed(reportIndex),
+                                    onTap: reportId.isEmpty
+                                        ? null
+                                        : () => _onGreenFlagPressed(reportId),
                                     borderRadius: BorderRadius.circular(8),
                                     child: Padding(
                                       padding: const EdgeInsets.symmetric(
@@ -2376,7 +2754,9 @@ class _CommunityPageState extends State<CommunityPage>
                                 // RED FLAG (Report)
                                 Expanded(
                                   child: InkWell(
-                                    onTap: () => _onRedFlagPressed(reportIndex),
+                                    onTap: reportId.isEmpty
+                                        ? null
+                                        : () => _onRedFlagPressed(reportId),
                                     borderRadius: BorderRadius.circular(8),
                                     child: Padding(
                                       padding: const EdgeInsets.symmetric(
@@ -2412,7 +2792,9 @@ class _CommunityPageState extends State<CommunityPage>
                                 // COMMENTS
                                 Expanded(
                                   child: InkWell(
-                                    onTap: () => _openComments(reportIndex),
+                                    onTap: reportId.isEmpty
+                                        ? null
+                                        : () => _openComments(reportId),
                                     borderRadius: BorderRadius.circular(8),
                                     child: Padding(
                                       padding: const EdgeInsets.symmetric(
@@ -2532,6 +2914,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               'id': doc.id,
               'text': data['text'] ?? '',
               'author': data['author'] ?? 'Anonymous',
+              'profilePhotoUrl': _extractProfilePhotoUrl(data),
               'timestamp': timestamp,
               'greenFlags': data['greenFlags'] ?? 0,
               'redFlags': data['redFlags'] ?? 0,
@@ -2578,6 +2961,10 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
 
     if (phone == null || phone.isEmpty) return null;
     return phone.replaceAll(RegExp(r'[^0-9]'), '');
+  }
+
+  String? _getCurrentUserProfilePhotoUrl() {
+    return _extractProfilePhotoUrl(UserSession.currentUserData);
   }
 
   Future<void> _loadCommentVotes() async {
@@ -2681,10 +3068,12 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
 
       final userName =
           UserSession.currentUserData?['fullName'] as String? ?? 'Anonymous';
+      final userProfilePhotoUrl = _getCurrentUserProfilePhotoUrl();
 
       final newComment = {
         'text': commentText,
         'author': userName,
+        if (userProfilePhotoUrl != null) 'profilePhotoUrl': userProfilePhotoUrl,
         'type': 'user',
         'timestamp': Timestamp.now(),
         'greenFlags': 0,
@@ -2989,6 +3378,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
           'id': doc.id,
           'text': data['text'] ?? '',
           'author': data['author'] ?? 'Anonymous',
+          'profilePhotoUrl': _extractProfilePhotoUrl(data),
           'timestamp': timestamp,
           'greenFlags': data['greenFlags'] ?? 0,
           'redFlags': data['redFlags'] ?? 0,
@@ -3098,6 +3488,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     try {
       final userName =
           UserSession.currentUserData?['fullName'] as String? ?? 'Anonymous';
+      final userProfilePhotoUrl = _getCurrentUserProfilePhotoUrl();
       final reportTitle = widget.report['title']?.toString() ?? '';
       final reportStatus = widget.report['status']?.toString() ?? '';
       final reportDate = widget.report['date']?.toString() ?? '';
@@ -3107,6 +3498,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       final newReply = {
         'text': replyText,
         'author': userName,
+        if (userProfilePhotoUrl != null) 'profilePhotoUrl': userProfilePhotoUrl,
         'type': 'user_reply',
         'timestamp': Timestamp.now(),
         'greenFlags': 0,
@@ -3359,7 +3751,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   }) {
     final replyId = reply['id']?.toString() ?? '';
     final author = reply['author']?.toString() ?? 'Anonymous';
-    final initial = author.isNotEmpty ? author[0].toUpperCase() : '?';
+    final profilePhotoUrl = reply['profilePhotoUrl']?.toString();
     final timestamp = reply['timestamp'] as DateTime? ?? DateTime.now();
     final vote = reply['userVote'] as String? ?? 'none';
     final verifySelected = vote == 'green';
@@ -3388,18 +3780,12 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
+          _buildUserAvatar(
+            displayName: author,
+            profilePhotoUrl: profilePhotoUrl,
             radius: 11,
-            backgroundColor: Colors.grey[350],
-            child: Text(
-              initial,
-              style: const TextStyle(
-                fontFamily: 'Roboto',
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: Colors.white,
-              ),
-            ),
+            fallbackColor: Colors.grey.shade400,
+            fontSize: 10,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -3671,9 +4057,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                         itemBuilder: (context, index) {
                           final comment = _comments[index];
                           final author = comment['author'] as String;
-                          final initial = author.isNotEmpty
-                              ? author[0].toUpperCase()
-                              : '?';
+                          final profilePhotoUrl = comment['profilePhotoUrl']
+                              ?.toString();
                           final commentId = comment['id'] as String;
                           final timestamp = comment['timestamp'] as DateTime;
                           final timeAgo = _formatTimeAgo(timestamp);
@@ -3701,18 +4086,12 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 // Avatar
-                                CircleAvatar(
+                                _buildUserAvatar(
+                                  displayName: author,
+                                  profilePhotoUrl: profilePhotoUrl,
                                   radius: 16,
-                                  backgroundColor: appBlue,
-                                  child: Text(
-                                    initial,
-                                    style: const TextStyle(
-                                      fontFamily: 'Roboto',
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                    ),
-                                  ),
+                                  fallbackColor: appBlue,
+                                  fontSize: 12,
                                 ),
                                 const SizedBox(width: 10),
                                 // Comment bubble
@@ -4023,6 +4402,7 @@ class _CommentsPageState extends State<_CommentsPage> {
               'id': doc.id,
               'text': data['text'] ?? '',
               'author': data['author'] ?? 'Anonymous',
+              'profilePhotoUrl': _extractProfilePhotoUrl(data),
               'timestamp': timestamp,
               'greenFlags': data['greenFlags'] ?? 0,
               'redFlags': data['redFlags'] ?? 0,
@@ -4104,10 +4484,14 @@ class _CommentsPageState extends State<_CommentsPage> {
       // Get the current user's name from UserSession
       final userName =
           UserSession.currentUserData?['fullName'] as String? ?? 'Anonymous';
+      final userProfilePhotoUrl = _extractProfilePhotoUrl(
+        UserSession.currentUserData,
+      );
 
       final newComment = {
         'text': commentText,
         'author': userName,
+        if (userProfilePhotoUrl != null) 'profilePhotoUrl': userProfilePhotoUrl,
         'type': 'user',
         'timestamp': Timestamp.now(),
         'greenFlags': 0,
@@ -4308,9 +4692,14 @@ class _CommentsPageState extends State<_CommentsPage> {
       appBar: AppBar(
         backgroundColor: appBlue,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+        leadingWidth: 72,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 12, top: 4, bottom: 4),
+          child: ResqBackButton(
+            style: ResqBackButtonStyle.outline,
+            backgroundColor: appOffWhite,
+            onPressed: () => Navigator.pop(context),
+          ),
         ),
         title: Text(
           'Comments (${widget.report['comments']})',
@@ -4478,18 +4867,15 @@ class _CommentsPageState extends State<_CommentsPage> {
                             // AUTHOR + TIME
                             Row(
                               children: [
-                                CircleAvatar(
+                                _buildUserAvatar(
+                                  displayName:
+                                      comment['author']?.toString() ??
+                                      'Anonymous',
+                                  profilePhotoUrl: comment['profilePhotoUrl']
+                                      ?.toString(),
                                   radius: 14,
-                                  backgroundColor: appBlue,
-                                  child: Text(
-                                    comment['author'][0].toUpperCase(),
-                                    style: const TextStyle(
-                                      fontFamily: 'RobotoCondensed',
-                                      fontSize: 12,
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w400,
-                                    ),
-                                  ),
+                                  fallbackColor: appBlue,
+                                  fontSize: 12,
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
@@ -4820,8 +5206,14 @@ class _ImageZoomDialog extends StatelessWidget {
 
 class _NetworkImageLoader extends StatefulWidget {
   final String url;
+  final int? cacheWidth;
+  final int? cacheHeight;
 
-  const _NetworkImageLoader({required this.url});
+  const _NetworkImageLoader({
+    required this.url,
+    this.cacheWidth,
+    this.cacheHeight,
+  });
 
   @override
   State<_NetworkImageLoader> createState() => _NetworkImageLoaderState();
@@ -4831,16 +5223,9 @@ class _NetworkImageLoaderState extends State<_NetworkImageLoader> {
   int _retryCount = 0;
   static const int _maxRetries = 2;
 
-  @override
-  void initState() {
-    super.initState();
-    debugPrint('🖼️ [NetworkImageLoader] Init - URL: ${widget.url}');
-  }
-
   void _retry() {
     if (_retryCount < _maxRetries) {
       setState(() => _retryCount++);
-      debugPrint('🔄 Retry attempt ${_retryCount + 1}/$_maxRetries');
     }
   }
 
@@ -4852,73 +5237,21 @@ class _NetworkImageLoaderState extends State<_NetworkImageLoader> {
       widget.url,
       key: key,
       fit: BoxFit.cover,
-      filterQuality: FilterQuality.high,
-      loadingBuilder: (context, child, loadingProgress) {
-        if (loadingProgress == null) {
-          debugPrint('✅ Image loaded successfully');
+      filterQuality: FilterQuality.low,
+      cacheWidth: widget.cacheWidth,
+      cacheHeight: widget.cacheHeight,
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+        if (wasSynchronouslyLoaded || frame != null) {
           return child;
         }
-        final percent = loadingProgress.expectedTotalBytes != null
-            ? (loadingProgress.cumulativeBytesLoaded /
-                      loadingProgress.expectedTotalBytes!) *
-                  100
-            : 0;
-        debugPrint('⏳ Loading... ${percent.toStringAsFixed(0)}%');
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(
-                value: percent > 0 ? percent / 100 : null,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '${percent.toStringAsFixed(0)}%',
-                style: const TextStyle(fontSize: 12, color: Colors.black54),
-              ),
-            ],
+        return const Center(
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFFAC1B22)),
           ),
         );
       },
       errorBuilder: (context, error, stackTrace) {
-        String errorString = 'Unknown error';
-        try {
-          errorString = error?.toString() ?? 'Unknown error';
-        } catch (e) {
-          errorString = 'Error object inaccessible: $e';
-        }
-
-        debugPrint(
-          '❌ [ImageLoader] Load failed:\n'
-          '   URL: ${widget.url}\n'
-          '   Error: $errorString\n'
-          '   Type: ${error?.runtimeType ?? 'unknown'}',
-        );
-
-        String diagnosis = 'Failed to load image';
-
-        if (errorString.contains('statusCode: 0')) {
-          diagnosis = '📡 No Internet\n(Check connection or emulator network)';
-        } else if (errorString.contains('401') ||
-            errorString.contains('403') ||
-            errorString.contains('Permission') ||
-            errorString.contains('denied')) {
-          diagnosis = '🔒 Access Denied\n(Check Storage Rules)';
-        } else if (errorString.contains('404') ||
-            errorString.contains('not found')) {
-          diagnosis = '❌ File Not Found';
-        } else if (errorString.contains('timeout') ||
-            errorString.contains('Time out')) {
-          diagnosis = '⏱️ Network Timeout';
-        } else if (errorString.contains('Network') ||
-            errorString.contains('Connection') ||
-            errorString.contains('SocketException')) {
-          diagnosis = '🌐 Network Error\n(Check internet connection)';
-        } else if (errorString.contains('Certificate') ||
-            errorString.contains('SSL')) {
-          diagnosis = '🔐 SSL Error';
-        }
-
         return Container(
           color: Colors.grey[300],
           child: Center(
@@ -4929,10 +5262,10 @@ class _NetworkImageLoaderState extends State<_NetworkImageLoader> {
                 const SizedBox(height: 8),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    diagnosis,
+                  child: const Text(
+                    'Failed to load image',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                    style: TextStyle(fontSize: 12, color: Colors.black54),
                   ),
                 ),
                 if (_retryCount < _maxRetries) ...[

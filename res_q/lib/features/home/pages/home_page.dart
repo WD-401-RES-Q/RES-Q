@@ -24,36 +24,87 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   late int _currentIndex = widget.initialIndex;
+  final Set<int> _loadedTabs = <int>{};
+  final Map<int, Widget> _tabCache = <int, Widget>{};
+  String? _cachedMapReportId;
 
   @override
   void initState() {
     super.initState();
+    _loadedTabs.add(_currentIndex);
   }
 
-  Widget _buildMapPage() {
+  Widget _resolveMapPage() {
     final activeReport = UserSession.latestActiveReport;
+    final currentReportId = activeReport?.reportId;
 
-    if (activeReport != null) {
-      return ReportMapPage(
-        key: ValueKey('report-map-${activeReport.reportId}'),
-        reportId: activeReport.reportId,
-        reportData: activeReport.reportData,
-        showBottomNav: false,
-      );
+    if (_cachedMapReportId == currentReportId) {
+      final cachedMapPage = _tabCache[2];
+      if (cachedMapPage != null) {
+        return cachedMapPage;
+      }
     }
 
-    return const MapPage();
+    final mapPage = activeReport != null
+        ? ReportMapPage(
+            key: ValueKey('report-map-${activeReport.reportId}'),
+            reportId: activeReport.reportId,
+            reportData: activeReport.reportData,
+            showBottomNav: false,
+          )
+        : const MapPage();
+
+    _cachedMapReportId = currentReportId;
+    _tabCache[2] = mapPage;
+    return mapPage;
+  }
+
+  Widget _pageForIndex(int index) {
+    switch (index) {
+      case 0:
+        return _tabCache.putIfAbsent(0, () => const _HomePageContent());
+      case 1:
+        return _tabCache.putIfAbsent(1, () => const CommunityPage());
+      case 2:
+        return _resolveMapPage();
+      case 3:
+        return _tabCache.putIfAbsent(3, () => const NotificationsPage());
+      case 4:
+      default:
+        return _tabCache.putIfAbsent(4, () => const ProfilePage());
+    }
+  }
+
+  void _onTabSelected(int index) {
+    if (_currentIndex == index && _loadedTabs.contains(index)) {
+      return;
+    }
+
+    setState(() {
+      _currentIndex = index;
+      _loadedTabs.add(index);
+    });
+  }
+
+  Widget _buildLazyTabBody() {
+    return Stack(
+      fit: StackFit.expand,
+      children: List.generate(5, (index) {
+        if (!_loadedTabs.contains(index)) {
+          return const SizedBox.shrink();
+        }
+
+        final isActive = index == _currentIndex;
+        return Offstage(
+          offstage: !isActive,
+          child: TickerMode(enabled: isActive, child: _pageForIndex(index)),
+        );
+      }),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      const _HomePageContent(),
-      const CommunityPage(),
-      _buildMapPage(),
-      const NotificationsPage(),
-      const ProfilePage(),
-    ];
     return Scaffold(
       backgroundColor: Color(0xFFF7F8F3),
       bottomNavigationBar: BottomNavBar(
@@ -64,6 +115,7 @@ class _MainPageState extends State<MainPage> {
         bottom: false,
         child: IndexedStack(index: _currentIndex, children: pages),
       ),
+      body: SafeArea(child: _buildLazyTabBody()),
     );
   }
 }
@@ -79,6 +131,7 @@ class _HomePageContentState extends State<_HomePageContent>
     with TickerProviderStateMixin {
   late final AnimationController _borderController;
   late final AnimationController _holdController;
+  bool _didPrecacheAssets = false;
 
   @override
   void initState() {
@@ -101,6 +154,14 @@ class _HomePageContentState extends State<_HomePageContent>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_didPrecacheAssets) return;
+    _didPrecacheAssets = true;
+    _precacheHomeAssets();
+  }
+
+  @override
   void dispose() {
     _borderController.dispose();
     _holdController.dispose();
@@ -108,22 +169,44 @@ class _HomePageContentState extends State<_HomePageContent>
   }
 
   void _openEmergencyCall() {
-    print("Emergency call button pressed");
+    debugPrint('Emergency call button pressed');
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const EmergencyCallScreen()),
     );
   }
 
+  Future<void> _precacheHomeAssets() async {
+    final futures = <Future<void>>[
+      precacheImage(
+        const AssetImage('assets/icons/FINAL-EARTHQUAKE-ICON.png'),
+        context,
+      ),
+      precacheImage(
+        const AssetImage('assets/icons/FINAL-FLOOD-ICON.png'),
+        context,
+      ),
+      precacheImage(
+        const AssetImage('assets/icons/FINAL-FIRE-ICON.png'),
+        context,
+      ),
+      precacheImage(
+        const AssetImage('assets/icons/FINAL-CRASH-ICON.png'),
+        context,
+      ),
+      precacheImage(
+        const AssetImage('assets/icons/FINAL-OTHERS-ICON.png'),
+        context,
+      ),
+    ];
+
+    await Future.wait(futures);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final screenWidth = MediaQuery.of(context).size.width;
-
-    final availableHeight = screenHeight - 200;
-    final gridHeight = availableHeight * 0.65;
-    final gridWidth = (screenWidth - 32).clamp(280.0, 380.0);
-    final emergencyButtonSize = (screenHeight * 0.12).clamp(80.0, 120.0);
+    final shortestSide = MediaQuery.of(context).size.shortestSide;
+    final emergencyButtonSize = (shortestSide * 0.24).clamp(80.0, 120.0);
     final emergencyIconSize = emergencyButtonSize * 0.5;
 
     return Padding(
@@ -264,74 +347,127 @@ class _HomePageContentState extends State<_HomePageContent>
                                 ),
                               ],
                             ),
-                          ],
-                        );
-                      },
+                      ),
                     ),
                   ),
-                ),
+                  const Text(
+                    "SELECT THE TYPE OF INCIDENT\nYOU WANT TO REPORT.",
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      fontFamily: 'RobotoCondensed',
+                    ),
+                  ),
+                  SizedBox(
+                    width: gridWidth,
+                    height: gridHeight,
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF7F8F3),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          const spacing = 12.0;
+                          final maxCardWidth =
+                              (constraints.maxWidth - spacing) / 2;
+                          final maxCardHeightByWidth = maxCardWidth / 1.05;
+                          final maxCardHeightByHeight =
+                              (constraints.maxHeight - spacing * 2) / 3;
+                          final cardHeight = math.min(
+                            maxCardHeightByWidth,
+                            maxCardHeightByHeight,
+                          );
+                          final cardWidth = cardHeight * 1.05;
+                          final iconSize = (cardHeight * 0.55).clamp(
+                            50.0,
+                            90.0,
+                          );
+                          final labelFont = (cardHeight * 0.16).clamp(
+                            11.0,
+                            16.0,
+                          );
 
-                GestureDetector(
-                  onLongPressStart: (_) {
-                    if (_holdController.isAnimating) return;
-                    _holdController.forward(from: 0);
-                  },
-                  onLongPressEnd: (_) {
-                    if (_holdController.isAnimating ||
-                        _holdController.value > 0) {
-                      _holdController.stop();
-                      _holdController.reset();
-                    }
-                  },
-                  onLongPressCancel: () {
-                    if (_holdController.isAnimating ||
-                        _holdController.value > 0) {
-                      _holdController.stop();
-                      _holdController.reset();
-                    }
-                  },
-                  onTap: () {
-                    AppSnackBar.show(
-                      context,
-                      'Press and hold to place a call',
-                      type: AppSnackBarType.info,
-                    );
-                  },
-                  child: _buildAnimatedBorder(
-                    borderRadius: BorderRadius.circular(999),
-                    borderWidth: 7,
-                    isCircle: true,
-                    child: SizedBox(
-                      width: emergencyButtonSize,
-                      height: emergencyButtonSize,
-                      child: AnimatedBuilder(
-                        animation: _holdController,
-                        builder: (context, _) {
-                          final progress = _holdController.value == 0
-                              ? 0.18
-                              : _holdController.value;
-                          return Stack(
-                            alignment: Alignment.center,
+                          return Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              SizedBox(
-                                width: emergencyButtonSize * 0.7,
-                                height: emergencyButtonSize * 0.7,
-                                child: CircularProgressIndicator(
-                                  value: progress,
-                                  strokeWidth: (emergencyButtonSize * 0.06)
-                                      .clamp(4.0, 6.0),
-                                  backgroundColor: Colors.white.withOpacity(
-                                    0.15,
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  SizedBox(
+                                    width: cardWidth,
+                                    height: cardHeight,
+                                    child: _incidentCard(
+                                      context,
+                                      "EARTHQUAKE",
+                                      "assets/icons/FINAL-EARTHQUAKE-ICON.png",
+                                      fontSize: labelFont,
+                                      iconSize: iconSize,
+                                    ),
                                   ),
-                                  valueColor: const AlwaysStoppedAnimation(
-                                    Color(0xFFFFC806),
+                                  const SizedBox(width: spacing),
+                                  SizedBox(
+                                    width: cardWidth,
+                                    height: cardHeight,
+                                    child: _incidentCard(
+                                      context,
+                                      "FLOOD",
+                                      "assets/icons/FINAL-FLOOD-ICON.png",
+                                      fontSize: labelFont,
+                                      iconSize: iconSize,
+                                    ),
                                   ),
-                                ),
+                                ],
                               ),
-                              Icon(
-                                Icons.phone,
-                                size: emergencyIconSize,
-                                color: Colors.white,
+                              const SizedBox(height: spacing),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  SizedBox(
+                                    width: cardWidth,
+                                    height: cardHeight,
+                                    child: _incidentCard(
+                                      context,
+                                      "FIRE",
+                                      "assets/icons/FINAL-FIRE-ICON.png",
+                                      fontSize: labelFont,
+                                      iconSize: iconSize,
+                                    ),
+                                  ),
+                                  const SizedBox(width: spacing),
+                                  SizedBox(
+                                    width: cardWidth,
+                                    height: cardHeight,
+                                    child: _incidentCard(
+                                      context,
+                                      "ROAD CRASH",
+                                      "assets/icons/FINAL-CRASH-ICON.png",
+                                      fontSize: labelFont,
+                                      iconSize: iconSize,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: spacing),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  SizedBox(
+                                    width: cardWidth,
+                                    height: cardHeight,
+                                    child: _incidentCard(
+                                      context,
+                                      "OTHERS",
+                                      "assets/icons/FINAL-OTHERS-ICON.png",
+                                      fontSize: labelFont,
+                                      iconSize: iconSize,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           );
@@ -339,21 +475,95 @@ class _HomePageContentState extends State<_HomePageContent>
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                const Text(
-                  'Press and Hold to Call',
-                  style: TextStyle(
-                    fontFamily: 'RobotoCondensed',
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black,
+                  GestureDetector(
+                    onLongPressStart: (_) {
+                      if (_holdController.isAnimating) return;
+                      _holdController.forward(from: 0);
+                    },
+                    onLongPressEnd: (_) {
+                      if (_holdController.isAnimating ||
+                          _holdController.value > 0) {
+                        _holdController.stop();
+                        _holdController.reset();
+                      }
+                    },
+                    onLongPressCancel: () {
+                      if (_holdController.isAnimating ||
+                          _holdController.value > 0) {
+                        _holdController.stop();
+                        _holdController.reset();
+                      }
+                    },
+                    onTap: () {
+                      AppSnackBar.show(
+                        context,
+                        'Press and hold to place a call',
+                        type: AppSnackBarType.info,
+                      );
+                    },
+                    child: _buildAnimatedBorder(
+                      borderRadius: BorderRadius.circular(999),
+                      borderWidth: 7,
+                      isCircle: true,
+                      child: SizedBox(
+                        width: emergencyButtonSize,
+                        height: emergencyButtonSize,
+                        child: RepaintBoundary(
+                          child: AnimatedBuilder(
+                            animation: _holdController,
+                            builder: (context, _) {
+                              final progress = _holdController.value == 0
+                                  ? 0.18
+                                  : _holdController.value;
+                              return Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  SizedBox(
+                                    width: emergencyButtonSize * 0.7,
+                                    height: emergencyButtonSize * 0.7,
+                                    child: CircularProgressIndicator(
+                                      value: progress,
+                                      strokeWidth: (emergencyButtonSize * 0.06)
+                                          .clamp(4.0, 6.0),
+                                      backgroundColor: Colors.white.withOpacity(
+                                        0.15,
+                                      ),
+                                      valueColor: const AlwaysStoppedAnimation(
+                                        Color(0xFFFFC806),
+                                      ),
+                                    ),
+                                  ),
+                                  Icon(
+                                    Icons.phone,
+                                    size: emergencyIconSize,
+                                    color: Colors.white,
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 2),
+                  const Text(
+                    'Press and Hold to Call',
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -370,7 +580,7 @@ class _HomePageContentState extends State<_HomePageContent>
       child: InkWell(
         borderRadius: BorderRadius.circular(30),
         onTap: () {
-          print("$title card tapped");
+          debugPrint('$title card tapped');
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -378,7 +588,7 @@ class _HomePageContentState extends State<_HomePageContent>
             ),
           );
         },
-        child: _buildAnimatedBorder(
+        child: _buildStaticBorder(
           borderRadius: BorderRadius.circular(40),
           borderWidth: 6,
           child: Column(
@@ -406,6 +616,8 @@ class _HomePageContentState extends State<_HomePageContent>
                 child: Text(
                   title,
                   textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: fontSize,
                     fontWeight: FontWeight.w600,
@@ -464,6 +676,42 @@ class _HomePageContentState extends State<_HomePageContent>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildStaticBorder({
+    required BorderRadius borderRadius,
+    required double borderWidth,
+    required Widget child,
+    bool isCircle = false,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: isCircle ? null : borderRadius,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFC806), Color(0xFFFFE27A), Color(0xFFFFC806)],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.25),
+            spreadRadius: 2,
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      padding: EdgeInsets.all(borderWidth),
+      child: Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFFAC1B22),
+          shape: isCircle ? BoxShape.circle : BoxShape.rectangle,
+          borderRadius: isCircle ? null : borderRadius,
+        ),
+        child: child,
+      ),
     );
   }
 }

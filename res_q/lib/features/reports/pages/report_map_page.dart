@@ -5,7 +5,6 @@ import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
@@ -15,6 +14,7 @@ import '../../../common/theme/app_theme.dart';
 
 import '../../../common/services/location_service.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../home/pages/home_page.dart';
 
@@ -57,6 +57,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         AutomaticKeepAliveClientMixin,
         TickerProviderStateMixin,
         WidgetsBindingObserver {
+  static const Distance _distanceCalculator = Distance();
   final MapController _mapController = MapController();
   late final AnimationController _pinBounceController;
   WeatherState _weatherState = WeatherState.none;
@@ -75,17 +76,26 @@ class _ReportMapPageState extends State<ReportMapPage>
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _commentsSubscription;
   bool _commentsInitialized = false;
+  bool _isResponderCommentsLoading = true;
+  String? _responderCommentsError;
+  List<Map<String, dynamic>> _responderComments = [];
+  String _responderCommentsSignature = '';
   List<Map<String, dynamic>> _responderCommentsFallback = [];
+  String _fallbackCommentsSignature = '';
   Map<String, dynamic>? _liveReportData;
+  String _liveReportSignature = '';
   LatLng? _responderLocation;
   bool _resolvedDialogShown = false;
   bool _flaggedDialogShown = false;
+  bool _reportUpdatesInitialized = false;
   List<Polyline> _responderRoutePolylines = [];
   Timer? _routeDebounce;
   LatLng? _lastRouteOrigin;
   LatLng? _lastRouteDestination;
   double? _responderRouteDistanceKm;
   String? _responderRouteEta;
+  String _routeSignature = '';
+  int _routeRequestId = 0;
 
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
@@ -164,6 +174,7 @@ class _ReportMapPageState extends State<ReportMapPage>
     _reportSubscription?.cancel();
     _commentsSubscription?.cancel();
     _routeDebounce?.cancel();
+    _routeRequestId++;
     super.dispose();
   }
 
@@ -253,7 +264,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         _mapController.move(userLatLng, 16.0);
 
         debugPrint(
-          '✅ Location shared: ${position.latitude}, ${position.longitude}',
+          'Location shared: ${position.latitude}, ${position.longitude}',
         );
 
         // Show report details card
@@ -266,7 +277,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         });
       }
     } catch (e) {
-      debugPrint('❌ Failed to share location: $e');
+      debugPrint('Failed to share location: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -279,148 +290,135 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   void _showIncidentInfo(Map<String, dynamic> data) {
+    final merged = <String, dynamic>{
+      ...data,
+      if (_liveReportData != null) ..._liveReportData!,
+    };
+    final incidentType = merged['incidentType'] as String? ?? 'Unknown';
+    final reporter = merged['name'] as String? ?? 'Unknown';
+    final description =
+        merged['details'] as String? ??
+        merged['description'] as String? ??
+        'No description';
+    final status = _normalizeStatusLabel(
+      merged['responderStatus'] as String? ??
+          merged['status'] as String? ??
+          'Unverified',
+    );
+    final statusColor = _getStatusColor(status);
+
     showDialog(
       context: context,
-      builder: (context) =>
-          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: FirebaseFirestore.instance
-                .collection('reports')
-                .doc(widget.reportId)
-                .snapshots(),
-            builder: (context, snapshot) {
-              final live = snapshot.data?.data();
-              final merged = {...data, if (live != null) ...live};
-              final incidentType =
-                  merged['incidentType'] as String? ?? 'Unknown';
-              final reporter = merged['name'] as String? ?? 'Unknown';
-              final description =
-                  merged['details'] as String? ??
-                  merged['description'] as String? ??
-                  'No description';
-              final status = _normalizeStatusLabel(
-                merged['responderStatus'] as String? ??
-                    merged['status'] as String? ??
-                    'Unverified',
-              );
-              final statusColor = _getStatusColor(status);
-
-              return Dialog(
-                backgroundColor: Colors.white,
-                insetPadding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 24,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.white,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFAC1B22),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.report,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      incidentType.toUpperCase(),
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFAC1B22),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, size: 20),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: statusColor),
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFAC1B22),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: const Icon(
-                              Icons.report,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              incidentType.toUpperCase(),
-                              style: const TextStyle(
-                                fontFamily: 'Roboto',
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFFAC1B22),
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => Navigator.pop(context),
-                            icon: const Icon(Icons.close, size: 20),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: statusColor),
-                        ),
-                        child: Text(
-                          'Status: $status',
-                          style: TextStyle(
-                            fontFamily: 'Roboto',
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: statusColor,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Reported by $reporter',
-                        style: const TextStyle(
-                          fontFamily: 'Roboto',
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: Color(0xFF1F2933),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        description,
-                        style: const TextStyle(
-                          fontFamily: 'Roboto',
-                          fontSize: 13,
-                          height: 1.4,
-                          color: Color(0xFF4B5563),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: () => Navigator.pop(context),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFAC1B22),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          child: const Text(
-                            'CLOSE',
-                            style: TextStyle(
-                              fontFamily: 'Roboto',
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                child: Text(
+                  'Status: $status',
+                  style: TextStyle(
+                    fontFamily: 'Roboto',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: statusColor,
                   ),
                 ),
-              );
-            },
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Reported by $reporter',
+                style: const TextStyle(
+                  fontFamily: 'Roboto',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF1F2933),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                description,
+                style: const TextStyle(
+                  fontFamily: 'Roboto',
+                  fontSize: 13,
+                  height: 1.4,
+                  color: Color(0xFF4B5563),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFAC1B22),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text(
+                    'CLOSE',
+                    style: TextStyle(
+                      fontFamily: 'Roboto',
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
+        ),
+      ),
     );
   }
 
@@ -457,15 +455,18 @@ class _ReportMapPageState extends State<ReportMapPage>
   Future<void> _updateResponderRoute() async {
     final origin = _responderLocation;
     final destination = _userLocation ?? _incidentLocation;
-    if (origin == null || destination == null) return;
+    if (origin == null || destination == null) {
+      _clearResponderRoute();
+      return;
+    }
 
     if (_lastRouteOrigin != null && _lastRouteDestination != null) {
-      final originMoved = const Distance().as(
+      final originMoved = _distanceCalculator.as(
         LengthUnit.Meter,
         origin,
         _lastRouteOrigin!,
       );
-      final destinationMoved = const Distance().as(
+      final destinationMoved = _distanceCalculator.as(
         LengthUnit.Meter,
         destination,
         _lastRouteDestination!,
@@ -477,6 +478,7 @@ class _ReportMapPageState extends State<ReportMapPage>
 
     _lastRouteOrigin = origin;
     _lastRouteDestination = destination;
+    final requestId = ++_routeRequestId;
 
     _RouteResult? route = await _fetchRouteFromOsrm(origin, destination);
     List<LatLng> points = route?.points ?? [];
@@ -490,7 +492,19 @@ class _ReportMapPageState extends State<ReportMapPage>
       eta = _calculateEstimatedTime(distanceKm);
     }
 
-    if (!mounted) return;
+    if (!mounted || requestId != _routeRequestId) return;
+
+    final nextRouteSignature = [
+      points.length,
+      points.isEmpty ? '-' : _latLngSignature(points.first),
+      points.isEmpty ? '-' : _latLngSignature(points.last),
+      distanceKm?.toStringAsFixed(2) ?? '-',
+      eta ?? '-',
+    ].join('|');
+    if (nextRouteSignature == _routeSignature) {
+      return;
+    }
+
     setState(() {
       _responderRoutePolylines = points.isEmpty
           ? []
@@ -512,6 +526,7 @@ class _ReportMapPageState extends State<ReportMapPage>
             ];
       _responderRouteDistanceKm = points.isEmpty ? null : distanceKm;
       _responderRouteEta = points.isEmpty ? null : eta;
+      _routeSignature = nextRouteSignature;
     });
   }
 
@@ -604,14 +619,14 @@ class _ReportMapPageState extends State<ReportMapPage>
 
   String _formatDurationFromMinutes(int minutes) {
     if (minutes < 60) {
-      return '${minutes} min';
+      return '$minutes min';
     }
     final hours = minutes ~/ 60;
     final remaining = minutes % 60;
     if (remaining == 0) {
-      return '${hours} hr';
+      return '$hours hr';
     }
-    return '${hours} hr ${remaining} min';
+    return '$hours hr $remaining min';
   }
 
   void _subscribeToReportUpdates() {
@@ -623,6 +638,13 @@ class _ReportMapPageState extends State<ReportMapPage>
         .listen((snapshot) {
           final data = snapshot.data();
           if (data == null) return;
+
+          final previousData = _liveReportData == null
+              ? null
+              : Map<String, dynamic>.from(_liveReportData!);
+          final previousUserLocation = _userLocation;
+          final previousResponderLocation = _responderLocation;
+
           final incidentLocation =
               _latLngFromDynamic(data['incidentLocation']) ??
               _latLngFromDynamic(data['location']);
@@ -632,56 +654,80 @@ class _ReportMapPageState extends State<ReportMapPage>
               ? LatLng(responderLoc.latitude, responderLoc.longitude)
               : null;
 
-          if (mounted) {
-            setState(() {
-              _liveReportData = Map<String, dynamic>.from(data);
-              if (incidentLocation != null) {
-                _incidentLocation = incidentLocation;
-              }
-              if (reporterLocation != null) {
-                _userLocation = reporterLocation;
-                _locationShared = true;
-              } else if ((data['locationSource'] as String?)?.toLowerCase() ==
-                      'current' &&
-                  _incidentLocation != null &&
-                  !_locationShared) {
-                // Backward compatibility for reports created before reporterLocation.
-                _userLocation = _incidentLocation;
-                _locationShared = true;
-              }
-              if (responderLocation != null) {
-                _responderLocation = responderLocation;
-              }
-            });
+          final nextLiveReportData = Map<String, dynamic>.from(data);
+          final nextIncidentLocation = incidentLocation ?? _incidentLocation;
+
+          LatLng? nextUserLocation = _userLocation;
+          var nextLocationShared = _locationShared;
+          if (reporterLocation != null) {
+            nextUserLocation = reporterLocation;
+            nextLocationShared = true;
+          } else if ((data['locationSource'] as String?)?.toLowerCase() ==
+                  'current' &&
+              nextIncidentLocation != null &&
+              !nextLocationShared) {
+            // Backward compatibility for reports created before reporterLocation.
+            nextUserLocation = nextIncidentLocation;
+            nextLocationShared = true;
           }
-          final commentsRaw = data['responderComments'];
-          if (commentsRaw is List) {
-            final parsed = commentsRaw
-                .whereType<Map>()
-                .map((entry) => Map<String, dynamic>.from(entry))
-                .toList();
-            parsed.sort((a, b) {
-              final aTime = a['timestamp'];
-              final bTime = b['timestamp'];
-              final aDate = aTime is Timestamp
-                  ? aTime.toDate()
-                  : (aTime is DateTime
-                        ? aTime
-                        : DateTime.fromMillisecondsSinceEpoch(0));
-              final bDate = bTime is Timestamp
-                  ? bTime.toDate()
-                  : (bTime is DateTime
-                        ? bTime
-                        : DateTime.fromMillisecondsSinceEpoch(0));
-              return bDate.compareTo(aDate);
-            });
+
+          final nextResponderLocation = responderLocation ?? _responderLocation;
+          final nextFallbackComments = _parseResponderCommentsFallback(
+            data['responderComments'],
+          );
+
+          final nextLiveSignature = _buildLiveReportSignature(
+            data: nextLiveReportData,
+            incidentLocation: nextIncidentLocation,
+            reporterLocation: nextUserLocation,
+            responderLocation: nextResponderLocation,
+            locationShared: nextLocationShared,
+          );
+          final nextFallbackSignature = _buildCommentsSignature(
+            nextFallbackComments,
+          );
+          final hasUiChanges =
+              nextLiveSignature != _liveReportSignature ||
+              nextFallbackSignature != _fallbackCommentsSignature;
+
+          if (hasUiChanges) {
             if (mounted) {
               setState(() {
-                _responderCommentsFallback = parsed;
+                _liveReportData = nextLiveReportData;
+                _incidentLocation = nextIncidentLocation;
+                _userLocation = nextUserLocation;
+                _locationShared = nextLocationShared;
+                _responderLocation = nextResponderLocation;
+                _responderCommentsFallback = nextFallbackComments;
+                _liveReportSignature = nextLiveSignature;
+                _fallbackCommentsSignature = nextFallbackSignature;
               });
+            } else {
+              _liveReportData = nextLiveReportData;
+              _incidentLocation = nextIncidentLocation;
+              _userLocation = nextUserLocation;
+              _locationShared = nextLocationShared;
+              _responderLocation = nextResponderLocation;
+              _responderCommentsFallback = nextFallbackComments;
+              _liveReportSignature = nextLiveSignature;
+              _fallbackCommentsSignature = nextFallbackSignature;
             }
+          } else {
+            _liveReportData = nextLiveReportData;
+            _incidentLocation = nextIncidentLocation;
+            _userLocation = nextUserLocation;
+            _locationShared = nextLocationShared;
+            _responderLocation = nextResponderLocation;
+            _responderCommentsFallback = nextFallbackComments;
+            _liveReportSignature = nextLiveSignature;
+            _fallbackCommentsSignature = nextFallbackSignature;
           }
+
           final status = (data['status'] as String? ?? '').toLowerCase();
+          _handleRealtimeReportNotification(
+            previousData: previousData,
+            currentData: data,
+          );
           if ((status == 'resolved' || status == 'incident resolved') &&
               !_resolvedDialogShown) {
             _resolvedDialogShown = true;
@@ -698,77 +744,409 @@ class _ReportMapPageState extends State<ReportMapPage>
               _showFlaggedDialog();
             });
           }
-          if (responderLocation != null) {
-            _scheduleResponderRouteUpdate();
+
+          final reporterLocationChanged = _latLngChanged(
+            previousUserLocation,
+            nextUserLocation,
+            thresholdMeters: 5,
+          );
+          final responderLocationChanged = _latLngChanged(
+            previousResponderLocation,
+            nextResponderLocation,
+            thresholdMeters: 5,
+          );
+
+          if (nextResponderLocation != null) {
+            if (responderLocationChanged ||
+                reporterLocationChanged ||
+                _responderRoutePolylines.isEmpty) {
+              _scheduleResponderRouteUpdate();
+            }
+          } else {
+            _clearResponderRoute();
           }
         });
   }
 
+  DateTime? _dateFromDynamic(Object? raw) {
+    if (raw is Timestamp) {
+      return raw.toDate();
+    }
+    if (raw is DateTime) {
+      return raw;
+    }
+    return null;
+  }
+
+  bool _latLngChanged(
+    LatLng? previous,
+    LatLng? current, {
+    double thresholdMeters = 1,
+  }) {
+    if (previous == null && current == null) return false;
+    if (previous == null || current == null) return true;
+    final moved = _distanceCalculator.as(LengthUnit.Meter, previous, current);
+    return moved >= thresholdMeters;
+  }
+
+  String _signatureValue(Object? raw) {
+    if (raw is Timestamp) {
+      return raw.millisecondsSinceEpoch.toString();
+    }
+    if (raw is DateTime) {
+      return raw.millisecondsSinceEpoch.toString();
+    }
+    return (raw ?? '').toString();
+  }
+
+  String _latLngSignature(LatLng? point) {
+    if (point == null) return '-';
+    return '${point.latitude.toStringAsFixed(5)},${point.longitude.toStringAsFixed(5)}';
+  }
+
+  String _buildLiveReportSignature({
+    required Map<String, dynamic> data,
+    required LatLng? incidentLocation,
+    required LatLng? reporterLocation,
+    required LatLng? responderLocation,
+    required bool locationShared,
+  }) {
+    return [
+      _signatureValue(data['status']),
+      _signatureValue(data['responderStatus']),
+      _signatureValue(data['responderName']),
+      _signatureValue(data['incidentType']),
+      _signatureValue(data['name']),
+      _signatureValue(data['contactNumber']),
+      _signatureValue(data['details'] ?? data['description']),
+      _signatureValue(data['mediaUrl']),
+      _signatureValue(data['mediaType']),
+      _signatureValue(data['locationSource']),
+      _signatureValue(data['reportedAt']),
+      _latLngSignature(incidentLocation),
+      _latLngSignature(reporterLocation),
+      _latLngSignature(responderLocation),
+      locationShared.toString(),
+    ].join('|');
+  }
+
+  String _buildCommentsSignature(List<Map<String, dynamic>> comments) {
+    if (comments.isEmpty) {
+      return 'empty';
+    }
+
+    final buffer = StringBuffer();
+    final maxItems = comments.length > 20 ? 20 : comments.length;
+    for (var i = 0; i < maxItems; i++) {
+      final comment = comments[i];
+      buffer
+        ..write(_signatureValue(comment['id']))
+        ..write(':')
+        ..write(_signatureValue(comment['text']))
+        ..write(':')
+        ..write(_signatureValue(comment['timestamp']))
+        ..write(';');
+    }
+    return buffer.toString();
+  }
+
+  List<Map<String, dynamic>> _parseResponderCommentsFallback(
+    Object? commentsRaw,
+  ) {
+    if (commentsRaw is! List) {
+      return const [];
+    }
+
+    final parsed = commentsRaw.whereType<Map>().map((entry) {
+      final data = Map<String, dynamic>.from(entry);
+      return <String, dynamic>{
+        'id': data['id'] ?? '',
+        'text': (data['text'] as String? ?? '').trim(),
+        'timestamp':
+            _dateFromDynamic(data['timestamp']) ??
+            DateTime.fromMillisecondsSinceEpoch(0),
+      };
+    }).toList();
+
+    parsed.sort((a, b) {
+      final aDate = a['timestamp'] as DateTime;
+      final bDate = b['timestamp'] as DateTime;
+      return bDate.compareTo(aDate);
+    });
+
+    return parsed;
+  }
+
+  bool _isResponderCommentData(Map<String, dynamic> data) {
+    final type = (data['type'] as String?)?.toLowerCase();
+    final role = (data['role'] as String?)?.toLowerCase();
+    if (type == 'admin' || role == 'responder') {
+      return true;
+    }
+    if (type == null) {
+      return true;
+    }
+    return type != 'user';
+  }
+
+  void _clearResponderRoute() {
+    _routeRequestId++;
+    _routeDebounce?.cancel();
+
+    if (_responderRoutePolylines.isEmpty &&
+        _responderRouteDistanceKm == null &&
+        _responderRouteEta == null &&
+        _routeSignature.isEmpty) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _responderRoutePolylines = [];
+        _responderRouteDistanceKm = null;
+        _responderRouteEta = null;
+        _routeSignature = '';
+      });
+    } else {
+      _responderRoutePolylines = [];
+      _responderRouteDistanceKm = null;
+      _responderRouteEta = null;
+      _routeSignature = '';
+    }
+  }
+
+  bool _hasResponderAssignment(Map<String, dynamic>? data) {
+    if (data == null) return false;
+    final responderId = (data['responderId'] as String? ?? '').trim();
+    final responderContact =
+        (data['responderContactNumber'] as String? ??
+                data['responderPhone'] as String? ??
+                '')
+            .trim();
+    final responderName = (data['responderName'] as String? ?? '')
+        .trim()
+        .toLowerCase();
+    final assignedAt = _dateFromDynamic(
+      data['responderAssignedAt'] ?? data['deployedAt'],
+    );
+
+    return responderId.isNotEmpty ||
+        responderContact.isNotEmpty ||
+        (responderName.isNotEmpty &&
+            responderName != 'unknown' &&
+            responderName != 'responder') ||
+        assignedAt != null;
+  }
+
+  String _normalizedResponderStatus(Map<String, dynamic>? data) {
+    if (data == null) return '';
+    final raw =
+        (data['responderStatus'] as String? ?? data['status'] as String? ?? '')
+            .trim();
+    if (raw.isEmpty) return '';
+    return _normalizeStatusLabel(raw).toLowerCase();
+  }
+
+  String _responderName(Map<String, dynamic> data) {
+    final value =
+        (data['responderName'] as String? ??
+                data['respondingBy'] as String? ??
+                'Responder')
+            .trim();
+    return value.isEmpty ? 'Responder' : value;
+  }
+
+  void _showRealtimeNotification({
+    required String message,
+    IconData icon = Icons.notifications_active,
+  }) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        duration: const Duration(seconds: 3),
+        content: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: const Color(0xFFAC1B22),
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.2),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  message,
+                  style: const TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontWeight: FontWeight.w400,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _handleRealtimeReportNotification({
+    required Map<String, dynamic>? previousData,
+    required Map<String, dynamic> currentData,
+  }) {
+    if (!_reportUpdatesInitialized) {
+      _reportUpdatesInitialized = true;
+      return;
+    }
+
+    final hadAssignment = _hasResponderAssignment(previousData);
+    final hasAssignment = _hasResponderAssignment(currentData);
+    final previousAssignedAt = _dateFromDynamic(
+      previousData?['responderAssignedAt'] ?? previousData?['deployedAt'],
+    );
+    final currentAssignedAt = _dateFromDynamic(
+      currentData['responderAssignedAt'] ?? currentData['deployedAt'],
+    );
+
+    final assignmentTimestampChanged =
+        currentAssignedAt != null &&
+        (previousAssignedAt == null ||
+            !currentAssignedAt.isAtSameMomentAs(previousAssignedAt));
+
+    if (hasAssignment && (!hadAssignment || assignmentTimestampChanged)) {
+      final responder = _responderName(currentData);
+      _showRealtimeNotification(
+        icon: Icons.local_shipping_outlined,
+        message:
+            '$responder was deployed. Status stays pending until they tap responding.',
+      );
+    }
+
+    final previousStatus = _normalizedResponderStatus(previousData);
+    final currentStatus = _normalizedResponderStatus(currentData);
+    if (currentStatus == 'responding' && previousStatus != 'responding') {
+      final responder = _responderName(currentData);
+      _showRealtimeNotification(
+        icon: Icons.directions_car_filled_outlined,
+        message: '$responder is now responding to your report.',
+      );
+    }
+  }
+
   void _subscribeToResponderComments() {
     _commentsSubscription?.cancel();
+    _commentsInitialized = false;
+    _isResponderCommentsLoading = true;
+    _responderCommentsError = null;
+
     _commentsSubscription = FirebaseFirestore.instance
         .collection('reports')
         .doc(widget.reportId)
         .collection('comments')
         .orderBy('timestamp', descending: true)
         .snapshots()
-        .listen((snapshot) {
-          if (!_commentsInitialized) {
-            _commentsInitialized = true;
-            return;
-          }
-          if (snapshot.docChanges.isEmpty) return;
-          final hasNew = snapshot.docChanges.any((change) {
-            if (change.type != DocumentChangeType.added) return false;
-            final data = change.doc.data();
-            if (data == null) return false;
-            final type = (data['type'] as String?)?.toLowerCase();
-            final role = (data['role'] as String?)?.toLowerCase();
-            return type == 'admin' ||
-                role == 'responder' ||
-                (type != 'user' && type != null);
-          });
-          if (!hasNew || !mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.transparent,
-              elevation: 0,
-              duration: const Duration(seconds: 2),
-              content: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFAC1B22),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.notifications, color: Colors.white, size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Responder posted an update',
-                      style: TextStyle(
-                        fontFamily: 'RobotoCondensed',
-                        fontWeight: FontWeight.w400,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        });
+        .listen(
+          (snapshot) {
+            final nextComments = snapshot.docs
+                .where((doc) => _isResponderCommentData(doc.data()))
+                .map((doc) {
+                  final data = doc.data();
+                  return <String, dynamic>{
+                    'id': doc.id,
+                    'text': (data['text'] as String? ?? '').trim(),
+                    'timestamp':
+                        _dateFromDynamic(data['timestamp']) ??
+                        DateTime.fromMillisecondsSinceEpoch(0),
+                  };
+                })
+                .toList();
+            final nextCommentsSignature = _buildCommentsSignature(nextComments);
+
+            final shouldRefreshCommentUi =
+                nextCommentsSignature != _responderCommentsSignature ||
+                _isResponderCommentsLoading ||
+                _responderCommentsError != null;
+            if (shouldRefreshCommentUi) {
+              if (mounted) {
+                setState(() {
+                  _responderComments = nextComments;
+                  _responderCommentsSignature = nextCommentsSignature;
+                  _isResponderCommentsLoading = false;
+                  _responderCommentsError = null;
+                });
+              } else {
+                _responderComments = nextComments;
+                _responderCommentsSignature = nextCommentsSignature;
+                _isResponderCommentsLoading = false;
+                _responderCommentsError = null;
+              }
+            }
+
+            if (!_commentsInitialized) {
+              _commentsInitialized = true;
+              return;
+            }
+            if (snapshot.docChanges.isEmpty) return;
+            String? latestCommentText;
+            DateTime? latestCommentAt;
+            final hasNew = snapshot.docChanges.any((change) {
+              if (change.type != DocumentChangeType.added) return false;
+              final data = change.doc.data();
+              if (data == null) return false;
+              if (!_isResponderCommentData(data)) return false;
+              final text = (data['text'] as String? ?? '').trim();
+              if (text.isNotEmpty) {
+                final commentAt =
+                    _dateFromDynamic(data['timestamp']) ??
+                    DateTime.fromMillisecondsSinceEpoch(0);
+                if (latestCommentAt == null ||
+                    commentAt.isAfter(latestCommentAt!)) {
+                  latestCommentAt = commentAt;
+                  latestCommentText = text;
+                }
+              }
+              return true;
+            });
+            if (!hasNew || !mounted) return;
+            final comment = latestCommentText;
+            if (comment != null && comment.isNotEmpty) {
+              final preview = comment.length > 100
+                  ? '${comment.substring(0, 100)}...'
+                  : comment;
+              _showRealtimeNotification(
+                icon: Icons.chat_bubble_outline,
+                message: 'Responder update: $preview',
+              );
+              return;
+            }
+            _showRealtimeNotification(
+              icon: Icons.notifications,
+              message: 'Responder posted an update.',
+            );
+          },
+          onError: (error) {
+            if (mounted) {
+              setState(() {
+                _isResponderCommentsLoading = false;
+                _responderCommentsError = 'Unable to load responder updates.';
+              });
+            } else {
+              _isResponderCommentsLoading = false;
+              _responderCommentsError = 'Unable to load responder updates.';
+            }
+          },
+        );
   }
 
   void _showResolvedDialog() {
@@ -1041,7 +1419,10 @@ class _ReportMapPageState extends State<ReportMapPage>
     }
   }
 
-  Widget _buildBouncyPin({required Widget child}) {
+  Widget _buildBouncyPin({required Widget child, bool animate = true}) {
+    if (!animate) {
+      return child;
+    }
     return AnimatedBuilder(
       animation: _pinBounceController,
       child: child,
@@ -1054,168 +1435,152 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   Widget _buildResponderCommentsSection() {
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('reports')
-          .doc(widget.reportId)
-          .collection('comments')
-          .orderBy('timestamp', descending: true)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return const Padding(
-            padding: EdgeInsets.only(bottom: 16),
-            child: Text(
-              'Unable to load responder updates.',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-                fontSize: 13,
-                color: Color(0xFF6B7280),
-              ),
+    final comments = _responderComments;
+    final fallback = comments.isEmpty ? _responderCommentsFallback : [];
+
+    if (_responderCommentsError != null &&
+        comments.isEmpty &&
+        fallback.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Text(
+          'Unable to load responder updates.',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 13,
+            color: Color(0xFF6B7280),
+          ),
+        ),
+      );
+    }
+
+    if (_isResponderCommentsLoading && comments.isEmpty && fallback.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Text(
+          'Loading responder updates...',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 13,
+            color: Color(0xFF6B7280),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Responder Updates',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF111827),
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (comments.isEmpty && fallback.isEmpty)
+          const Text(
+            'No responder updates yet.',
+            style: TextStyle(
+              fontFamily: 'RobotoCondensed',
+              fontWeight: FontWeight.w400,
+              fontSize: 13,
+              color: Color(0xFF6B7280),
             ),
-          );
-        }
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Padding(
-            padding: EdgeInsets.only(bottom: 16),
-            child: Text(
-              'Loading responder updates...',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-                fontSize: 13,
-                color: Color(0xFF6B7280),
+          )
+        else if (comments.isNotEmpty)
+          ...comments.take(5).map((data) {
+            final text = data['text'] as String? ?? '';
+            final date = data['timestamp'] as DateTime?;
+            final timeLabel = date == null
+                ? ''
+                : DateFormat('h:mm a').format(date);
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F8F8),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
               ),
-            ),
-          );
-        }
-        final docs = (snapshot.data?.docs ?? []).where((doc) {
-          final data = doc.data();
-          final type = (data['type'] as String?)?.toLowerCase();
-          final role = (data['role'] as String?)?.toLowerCase();
-          if (type == 'admin' || role == 'responder') {
-            return true;
-          }
-          if (type == null) {
-            return true;
-          }
-          return type != 'user';
-        }).toList();
-        final fallback = docs.isEmpty ? _responderCommentsFallback : [];
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Responder Updates',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-                fontSize: 14,
-                color: Color(0xFF111827),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    text,
+                    style: const TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontWeight: FontWeight.w400,
+                      fontSize: 13,
+                      color: Color(0xFF374151),
+                    ),
+                  ),
+                  if (timeLabel.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      timeLabel,
+                      style: const TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontWeight: FontWeight.w400,
+                        fontSize: 11,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ),
-            const SizedBox(height: 8),
-            if (docs.isEmpty && fallback.isEmpty)
-              const Text(
-                'No responder updates yet.',
-                style: TextStyle(
-                  fontFamily: 'RobotoCondensed',
-                  fontWeight: FontWeight.w400,
-                  fontSize: 13,
-                  color: Color(0xFF6B7280),
-                ),
-              )
-            else if (docs.isNotEmpty)
-              ...docs.take(5).map((doc) {
-                final data = doc.data();
-                final text = data['text'] as String? ?? '';
-                final timestamp = data['timestamp'] as Timestamp?;
-                final timeLabel = timestamp == null
-                    ? ''
-                    : DateFormat('h:mm a').format(timestamp.toDate());
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8F8F8),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
+            );
+          })
+        else
+          ...fallback.take(5).map((data) {
+            final text = data['text'] as String? ?? '';
+            final date = data['timestamp'] as DateTime?;
+            final timeLabel = date == null
+                ? ''
+                : DateFormat('h:mm a').format(date);
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F8F8),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    text,
+                    style: const TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontWeight: FontWeight.w400,
+                      fontSize: 13,
+                      color: Color(0xFF374151),
+                    ),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        text,
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontWeight: FontWeight.w400,
-                          fontSize: 13,
-                          color: Color(0xFF374151),
-                        ),
+                  if (timeLabel.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      timeLabel,
+                      style: const TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontWeight: FontWeight.w400,
+                        fontSize: 11,
+                        color: Color(0xFF6B7280),
                       ),
-                      if (timeLabel.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          timeLabel,
-                          style: const TextStyle(
-                            fontFamily: 'RobotoCondensed',
-                            fontWeight: FontWeight.w400,
-                            fontSize: 11,
-                            color: Color(0xFF6B7280),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                );
-              })
-            else
-              ...fallback.take(5).map((data) {
-                final text = data['text'] as String? ?? '';
-                final timestamp = data['timestamp'];
-                final date = timestamp is Timestamp
-                    ? timestamp.toDate()
-                    : (timestamp is DateTime ? timestamp : DateTime.now());
-                final timeLabel = DateFormat('h:mm a').format(date);
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8F8F8),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        text,
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontWeight: FontWeight.w400,
-                          fontSize: 13,
-                          color: Color(0xFF374151),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        timeLabel,
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontWeight: FontWeight.w400,
-                          fontSize: 11,
-                          color: Color(0xFF6B7280),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-            const SizedBox(height: 20),
-          ],
-        );
-      },
+                    ),
+                  ],
+                ],
+              ),
+            );
+          }),
+        const SizedBox(height: 20),
+      ],
     );
   }
 
@@ -1372,7 +1737,7 @@ class _ReportMapPageState extends State<ReportMapPage>
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Text(
-              '${data.temperature.round()}°',
+              '${data.temperature.round()} deg',
               style: const TextStyle(
                 fontFamily: 'RobotoCondensed',
                 fontWeight: FontWeight.w400,
@@ -1381,7 +1746,7 @@ class _ReportMapPageState extends State<ReportMapPage>
               ),
             ),
             Text(
-              'H ${data.max.round()}°  L ${data.min.round()}°',
+              'H ${data.max.round()} deg  L ${data.min.round()} deg',
               style: const TextStyle(
                 fontFamily: 'RobotoCondensed',
                 fontWeight: FontWeight.w400,
@@ -1601,8 +1966,8 @@ class _ReportMapPageState extends State<ReportMapPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Report image/media
-                  if (widget.reportData['mediaUrl'] != null &&
-                      (widget.reportData['mediaUrl'] as String).isNotEmpty)
+                  if (reportData['mediaUrl'] != null &&
+                      (reportData['mediaUrl'] as String).isNotEmpty)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: CachedNetworkImage(
@@ -1631,8 +1996,8 @@ class _ReportMapPageState extends State<ReportMapPage>
                         },
                       ),
                     ),
-                  if (widget.reportData['mediaUrl'] != null &&
-                      (widget.reportData['mediaUrl'] as String).isNotEmpty)
+                  if (reportData['mediaUrl'] != null &&
+                      (reportData['mediaUrl'] as String).isNotEmpty)
                     const SizedBox(height: 16),
 
                   // Incident type badge
@@ -1808,8 +2173,8 @@ class _ReportMapPageState extends State<ReportMapPage>
                   _buildResponderCommentsSection(),
 
                   // Annotations
-                  if (widget.reportData['annotations'] != null &&
-                      (widget.reportData['annotations'] as String).isNotEmpty)
+                  if (reportData['annotations'] != null &&
+                      (reportData['annotations'] as String).isNotEmpty)
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1843,7 +2208,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
-                                  widget.reportData['annotations'],
+                                  reportData['annotations'],
                                   style: TextStyle(
                                     fontSize: 14,
                                     color: Colors.grey,
@@ -1859,8 +2224,8 @@ class _ReportMapPageState extends State<ReportMapPage>
                     ),
 
                   // Description
-                  if (widget.reportData['details'] != null &&
-                      (widget.reportData['details'] as String).isNotEmpty)
+                  if (reportData['details'] != null &&
+                      (reportData['details'] as String).isNotEmpty)
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -1874,7 +2239,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          widget.reportData['details'],
+                          reportData['details'],
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey,
@@ -2145,6 +2510,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                       width: 54,
                       height: 54,
                       child: _buildBouncyPin(
+                        animate: false,
                         child: const Icon(
                           Icons.person_pin_circle,
                           color: Color(0xFF2563EB),
@@ -2163,6 +2529,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                       width: 48,
                       height: 48,
                       child: _buildBouncyPin(
+                        animate: false,
                         child: const Icon(
                           Icons.directions_car,
                           color: Color(0xFF00A458),
@@ -2237,11 +2604,9 @@ class _ReportMapPageState extends State<ReportMapPage>
                     children: [
                       Row(
                         children: [
-                          IconButton(
-                            icon: const Icon(
-                              Icons.arrow_back,
-                              color: Colors.white,
-                            ),
+                          ResqBackButton(
+                            style: ResqBackButtonStyle.outline,
+                            backgroundColor: AppTheme.appOffWhite,
                             onPressed: () => Navigator.pop(context),
                           ),
                           const SizedBox(width: 8),

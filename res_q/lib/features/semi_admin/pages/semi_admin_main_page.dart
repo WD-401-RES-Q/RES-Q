@@ -26,6 +26,34 @@ class SemiAdminMainPage extends StatelessWidget {
     ProfilePage(),
   ];
 
+  void _onTabSelected(int index) {
+    if (_currentIndex == index && _loadedTabs.contains(index)) {
+      return;
+    }
+
+    setState(() {
+      _currentIndex = index;
+      _loadedTabs.add(index);
+    });
+  }
+
+  Widget _buildLazyTabBody() {
+    return Stack(
+      fit: StackFit.expand,
+      children: List.generate(_pages.length, (index) {
+        if (!_loadedTabs.contains(index)) {
+          return const SizedBox.shrink();
+        }
+
+        final isActive = index == _currentIndex;
+        return Offstage(
+          offstage: !isActive,
+          child: TickerMode(enabled: isActive, child: _pages[index]),
+        );
+      }),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final safeIndex = currentIndex.clamp(0, pages.length - 1);
