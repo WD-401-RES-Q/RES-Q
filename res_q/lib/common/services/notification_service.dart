@@ -21,6 +21,12 @@ class NotificationService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  StreamSubscription<QuerySnapshot>? _reportsSubscription;
+  Position? _lastKnownPosition;
+  String? _currentUserId;
+  bool _isInitialized = false;
 
   static const AndroidNotificationChannel _channel = AndroidNotificationChannel(
     'resq_dispatch_updates',
@@ -35,14 +41,16 @@ class NotificationService {
   bool _initialized = false;
   String? _lastHandledMessageId;
 
-  Future<void> initialize({
-    required GlobalKey<NavigatorState> navigatorKey,
-  }) async {
-    _navigatorKey = navigatorKey;
-    if (_initialized) {
-      await _handleInitialMessage();
+  /// Initialize the notification service
+  Future<void> initialize({String? userId}) async {
+    if (_isInitialized) {
+      if (userId != null) {
+        setUserId(userId);
+      }
       return;
     }
+
+    _currentUserId = userId;
 
     await _requestPermissions();
     await _initializeLocalNotifications();
@@ -69,36 +77,30 @@ class NotificationService {
       return;
     }
 
-    try {
-      final token = await _messaging.getToken();
-      if (token == null || token.isEmpty) {
-        return;
-      }
-      await _firestore.collection('user_tokens').doc(userId).set({
-        'tokens': FieldValue.arrayRemove([token]),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-    } catch (e) {
-      debugPrint('Failed to clear FCM token: $e');
-    }
+    // Start listening for nearby reports
+    await _startNearbyReportsListener();
+
+    _isInitialized = true;
   }
 
   Future<void> _requestPermissions() async {
-    try {
-      await _messaging.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-        provisional: false,
-      );
-    } catch (e) {
-      debugPrint('Failed to request FCM permissions: $e');
-    }
+    final settings = await _messaging.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+      provisional: false,
+    );
+
+    debugPrint(
+      'Notification permission status: ${settings.authorizationStatus}',
+    );
   }
 
   Future<void> _initializeLocalNotifications() async {
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosInit = DarwinInitializationSettings(
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+    const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
@@ -121,9 +123,14 @@ class NotificationService {
     final androidPlugin = _localNotifications
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
-        >();
-    await androidPlugin?.createNotificationChannel(_channel);
-    await androidPlugin?.requestNotificationsPermission();
+        >()
+        ?.createNotificationChannel(_channel);
+  }
+
+  /// Handle notification tap
+  void _onNotificationTap(NotificationResponse response) {
+    debugPrint('Notification tapped: ${response.payload}');
+    // Handle navigation based on payload if needed
   }
 
   void _setupForegroundAndTapHandlers() {
@@ -131,8 +138,11 @@ class NotificationService {
       _showForegroundNotification(message);
     });
 
-    FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      _handleMessageTap(message);
+    // Handle when app is opened from notification
+    FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
+      debugPrint(
+        'App opened from notification: ${message.notification?.title}',
+      );
     });
   }
 
@@ -174,10 +184,10 @@ class NotificationService {
     if (notification == null) return;
 
     const androidDetails = AndroidNotificationDetails(
-      'resq_dispatch_updates',
-      'RES-Q Dispatch Updates',
+      'resq_notifications',
+      'RES-Q Notifications',
       channelDescription:
-          'Deployment, responder status, and responder comments',
+          'Notifications for nearby incidents and announcements',
       importance: Importance.high,
       priority: Priority.high,
       playSound: true,
@@ -200,32 +210,173 @@ class NotificationService {
       notification.title,
       notification.body,
       details,
-      payload: reportId != null ? 'report:$reportId' : null,
+      payload: message.data['type'] ?? 'general',
     );
   }
 
-  void _handleMessageTap(RemoteMessage message) {
-    if (_lastHandledMessageId != null &&
-        _lastHandledMessageId == message.messageId) {
-      return;
+  /// Show notification for nearby incident
+  Future<void> showNearbyIncidentNotification({
+    required String title,
+    required String body,
+    required String reportId,
+    required String incidentType,
+  }) async {
+    const androidDetails = AndroidNotificationDetails(
+      'resq_notifications',
+      'RES-Q Notifications',
+      channelDescription:
+          'Notifications for nearby incidents and announcements',
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: true,
+      icon: '@mipmap/ic_launcher',
+      color: Color(0xFFAC1B22),
+    );
+
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    const details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    await _localNotifications.show(
+      reportId.hashCode,
+      title,
+      body,
+      details,
+      payload: 'incident:$reportId',
+    );
+
+    // Save to user's notifications collection
+    await _saveIncidentNotification(
+      title: title,
+      body: body,
+      reportId: reportId,
+      incidentType: incidentType,
+    );
+  }
+
+  /// Save notification to Firestore for in-app display
+  Future<void> _saveNotificationToFirestore(RemoteMessage message) async {
+    if (_currentUserId == null) return;
+
+    try {
+      await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('notifications')
+          .add({
+            'title': message.notification?.title ?? '',
+            'body': message.notification?.body ?? '',
+            'type': message.data['type'] ?? 'announcement',
+            'data': message.data,
+            'read': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+    } catch (e) {
+      debugPrint('Error saving notification to Firestore: $e');
     }
-    _lastHandledMessageId = message.messageId;
-    final reportId = _extractReportIdFromData(message.data);
-    if (reportId == null || reportId.isEmpty) {
-      return;
+  }
+
+  /// Save incident notification to Firestore
+  Future<void> _saveIncidentNotification({
+    required String title,
+    required String body,
+    required String reportId,
+    required String incidentType,
+  }) async {
+    if (_currentUserId == null) return;
+
+    try {
+      await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('notifications')
+          .add({
+            'title': title,
+            'body': body,
+            'type': 'nearby_incident',
+            'reportId': reportId,
+            'incidentType': incidentType,
+            'read': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+    } catch (e) {
+      debugPrint('Error saving incident notification: $e');
     }
     _openReportMap(reportId);
   }
 
-  String? _extractReportIdFromData(Map<String, dynamic> data) {
-    final keys = ['reportId', 'report_id', 'id'];
-    for (final key in keys) {
-      final raw = data[key]?.toString().trim();
-      if (raw != null && raw.isNotEmpty) {
-        return raw;
-      }
-    }
-    return null;
+  /// Start listening for nearby reports
+  Future<void> _startNearbyReportsListener() async {
+    // Get user's current location
+    await _updateUserLocation();
+
+    // Load notified reports to avoid duplicates
+    final prefs = await SharedPreferences.getInstance();
+    final notifiedReports = prefs.getStringList('notified_reports') ?? [];
+
+    // Listen to new reports
+    _reportsSubscription = _firestore
+        .collection('reports')
+        .where('status', isEqualTo: 'PENDING')
+        .orderBy('createdAt', descending: true)
+        .limit(20)
+        .snapshots()
+        .listen((snapshot) async {
+          if (_lastKnownPosition == null) return;
+
+          for (final change in snapshot.docChanges) {
+            if (change.type == DocumentChangeType.added) {
+              final doc = change.doc;
+              final data = doc.data();
+              if (data == null) continue;
+
+              // Skip if already notified
+              if (notifiedReports.contains(doc.id)) continue;
+
+              // Check if report is within vicinity
+              final reportLat = data['latitude'] as double?;
+              final reportLng = data['longitude'] as double?;
+
+              if (reportLat != null && reportLng != null) {
+                final distance = _calculateDistance(
+                  _lastKnownPosition!.latitude,
+                  _lastKnownPosition!.longitude,
+                  reportLat,
+                  reportLng,
+                );
+
+                // If within 5km, show notification
+                if (distance <= defaultVicinityRadius) {
+                  final incidentType =
+                      data['incidentType'] as String? ?? 'Incident';
+                  final description = data['description'] as String? ?? '';
+                  final distanceKm = (distance / 1000).toStringAsFixed(1);
+
+                  await showNearbyIncidentNotification(
+                    title: '$incidentType Reported Nearby',
+                    body: '${distanceKm}km away: $description',
+                    reportId: doc.id,
+                    incidentType: incidentType,
+                  );
+
+                  // Mark as notified
+                  notifiedReports.add(doc.id);
+                  await prefs.setStringList(
+                    'notified_reports',
+                    notifiedReports,
+                  );
+                }
+              }
+            }
+          }
+        });
   }
 
   Future<void> _openReportMap(String reportId) async {
@@ -249,8 +400,43 @@ class NotificationService {
           ),
         ),
       );
+      debugPrint(
+        'User location updated: ${_lastKnownPosition?.latitude}, ${_lastKnownPosition?.longitude}',
+      );
     } catch (e) {
-      debugPrint('Failed to open report map from notification: $e');
+      debugPrint('Error getting user location: $e');
+    }
+  }
+
+  /// Calculate distance between two coordinates using Haversine formula
+  double _calculateDistance(
+    double lat1,
+    double lon1,
+    double lat2,
+    double lon2,
+  ) {
+    const earthRadius = 6371000; // meters
+    final dLat = _toRadians(lat2 - lat1);
+    final dLon = _toRadians(lon2 - lon1);
+
+    final a =
+        sin(dLat / 2) * sin(dLat / 2) +
+        cos(_toRadians(lat1)) *
+            cos(_toRadians(lat2)) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
+
+    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
+    return earthRadius * c;
+  }
+
+  double _toRadians(double degrees) => degrees * pi / 180;
+
+  /// Update current user ID (call after login)
+  void setUserId(String? userId) {
+    _currentUserId = userId;
+    if (userId != null) {
+      _saveFCMToken();
     }
   }
 }

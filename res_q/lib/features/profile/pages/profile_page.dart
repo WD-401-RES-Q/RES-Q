@@ -431,7 +431,7 @@ class _ProfilePageState extends State<ProfilePage>
 
   @override
   bool get wantKeepAlive => true;
-  static const String _ratingStarAsset = 'assets/icons/rating-star.png';
+  static const String _ratingStarAsset = 'assets/icons/rating/rating-star.png';
 
   Future<void> _updateSemiAdminPresenceOnLogout() async {
     final userData = UserSession.currentUserData;
@@ -464,7 +464,7 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   static const String _ratingEmptyCircleAsset =
-      'assets/icons/rating-empty-circle.png';
+      'assets/icons/rating/rating-empty-circle.png';
 
   String _getModalContent(String title) {
     if (title == 'Terms of Service') {

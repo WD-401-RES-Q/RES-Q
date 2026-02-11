@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 /// App-wide color constants
 class AppColors {
@@ -26,4 +26,3 @@ extension ColorUtilities on Color {
   /// Get opacity variant of color
   Color withCustomOpacity(double opacity) => withOpacity(opacity);
 }
-

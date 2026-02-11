@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 
 class ReportCard extends StatelessWidget {
@@ -212,5 +212,3 @@ class _Badge extends StatelessWidget {
     );
   }
 }
-
-

@@ -109,7 +109,11 @@ class _MainPageState extends State<MainPage> {
       backgroundColor: Color(0xFFF7F8F3),
       bottomNavigationBar: BottomNavBar(
         currentIndex: _currentIndex,
-        onTap: _onTabSelected,
+        onTap: (i) => setState(() => _currentIndex = i),
+      ),
+      body: SafeArea(
+        bottom: false,
+        child: IndexedStack(index: _currentIndex, children: pages),
       ),
       body: SafeArea(child: _buildLazyTabBody()),
     );
@@ -207,32 +211,141 @@ class _HomePageContentState extends State<_HomePageContent>
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final gridWidth = math.min(constraints.maxWidth, 380.0);
-          final gridHeight = (constraints.maxHeight * 0.52)
-              .clamp(250.0, 430.0)
-              .toDouble();
+      child: Column(
+        children: [
+          // Logo at the very top - fixed height
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 4),
+            child: SizedBox(
+              height: 36,
+              child: SvgPicture.asset(
+                "assets/icons/logo/RES-Q_LOGO.svg",
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) => const Icon(
+                  Icons.image_not_supported,
+                  size: 30,
+                  color: Colors.blue,
+                ),
+              ),
+            ),
+          ),
 
-          return SingleChildScrollView(
-            physics: const ClampingScrollPhysics(),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: constraints.maxHeight),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8, bottom: 4),
-                    child: SizedBox(
-                      height: 36,
-                      child: SvgPicture.asset(
-                        "assets/icons/RES-Q_LOGO.svg",
-                        fit: BoxFit.contain,
-                        errorBuilder: (context, error, stackTrace) =>
-                            const Icon(
-                              Icons.image_not_supported,
-                              size: 30,
-                              color: Colors.blue,
+          // Main content area - takes remaining space
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Text(
+                  "SELECT THE TYPE OF INCIDENT\nYOU WANT TO REPORT.",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'RobotoCondensed',
+                  ),
+                ),
+
+                SizedBox(
+                  width: gridWidth,
+                  height: gridHeight,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF7F8F3),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        const spacing = 12.0;
+                        final maxCardWidth =
+                            (constraints.maxWidth - spacing) / 2;
+                        final maxCardHeightByWidth = maxCardWidth / 1.05;
+                        final maxCardHeightByHeight =
+                            (constraints.maxHeight - spacing * 2) / 3;
+                        final cardHeight = math.min(
+                          maxCardHeightByWidth,
+                          maxCardHeightByHeight,
+                        );
+                        final cardWidth = cardHeight * 1.05;
+                        final iconSize = (cardHeight * 0.55).clamp(50.0, 90.0);
+                        final labelFont = (cardHeight * 0.16).clamp(11.0, 16.0);
+
+                        return Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: cardHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "EARTHQUAKE",
+                                    "assets/icons/buttons/FINAL-EARTHQUAKE-ICON.png",
+                                    fontSize: labelFont,
+                                    iconSize: iconSize,
+                                  ),
+                                ),
+                                const SizedBox(width: spacing),
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: cardHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "FLOOD",
+                                    "assets/icons/buttons/FINAL-FLOOD-ICON.png",
+                                    fontSize: labelFont,
+                                    iconSize: iconSize,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: spacing),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: cardHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "FIRE",
+                                    "assets/icons/buttons/FINAL-FIRE-ICON.png",
+                                    fontSize: labelFont,
+                                    iconSize: iconSize,
+                                  ),
+                                ),
+                                const SizedBox(width: spacing),
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: cardHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "ROAD CRASH",
+                                    "assets/icons/buttons/FINAL-CRASH-ICON.png",
+                                    fontSize: labelFont,
+                                    iconSize: iconSize,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: spacing),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: cardWidth,
+                                  height: cardHeight,
+                                  child: _incidentCard(
+                                    context,
+                                    "OTHERS",
+                                    "assets/icons/buttons/FINAL-OTHERS-ICON.png",
+                                    fontSize: labelFont,
+                                    iconSize: iconSize,
+                                  ),
+                                ),
+                              ],
                             ),
                       ),
                     ),

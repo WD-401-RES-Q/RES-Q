@@ -1545,17 +1545,17 @@ class _MapPageState extends State<MapPage> {
   String _getMarkerAssetForIncidentType(String type) {
     switch (type.toUpperCase()) {
       case 'FIRE':
-        return 'assets/icons/LOC-FIRE.png';
+        return 'assets/icons/locations/LOC-FIRE.png';
       case 'FLOOD':
-        return 'assets/icons/LOC-FLOOD.png';
+        return 'assets/icons/locations/LOC-FLOOD.png';
       case 'EARTHQUAKE':
-        return 'assets/icons/LOC-EARTHQUAKE.png';
+        return 'assets/icons/locations/LOC-EARTHQUAKE.png';
       case 'VEHICULAR':
-        return 'assets/icons/LOC-CRASH.png';
+        return 'assets/icons/locations/LOC-CRASH.png';
       case 'ROAD OBSTRUCTION':
-        return 'assets/icons/LOC-ROAD.png';
+        return 'assets/icons/locations/LOC-OTHERS.png';
       default:
-        return 'assets/icons/LOC-OTHERS.png';
+        return 'assets/icons/locations/LOC-OTHERS.png';
     }
   }
 
@@ -1704,7 +1704,7 @@ class _MapPageState extends State<MapPage> {
                       SizedBox(
                         height: 34,
                         child: SvgPicture.asset(
-                          'assets/icons/RES-Q_LOGO.svg',
+                          'assets/icons/logo/RES-Q_LOGO.svg',
                           fit: BoxFit.contain,
                           colorFilter: const ColorFilter.mode(
                             Colors.white,
@@ -2150,7 +2150,8 @@ class _MapPageState extends State<MapPage> {
                     const SizedBox(height: 12),
                     buildFilterRow(
                       label: 'Earthquake',
-                      assetPath: 'assets/icons/FINAL-EARTHQUAKE-ICON.png',
+                      assetPath:
+                          'assets/icons/buttons/FINAL-EARTHQUAKE-ICON.png',
                       value: showEarthquake,
                       onChanged: (value) {
                         setDialogState(() => showEarthquake = value ?? false);
@@ -2158,7 +2159,7 @@ class _MapPageState extends State<MapPage> {
                     ),
                     buildFilterRow(
                       label: 'Flood',
-                      assetPath: 'assets/icons/FINAL-FLOOD-ICON.png',
+                      assetPath: 'assets/icons/buttons/FINAL-FLOOD-ICON.png',
                       value: showFlood,
                       onChanged: (value) {
                         setDialogState(() => showFlood = value ?? false);
@@ -2166,7 +2167,7 @@ class _MapPageState extends State<MapPage> {
                     ),
                     buildFilterRow(
                       label: 'Fire',
-                      assetPath: 'assets/icons/FINAL-FIRE-ICON.png',
+                      assetPath: 'assets/icons/buttons/FINAL-FIRE-ICON.png',
                       value: showFire,
                       onChanged: (value) {
                         setDialogState(() => showFire = value ?? false);
@@ -2174,7 +2175,7 @@ class _MapPageState extends State<MapPage> {
                     ),
                     buildFilterRow(
                       label: 'Vehicular',
-                      assetPath: 'assets/icons/FINAL-CRASH-ICON.png',
+                      assetPath: 'assets/icons/buttons/FINAL-CRASH-ICON.png',
                       value: showVehicular,
                       onChanged: (value) {
                         setDialogState(() => showVehicular = value ?? false);
@@ -2182,7 +2183,7 @@ class _MapPageState extends State<MapPage> {
                     ),
                     buildFilterRow(
                       label: 'Others',
-                      assetPath: 'assets/icons/FINAL-OTHERS-ICON.png',
+                      assetPath: 'assets/icons/buttons/FINAL-OTHERS-ICON.png',
                       value: showOthers,
                       onChanged: (value) {
                         setDialogState(() => showOthers = value ?? false);

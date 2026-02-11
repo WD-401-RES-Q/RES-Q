@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
 import '../theme/app_theme.dart';
 
 class BottomNavItemConfig {
@@ -12,12 +14,12 @@ class BottomNavItemConfig {
     required this.label,
     required this.activeIconPath,
     required this.inactiveIconPath,
-    this.iconWidth = 40,
-    this.iconHeight = 40,
+    this.iconWidth = 28,
+    this.iconHeight = 28,
   });
 }
 
-class BottomNavBar extends StatefulWidget {
+class BottomNavBar extends StatelessWidget {
   final int currentIndex;
   final Function(int) onTap;
   final List<BottomNavItemConfig>? itemConfigs;
@@ -30,127 +32,115 @@ class BottomNavBar extends StatefulWidget {
   });
 
   @override
-  State<BottomNavBar> createState() => _BottomNavBarState();
-}
-
-class _BottomNavBarState extends State<BottomNavBar> {
-  bool _didPrecacheIcons = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_didPrecacheIcons) return;
-    _didPrecacheIcons = true;
-    _precacheIcons(widget.itemConfigs ?? _defaultItems);
-  }
-
-  @override
-  void didUpdateWidget(covariant BottomNavBar oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.itemConfigs != widget.itemConfigs) {
-      _didPrecacheIcons = false;
-    }
-  }
-
-  void _precacheIcons(List<BottomNavItemConfig> configs) {
-    for (final config in configs) {
-      precacheImage(AssetImage(config.activeIconPath), context);
-      precacheImage(AssetImage(config.inactiveIconPath), context);
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final configs = widget.itemConfigs ?? _defaultItems;
+    final configs = itemConfigs ?? _defaultItems;
 
-    return Container(
-      padding: const EdgeInsets.only(top: 6),
-      decoration: const BoxDecoration(
-        color: AppColors.appRed,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(10),
-          topRight: Radius.circular(10),
-        ),
-      ),
+    return ColoredBox(
+      color: AppColors.appRed,
       child: SafeArea(
         top: false,
-        bottom: false,
-        child: ClipRect(
-          child: BottomNavigationBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            type: BottomNavigationBarType.fixed,
-            selectedItemColor: AppColors.appYellow,
-            unselectedItemColor: Colors.white,
-            selectedFontSize: 8,
-            unselectedFontSize: 8,
-            selectedLabelStyle: const TextStyle(
-              fontFamily: 'Roboto',
-              fontWeight: FontWeight.w900,
-              shadows: [
-                Shadow(
-                  color: Color(0x66000000),
-                  offset: Offset(0, 1),
-                  blurRadius: 2,
-                ),
-              ],
+        minimum: EdgeInsets.zero,
+        child: Theme(
+          data: Theme.of(context).copyWith(
+            splashFactory: NoSplash.splashFactory,
+            splashColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+          ),
+          child: SizedBox(
+            height: 54,
+            child: BottomNavigationBar(
+              backgroundColor: AppColors.appRed,
+              elevation: 0,
+              type: BottomNavigationBarType.fixed,
+              selectedItemColor: AppColors.appYellow,
+              unselectedItemColor: Colors.white,
+              showSelectedLabels: true,
+              showUnselectedLabels: true,
+              selectedFontSize: 7,
+              unselectedFontSize: 7,
+              selectedLabelStyle: const TextStyle(
+                fontFamily: 'Roboto',
+                fontWeight: FontWeight.w700,
+                height: 1.0,
+              ),
+              unselectedLabelStyle: const TextStyle(
+                fontFamily: 'Roboto',
+                fontWeight: FontWeight.w700,
+                height: 1.0,
+              ),
+              iconSize: 25,
+              currentIndex: currentIndex,
+              enableFeedback: false,
+              onTap: onTap,
+              items: List.generate(configs.length, (index) {
+                final config = configs[index];
+                return BottomNavigationBarItem(
+                  icon: _buildNavIcon(
+                    config.inactiveIconPath,
+                    config.iconWidth,
+                    config.iconHeight,
+                  ),
+                  activeIcon: _buildNavIcon(
+                    config.activeIconPath,
+                    config.iconWidth,
+                    config.iconHeight,
+                  ),
+                  label: config.label,
+                );
+              }),
             ),
-            unselectedLabelStyle: const TextStyle(
-              fontFamily: 'Roboto',
-              fontWeight: FontWeight.w900,
-              shadows: [
-                Shadow(
-                  color: Color(0x66000000),
-                  offset: Offset(0, 1),
-                  blurRadius: 2,
-                ),
-              ],
-            ),
-            currentIndex: widget.currentIndex,
-            onTap: widget.onTap,
-            items: List.generate(configs.length, (index) {
-              final config = configs[index];
-              final isActive = widget.currentIndex == index;
-              return BottomNavigationBarItem(
-                icon: Image.asset(
-                  isActive ? config.activeIconPath : config.inactiveIconPath,
-                  width: config.iconWidth,
-                  height: config.iconHeight,
-                ),
-                label: config.label,
-              );
-            }),
           ),
         ),
       ),
     );
   }
 
+  Widget _buildNavIcon(String assetPath, double width, double height) {
+    if (assetPath.toLowerCase().endsWith('.svg')) {
+      return SvgPicture.asset(
+        assetPath,
+        width: width,
+        height: height,
+        fit: BoxFit.contain,
+      );
+    }
+
+    return Image.asset(
+      assetPath,
+      width: width,
+      height: height,
+      fit: BoxFit.contain,
+    );
+  }
+
+  static const String _navIconSvgPath = "assets/icons/navbar";
+
   List<BottomNavItemConfig> get _defaultItems => const [
     BottomNavItemConfig(
       label: "HOME",
-      activeIconPath: "assets/icons/HOME-ICON-YELLOW.png",
-      inactiveIconPath: "assets/icons/HOME-ICON.png",
+      activeIconPath: "$_navIconSvgPath/NAV-HOMEPAGE-ICON-YELLOW.svg",
+      inactiveIconPath: "$_navIconSvgPath/NAV-HOME-ICON.svg",
     ),
     BottomNavItemConfig(
       label: "COMMUNITY",
-      activeIconPath: "assets/icons/COMMUNITY-ICON-YELLOW.png",
-      inactiveIconPath: "assets/icons/COMMUNITY-ICON.png",
+      activeIconPath: "$_navIconSvgPath/NAV-COMMUNITY-ICON-YELLOW.svg",
+      inactiveIconPath: "$_navIconSvgPath/NAV-COMMUNITY-ICON.svg",
     ),
     BottomNavItemConfig(
       label: "MAP",
-      activeIconPath: "assets/icons/MAPS-ICON-YELLOW.png",
-      inactiveIconPath: "assets/icons/MAPS-ICON.png",
+      activeIconPath: "$_navIconSvgPath/NAV-MAPS-ICON-YELLOW.svg",
+      inactiveIconPath: "$_navIconSvgPath/NAV-MAPS-ICON.svg",
     ),
     BottomNavItemConfig(
       label: "NOTIFICATION",
-      activeIconPath: "assets/icons/NOTICATIONS-ICON-YELLOW.png",
-      inactiveIconPath: "assets/icons/NOTICATIONS-ICON.png",
+      activeIconPath: "$_navIconSvgPath/NAV-NOTIFICATIONS-ICON-YELLOW.svg",
+      inactiveIconPath: "$_navIconSvgPath/NAV-NOTIFICATIONS-ICON.svg",
     ),
     BottomNavItemConfig(
       label: "PROFILE",
-      activeIconPath: "assets/icons/PROFILE-ICON-YELLOW.png",
-      inactiveIconPath: "assets/icons/PROFILE-ICON.png",
+      activeIconPath: "$_navIconSvgPath/NAV-PROFILE-ICON-YELLOW.svg",
+      inactiveIconPath: "$_navIconSvgPath/NAV-PROFILE-ICON.svg",
     ),
   ];
 }

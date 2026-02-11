@@ -72,5 +72,4 @@ class DefaultFirebaseOptions {
     storageBucket: 'res-q-93ca6.firebasestorage.app',
     iosBundleId: 'com.example.resq',
   );
-
 }

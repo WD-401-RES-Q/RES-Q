@@ -3,6 +3,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../auth/pages/login_page.dart';
 import '../../../common/services/location_service.dart';
+import '../../../common/services/notification_service.dart';
 
 class LoadingScreen extends StatefulWidget {
   const LoadingScreen({super.key});
@@ -22,21 +23,15 @@ class _LoadingScreenState extends State<LoadingScreen> {
     await _promptEnableLocationServiceIfNeeded();
     await LocationService.requestLocationPermission();
 
-    await Future.delayed(const Duration(seconds: 3));
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const LoginPage()),
-    );
-  }
+    // Initialize notifications (permission + FCM handlers).
+    try {
+      await NotificationService().initialize();
+    } catch (e) {
+      debugPrint('Notification init failed: $e');
+    }
 
-  Future<void> _promptEnableLocationServiceIfNeeded() async {
-    while (mounted) {
-      final serviceEnabled = await LocationService.isLocationServiceEnabled();
-      if (serviceEnabled) {
-        return;
-      }
-
+    // Wait 3 seconds then navigate
+    Future.delayed(const Duration(seconds: 3), () {
       if (!mounted) return;
       final shouldOpenSettings = await _showEnableLocationDialog();
       if (!shouldOpenSettings) {
@@ -117,7 +112,7 @@ class _LoadingContent extends StatelessWidget {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        SvgPicture.asset('assets/icons/RES-Q_LOGO.svg', height: 100),
+        SvgPicture.asset('assets/icons/logo/RES-Q_LOGO.svg', height: 100),
         const SizedBox(height: 20),
         const Text(
           "EVERY SECOND COUNTS",

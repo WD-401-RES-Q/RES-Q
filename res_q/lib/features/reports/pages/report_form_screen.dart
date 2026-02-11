@@ -1049,6 +1049,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8F3),
       body: SafeArea(
+        bottom: false,
         child: SingleChildScrollView(
           child: GestureDetector(
             onTap: () => FocusScope.of(context).unfocus(),
@@ -1058,33 +1059,25 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
               child: Column(
                 children: [
                   // Back button + logo row
-                  SizedBox(
-                    height: 50,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        const Align(
-                          alignment: Alignment.centerLeft,
-                          child: ResqBackButton.outline(),
-                        ),
-                        Align(
-                          alignment: Alignment.center,
-                          child: GestureDetector(
-                            onTap: () => Navigator.pop(context),
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 190),
-                              child: SizedBox(
-                                height: 50,
-                                child: SvgPicture.asset(
-                                  "assets/icons/RES-Q_LOGO.svg",
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) =>
-                                      const Icon(
-                                        Icons.image_not_supported,
-                                        size: 30,
-                                        color: Colors.blue,
-                                      ),
-                                ),
+                  Row(
+                    children: [
+                      const ResqBackButton(),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => Navigator.pop(context),
+                          child: SizedBox(
+                            height: 50,
+                            child: Align(
+                              alignment: Alignment.center,
+                              child: SvgPicture.asset(
+                                "assets/icons/logo/RES-Q_LOGO.svg",
+                                fit: BoxFit.contain,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    const Icon(
+                                      Icons.image_not_supported,
+                                      size: 30,
+                                      color: Colors.blue,
+                                    ),
                               ),
                             ),
                           ),
