@@ -97,12 +97,6 @@ flutter:
     - assets/icons/logo/
     - assets/icons/navbar/
     - assets/icons/rating/
-    - assets/images/COMMUNITY-IMAGE-1.png
-    - assets/images/COMMUNITY-IMAGE-2.png
-    - assets/images/COMMUNITY-IMAGE-3.png
-    - assets/images/NOTIF-1.png
-    - assets/images/NOTIF-2.png
-    - assets/images/NOTIF-3.png
 
   fonts:
     - family: Roboto
