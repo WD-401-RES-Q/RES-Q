@@ -5,7 +5,6 @@ import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:http/http.dart' as http;
@@ -59,7 +58,6 @@ class _ReportMapPageState extends State<ReportMapPage>
         WidgetsBindingObserver {
   final MapController _mapController = MapController();
   late final AnimationController _pinBounceController;
-  WeatherState _weatherState = WeatherState.none;
 
   // Weather cache (shared across instances, 15 min TTL)
   static _WeatherData? _cachedWeatherData;
@@ -970,7 +968,6 @@ class _ReportMapPageState extends State<ReportMapPage>
       if (!mounted) return;
       setState(() {
         _weatherData = data;
-        _weatherState = data.state;
         _isWeatherLoading = false;
       });
     } catch (e) {
@@ -989,19 +986,6 @@ class _ReportMapPageState extends State<ReportMapPage>
       return;
     }
     _mapController.move(_initialCenter, _initialZoom);
-  }
-
-  String _weatherLabel(WeatherState state) {
-    switch (state) {
-      case WeatherState.sunny:
-        return 'Sunny';
-      case WeatherState.cloudy:
-        return 'Cloudy';
-      case WeatherState.rainy:
-        return 'Rainy';
-      case WeatherState.none:
-        return '';
-    }
   }
 
   String _formatReportedAt(Object? value) {
@@ -1393,13 +1377,6 @@ class _ReportMapPageState extends State<ReportMapPage>
         ),
       ],
     );
-  }
-
-  @visibleForTesting
-  static void resetWeatherCacheForTesting() {
-    _cachedWeatherData = null;
-    _weatherCacheTime = null;
-    _weatherRequestInFlight = null;
   }
 
   Future<_WeatherData> _fetchWeatherForAngeles() async {

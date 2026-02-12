@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/services/registration_prefs.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../auth/pages/login_page.dart';
 
@@ -297,6 +298,9 @@ class _ProfilePageState extends State<ProfilePage>
                         onPressed: () async {
                           await _updateSemiAdminPresenceOnLogout();
                           UserSession.clear();
+                          await RegistrationPrefs.setApprovedLoginCompleted(
+                            false,
+                          );
                           await FirebaseAuth.instance.signOut();
                           if (!mounted) return;
                           Navigator.of(context).pushAndRemoveUntil(

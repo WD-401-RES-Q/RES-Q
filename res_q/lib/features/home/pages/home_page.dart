@@ -199,7 +199,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   child: _incidentCard(
                                     context,
                                     "EARTHQUAKE",
-                                    "assets/icons/buttons/FINAL-EARTHQUAKE-ICON.png",
+                                    "assets/icons/buttons/FINAL-EARTHQUAKE-ICON.svg",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
                                   ),
@@ -211,7 +211,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   child: _incidentCard(
                                     context,
                                     "FLOOD",
-                                    "assets/icons/buttons/FINAL-FLOOD-ICON.png",
+                                    "assets/icons/buttons/FINAL-FLOOD-ICON.svg",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
                                   ),
@@ -228,7 +228,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   child: _incidentCard(
                                     context,
                                     "FIRE",
-                                    "assets/icons/buttons/FINAL-FIRE-ICON.png",
+                                    "assets/icons/buttons/FINAL-FIRE-ICON.svg",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
                                   ),
@@ -240,7 +240,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   child: _incidentCard(
                                     context,
                                     "ROAD CRASH",
-                                    "assets/icons/buttons/FINAL-CRASH-ICON.png",
+                                    "assets/icons/buttons/FINAL-CRASH-ICON.svg",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
                                   ),
@@ -257,7 +257,7 @@ class _HomePageContentState extends State<_HomePageContent>
                                   child: _incidentCard(
                                     context,
                                     "OTHERS",
-                                    "assets/icons/buttons/FINAL-OTHERS-ICON.png",
+                                    "assets/icons/buttons/FINAL-OTHERS-ICON.svg",
                                     fontSize: labelFont,
                                     iconSize: iconSize,
                                   ),

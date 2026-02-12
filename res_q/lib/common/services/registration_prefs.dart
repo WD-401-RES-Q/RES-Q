@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Service for persisting registration data locally
 class RegistrationPrefs {
   static const String _phoneKey = 'registration_phone_number';
+  static const String _approvedLoginKey = 'approved_login_completed';
 
   /// Normalize phone value to local 10-digit format (9XXXXXXXXX).
   static String _normalizePhone(String phone) {
@@ -49,5 +50,22 @@ class RegistrationPrefs {
   static Future<void> clearPhoneNumber() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_phoneKey);
+  }
+
+  /// Mark whether this device has completed an approved account login.
+  /// Used to switch Login UI between editable phone input and compact saved phone.
+  static Future<void> setApprovedLoginCompleted(bool completed) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (completed) {
+      await prefs.setBool(_approvedLoginKey, true);
+      return;
+    }
+    await prefs.remove(_approvedLoginKey);
+  }
+
+  /// Returns true when the user previously logged in with an approved account.
+  static Future<bool> isApprovedLoginCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_approvedLoginKey) ?? false;
   }
 }

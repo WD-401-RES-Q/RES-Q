@@ -1,10 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:intl/intl.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/widgets/app_snackbar.dart';
@@ -22,7 +19,6 @@ class _CommunityPageState extends State<CommunityPage>
   static const appBlue = Color(0xFFAC1B22);
   static const appRed = Color(0xFFAC1B22);
   static const appGreen = Color(0xFF00A458); // True green
-  static const appYellow = Color(0xFFFFC806); // Yellow for under review
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
   static const commentBlue = Color(0xFF2563EB);
@@ -33,12 +29,12 @@ class _CommunityPageState extends State<CommunityPage>
   String _selectedFilter = 'All';
   String _selectedCategory = 'All';
   String _selectedTimeFilter = 'All Time';
-  bool _showFilterSheet = false;
   List<Map<String, dynamic>> _reports = [];
   List<Map<String, dynamic>> _announcements = [];
   Map<String, String> _userVotes = {}; // reportId -> 'green' or 'red'
   bool _checkedLegacyVotes = false;
-  bool _votesLoaded = false; // Track if votes have been loaded
+  bool _canSyncVotesWithFirestore = true;
+  bool _hasLoggedVotesPermissionIssue = false;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _announcementsSubscription;
@@ -64,7 +60,7 @@ class _CommunityPageState extends State<CommunityPage>
   String? _getLoggedInUserPhone() {
     final userData = UserSession.currentUserData;
     if (userData == null) {
-      debugPrint('⚠️ No user data available');
+      debugPrint('âš ï¸ No user data available');
       return null;
     }
 
@@ -81,7 +77,7 @@ class _CommunityPageState extends State<CommunityPage>
       phone = phone.replaceAll(RegExp(r'[^0-9]'), '');
     }
 
-    debugPrint('📱 Found logged-in user phone: $phone');
+    debugPrint('ðŸ“± Found logged-in user phone: $phone');
     return phone;
   }
 
@@ -129,60 +125,71 @@ class _CommunityPageState extends State<CommunityPage>
             });
           },
           onError: (e) {
-            debugPrint('❌ Failed to load announcements: $e');
+            debugPrint('âŒ Failed to load announcements: $e');
           },
         );
   }
 
   Future<void> _loadUserVotes() async {
-    final userPhone = _getLoggedInUserPhone();
-    if (userPhone == null || userPhone.isEmpty) {
-      debugPrint('⚠️ No phone number available for loading votes');
+    if (!_canSyncVotesWithFirestore) {
       return;
     }
-
+    final userPhone = _getLoggedInUserPhone();
+    if (userPhone == null || userPhone.isEmpty) {
+      debugPrint('No phone number available for loading votes');
+      return;
+    }
     try {
-      debugPrint('📥 Loading votes for phone: $userPhone');
-
+      debugPrint('Loading votes for phone: $userPhone');
+      await _migrateLegacyVotesIfNeeded(userPhone);
       // Load votes from userVotes collection using phone number as document ID
       final doc = await FirebaseFirestore.instance
           .collection('userVotes')
           .doc(userPhone)
           .get();
-
       if (mounted) {
         if (doc.exists) {
           final data = doc.data() ?? {};
           final loadedVotes = Map<String, String>.from(data['votes'] ?? {});
-          debugPrint('✅ Loaded ${loadedVotes.length} votes from Firestore');
-          debugPrint('📋 Votes: $loadedVotes');
+          debugPrint('Loaded ${loadedVotes.length} votes from Firestore');
+          debugPrint('Votes: $loadedVotes');
           setState(() {
             _userVotes = loadedVotes;
-            _votesLoaded = true;
           });
         } else {
-          debugPrint('ℹ️ No votes document found for phone: $userPhone');
+          debugPrint('No votes document found for phone: $userPhone');
           setState(() {
             _userVotes = {};
-            _votesLoaded = true;
           });
         }
         // Update reports with user votes
         _applyUserVotesToReports();
       }
-    } catch (e) {
-      debugPrint('❌ Failed to load user votes: $e');
-      if (mounted) {
-        setState(() {
-          _votesLoaded = true;
-        });
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        if (!_hasLoggedVotesPermissionIssue) {
+          _hasLoggedVotesPermissionIssue = true;
+          debugPrint(
+            'Vote sync disabled: missing Firestore permission for userVotes.',
+          );
+        }
+        _canSyncVotesWithFirestore = false;
+        if (mounted) {
+          setState(() {
+            _userVotes = {};
+          });
+          _applyUserVotesToReports();
+        }
+        return;
       }
+      debugPrint('Failed to load user votes: $e');
+    } catch (e) {
+      debugPrint('Failed to load user votes: $e');
     }
   }
 
   void _applyUserVotesToReports() {
     if (_reports.isEmpty) return;
-
     setState(() {
       for (int i = 0; i < _reports.length; i++) {
         final reportId = _reports[i]['id'] as String?;
@@ -193,17 +200,20 @@ class _CommunityPageState extends State<CommunityPage>
       }
     });
     debugPrint(
-      '🔄 Applied ${_userVotes.length} user votes to ${_reports.length} reports',
+      'Applied ${_userVotes.length} user votes to ${_reports.length} reports',
     );
   }
 
   Future<void> _saveUserVote(String reportId, String vote) async {
-    final userPhone = _getLoggedInUserPhone();
-    if (userPhone == null || userPhone.isEmpty) {
-      debugPrint('⚠️ Cannot save vote: No phone number found');
+    if (!_canSyncVotesWithFirestore) {
       return;
     }
-
+    final userPhone = _getLoggedInUserPhone();
+    if (userPhone == null || userPhone.isEmpty) {
+      debugPrint('Cannot save vote: no phone number found');
+      return;
+    }
+    final previousVote = _userVotes[reportId];
     try {
       // Update local cache
       if (vote == 'none') {
@@ -211,32 +221,39 @@ class _CommunityPageState extends State<CommunityPage>
       } else {
         _userVotes[reportId] = vote;
       }
-
-      debugPrint('🔐 Attempting to save vote to Firestore...');
-      debugPrint('   Phone: $userPhone');
-      debugPrint('   Report ID: $reportId');
-      debugPrint('   Vote: $vote');
-      debugPrint('   Total votes in map: ${_userVotes.length}');
-
       // Save to userVotes collection with phone number as document ID
-      // Structure: userVotes/{phoneNumber}/votes/{reportId: voteType}
       await FirebaseFirestore.instance
           .collection('userVotes')
           .doc(userPhone)
           .set({'votes': _userVotes});
-
-      debugPrint('💾 ✅ Successfully saved vote "$vote" for report $reportId');
-
       // Also save individual vote record for better tracking
-      // Structure: voteRecords/{auto-id} with reportId, phone, voteType, timestamp
       await _saveVoteRecord(reportId, vote, userPhone);
-    } catch (e) {
-      debugPrint('❌ Failed to save user vote: $e');
-      debugPrint('   Error type: ${e.runtimeType}');
-      // Re-add to local cache if removal failed
-      if (vote != 'none') {
-        _userVotes[reportId] = vote;
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        if (!_hasLoggedVotesPermissionIssue) {
+          _hasLoggedVotesPermissionIssue = true;
+          debugPrint(
+            'Vote sync disabled: missing Firestore permission for userVotes.',
+          );
+        }
+        _canSyncVotesWithFirestore = false;
+      } else {
+        debugPrint('Failed to save user vote: $e');
       }
+      if (previousVote == null || previousVote == 'none') {
+        _userVotes.remove(reportId);
+      } else {
+        _userVotes[reportId] = previousVote;
+      }
+      _applyUserVotesToReports();
+    } catch (e) {
+      debugPrint('Failed to save user vote: $e');
+      if (previousVote == null || previousVote == 'none') {
+        _userVotes.remove(reportId);
+      } else {
+        _userVotes[reportId] = previousVote;
+      }
+      _applyUserVotesToReports();
     }
   }
 
@@ -266,17 +283,16 @@ class _CommunityPageState extends State<CommunityPage>
             vote, // 'green' (verify) or 'red' (report) or 'none' (removed)
         'timestamp': FieldValue.serverTimestamp(),
       });
-      debugPrint('📝 Vote record saved to voteRecords collection');
+      debugPrint('ðŸ“ Vote record saved to voteRecords collection');
     } catch (e) {
-      debugPrint('⚠️ Could not save vote record: $e');
+      debugPrint('âš ï¸ Could not save vote record: $e');
       // Don't fail the main operation if this fails
     }
   }
 
   Future<void> _migrateLegacyVotesIfNeeded(String userId) async {
-    if (_checkedLegacyVotes) return;
+    if (_checkedLegacyVotes || !_canSyncVotesWithFirestore) return;
     _checkedLegacyVotes = true;
-
     final legacyUsername = UserSession.currentUserData?['username']
         ?.toString()
         .trim();
@@ -285,24 +301,33 @@ class _CommunityPageState extends State<CommunityPage>
         legacyUsername == userId) {
       return;
     }
-
     try {
       final legacyDoc = await FirebaseFirestore.instance
           .collection('userVotes')
           .doc(legacyUsername)
           .get();
-
       if (!legacyDoc.exists) return;
       final legacyData = legacyDoc.data() ?? {};
       final legacyVotes = Map<String, String>.from(legacyData['votes'] ?? {});
       if (legacyVotes.isEmpty) return;
-
       _userVotes.addAll(legacyVotes);
       await FirebaseFirestore.instance.collection('userVotes').doc(userId).set({
         'votes': _userVotes,
       }, SetOptions(merge: true));
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        if (!_hasLoggedVotesPermissionIssue) {
+          _hasLoggedVotesPermissionIssue = true;
+          debugPrint(
+            'Vote migration skipped: missing Firestore permission for userVotes.',
+          );
+        }
+        _canSyncVotesWithFirestore = false;
+        return;
+      }
+      debugPrint('Failed to migrate legacy votes: $e');
     } catch (e) {
-      debugPrint('❌ Failed to migrate legacy votes: $e');
+      debugPrint('Failed to migrate legacy votes: $e');
     }
   }
 
@@ -328,10 +353,10 @@ class _CommunityPageState extends State<CommunityPage>
             setState(() {
               _reports = reports;
             });
-            debugPrint('✅ Loaded ${reports.length} reports from Firestore');
+            debugPrint('âœ… Loaded ${reports.length} reports from Firestore');
           },
           onError: (e) {
-            debugPrint('❌ Failed to load reports: $e');
+            debugPrint('âŒ Failed to load reports: $e');
           },
         );
   }
@@ -485,7 +510,7 @@ class _CommunityPageState extends State<CommunityPage>
     }
   }
 
-  // ───────────────── DIALOG HELPERS ─────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ DIALOG HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   // Add this method to replace the existing _showReasonDialog in community_page.dart
 
@@ -1063,28 +1088,16 @@ class _CommunityPageState extends State<CommunityPage>
     return result;
   }
 
-  // ───────────────── MEDIA BUILDER ─────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ MEDIA BUILDER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Widget _buildMediaWidget(Map<String, dynamic> report) {
     final mediaUrl = (report['image'] as String? ?? '').trim();
-    final resolvedBy =
-        (report['resolvedBy'] ??
-                report['resolvedByName'] ??
-                report['resolved_by'] ??
-                '')
-            .toString()
-            .trim();
-    final approvedBy =
-        (report['approvedBy'] ??
-                report['approvedByName'] ??
-                report['approved_by'] ??
-                '')
-            .toString()
-            .trim();
     final mediaType = (report['mediaType'] as String? ?? 'photo').toLowerCase();
 
     // Debug: log what we're trying to load
-    debugPrint('🖼️ Media load -> type: ' + mediaType + ', url: ' + mediaUrl);
+    debugPrint(
+      'ðŸ–¼ï¸ Media load -> type: ' + mediaType + ', url: ' + mediaUrl,
+    );
 
     // Handle empty URL
     if (mediaUrl.isEmpty) {
@@ -1101,7 +1114,7 @@ class _CommunityPageState extends State<CommunityPage>
       final bucket = 'res-q-93ca6.firebasestorage.app';
       downloadUrl =
           'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(mediaUrl)}?alt=media';
-      debugPrint('🔗 Converted storage path to download URL: $downloadUrl');
+      debugPrint('ðŸ”— Converted storage path to download URL: $downloadUrl');
     }
 
     // Firebase Storage URLs are network images
@@ -1119,7 +1132,7 @@ class _CommunityPageState extends State<CommunityPage>
     return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(mediaUrl)}?alt=media';
   }
 
-  // ───────────────── IMAGE ZOOM DIALOG ─────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ IMAGE ZOOM DIALOG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   void _showImageZoom(String imageUrl) {
     showDialog(
@@ -1421,14 +1434,14 @@ class _CommunityPageState extends State<CommunityPage>
     );
   }
 
-  // ───────────────── FLAG LOGIC (WITH DIALOG) ─────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ FLAG LOGIC (WITH DIALOG) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   Future<void> _onGreenFlagPressed(int index) async {
     final report = _reports[index];
     final String vote = report['userVote'];
     final reportId = report['id']?.toString() ?? '';
 
-    // Already green → quick unverify
+    // Already green â†’ quick unverify
     if (vote == 'green') {
       final shouldUndo = await _showUndoConfirmDialog(
         title: 'UNDO VERIFY',
@@ -1497,7 +1510,7 @@ class _CommunityPageState extends State<CommunityPage>
     final String vote = report['userVote'];
     final reportId = report['id']?.toString() ?? '';
 
-    // Already red → quick unflag
+    // Already red â†’ quick unflag
     if (vote == 'red') {
       final shouldUndo = await _showUndoConfirmDialog(
         title: 'UNDO REPORT',
@@ -1582,11 +1595,11 @@ class _CommunityPageState extends State<CommunityPage>
           .doc(reportId)
           .update(updates);
     } catch (e) {
-      debugPrint('⚠️ Failed to update report flags: $e');
+      debugPrint('âš ï¸ Failed to update report flags: $e');
     }
   }
 
-  // ───────────────── COMMENTS BOTTOM SHEET ─────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ COMMENTS BOTTOM SHEET â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   void _openComments(int index) {
     final report = _reports[index];
@@ -1606,7 +1619,7 @@ class _CommunityPageState extends State<CommunityPage>
     );
   }
 
-  // ───────────────── TIME FORMATTER ─────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ TIME FORMATTER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   String _formatTimeAgo(DateTime timestamp) {
     final now = DateTime.now();
@@ -1625,7 +1638,7 @@ class _CommunityPageState extends State<CommunityPage>
     }
   }
 
-  // ───────────────── FILTER & ANNOUNCEMENT HELPERS ─────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ FILTER & ANNOUNCEMENT HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   int _getActiveFilterCount() {
     int count = 0;
@@ -1925,7 +1938,7 @@ class _CommunityPageState extends State<CommunityPage>
     );
   }
 
-  // ───────────────── UI ─────────────────
+  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   @override
   Widget build(BuildContext context) {
@@ -2252,7 +2265,7 @@ class _CommunityPageState extends State<CommunityPage>
                                                   'Not provided') !=
                                               'Not provided') ...[
                                             Text(
-                                              ' • ',
+                                              ' â€¢ ',
                                               style: TextStyle(
                                                 fontSize: 12,
                                                 color: Colors.grey[600],
@@ -2459,9 +2472,9 @@ class _CommunityPageState extends State<CommunityPage>
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // COMMENTS BOTTOM SHEET (Draggable)
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class _CommentsBottomSheet extends StatefulWidget {
   final Map<String, dynamic> report;
@@ -2547,7 +2560,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
         _loading = false;
       });
     } catch (e) {
-      debugPrint('❌ Failed to load comments: $e');
+      debugPrint('âŒ Failed to load comments: $e');
       setState(() => _loading = false);
     }
   }
@@ -2726,7 +2739,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
         );
       }
     } catch (e) {
-      debugPrint('❌ Failed to post comment: $e');
+      debugPrint('âŒ Failed to post comment: $e');
       if (mounted) {
         AppSnackBar.show(
           context,
@@ -2897,7 +2910,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       });
       await _saveReplyVote(commentId, replyId, newVote);
     } catch (e) {
-      debugPrint('❌ Failed to update reply verify vote: $e');
+      debugPrint('âŒ Failed to update reply verify vote: $e');
       if (!mounted) return;
       AppSnackBar.show(
         context,
@@ -2946,7 +2959,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       });
       await _saveReplyVote(commentId, replyId, newVote);
     } catch (e) {
-      debugPrint('❌ Failed to update reply report vote: $e');
+      debugPrint('âŒ Failed to update reply report vote: $e');
       if (!mounted) return;
       AppSnackBar.show(
         context,
@@ -3021,11 +3034,13 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               .doc(commentId)
               .update({'replyCount': actualReplyCount});
         } catch (e) {
-          debugPrint('❌ Failed to sync replyCount for comment $commentId: $e');
+          debugPrint(
+            'âŒ Failed to sync replyCount for comment $commentId: $e',
+          );
         }
       }
     } catch (e) {
-      debugPrint('❌ Failed to load replies for comment $commentId: $e');
+      debugPrint('âŒ Failed to load replies for comment $commentId: $e');
       if (!mounted) return;
       AppSnackBar.show(
         context,
@@ -3185,7 +3200,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
         duration: const Duration(seconds: 1),
       );
     } catch (e) {
-      debugPrint('❌ Failed to post reply for comment $commentId: $e');
+      debugPrint('âŒ Failed to post reply for comment $commentId: $e');
       if (!mounted) return;
       AppSnackBar.show(
         context,
@@ -3611,7 +3626,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                   children: [
                     Expanded(
                       child: Text(
-                        '${widget.report['title']} • ${widget.report['status']}',
+                        '${widget.report['title']} â€¢ ${widget.report['status']}',
                         style: TextStyle(
                           fontFamily: 'RobotoCondensed',
                           fontSize: 12,
@@ -3950,9 +3965,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // COMMENTS PAGE (Full Screen) - Legacy, kept for reference
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class _CommentsPage extends StatefulWidget {
   final Map<String, dynamic> report;
@@ -3967,10 +3982,8 @@ class _CommentsPageState extends State<_CommentsPage> {
   static const appBlue = Color(0xFFAC1B22);
   static const appRed = Color(0xFFAC1B22);
   static const appGreen = Color(0xFF00A458);
-  static const appYellow = Color(0xFFFFC806);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
-  static const commentBlue = Color(0xFF2563EB);
 
   final TextEditingController _commentController = TextEditingController();
   String _commentFilter = 'All Comments';
@@ -3995,7 +4008,7 @@ class _CommentsPageState extends State<_CommentsPage> {
       final reportId = widget.report['id']?.toString() ?? '';
 
       debugPrint(
-        '📥 Loading comments from nested collection for reportId: $reportId',
+        'ðŸ“¥ Loading comments from nested collection for reportId: $reportId',
       );
 
       // Load from nested comments collection
@@ -4007,7 +4020,7 @@ class _CommentsPageState extends State<_CommentsPage> {
           .get();
 
       debugPrint(
-        '✅ Loaded ${snapshot.docs.length} comments from nested collection',
+        'âœ… Loaded ${snapshot.docs.length} comments from nested collection',
       );
 
       final comments = snapshot.docs
@@ -4045,9 +4058,9 @@ class _CommentsPageState extends State<_CommentsPage> {
         _loading = false;
       });
 
-      debugPrint('✅ Loaded ${comments.length} comments from Firestore');
+      debugPrint('âœ… Loaded ${comments.length} comments from Firestore');
     } catch (e) {
-      debugPrint('❌ Failed to load comments: $e');
+      debugPrint('âŒ Failed to load comments: $e');
       setState(() => _loading = false);
     }
   }
@@ -4076,15 +4089,12 @@ class _CommentsPageState extends State<_CommentsPage> {
       final reportTitle = widget.report['title']?.toString() ?? '';
       final reportStatusRaw = widget.report['status']?.toString() ?? '';
       final reportStatus = reportStatusRaw;
-      final statusLower = reportStatusRaw.toLowerCase();
-      final isResolved =
-          statusLower == 'resolved' || statusLower == 'incident resolved';
       final reportDate = widget.report['date']?.toString() ?? '';
       final reportTime = widget.report['time']?.toString() ?? '';
       final reportedBy = widget.report['name']?.toString() ?? '';
 
       if (reportId.isEmpty) {
-        debugPrint('❌ ERROR: reportId is empty! Cannot post comment.');
+        debugPrint('âŒ ERROR: reportId is empty! Cannot post comment.');
         if (mounted) {
           AppSnackBar.show(
             context,
@@ -4095,7 +4105,7 @@ class _CommentsPageState extends State<_CommentsPage> {
         return;
       }
 
-      debugPrint('📝 Posting comment with report credentials:');
+      debugPrint('ðŸ“ Posting comment with report credentials:');
       debugPrint('  - reportId: $reportId');
       debugPrint('  - reportTitle: $reportTitle');
       debugPrint('  - reportStatus: $reportStatus');
@@ -4123,8 +4133,8 @@ class _CommentsPageState extends State<_CommentsPage> {
         'reportedBy': reportedBy,
       };
 
-      debugPrint('📤 Comment data structure: $newComment');
-      debugPrint('🔐 Saving to nested comments collection...');
+      debugPrint('ðŸ“¤ Comment data structure: $newComment');
+      debugPrint('ðŸ” Saving to nested comments collection...');
 
       // Save to nested comments collection (for display in UI)
       final savedDocRef = await FirebaseFirestore.instance
@@ -4134,7 +4144,7 @@ class _CommentsPageState extends State<_CommentsPage> {
           .add(newComment);
 
       debugPrint(
-        '✅ Comment saved to nested collection with ID: ${savedDocRef.id}',
+        'âœ… Comment saved to nested collection with ID: ${savedDocRef.id}',
       );
 
       // Try to update report document with new comment count
@@ -4144,7 +4154,7 @@ class _CommentsPageState extends State<_CommentsPage> {
             .collection('reports')
             .doc(reportId)
             .update({'comments': FieldValue.increment(1)});
-        debugPrint('✅ Report comment count incremented');
+        debugPrint('âœ… Report comment count incremented');
         if (mounted) {
           setState(() {
             final currentCount = widget.report['comments'] as int? ?? 0;
@@ -4152,7 +4162,9 @@ class _CommentsPageState extends State<_CommentsPage> {
           });
         }
       } catch (updateError) {
-        debugPrint('⚠️ Warning: Could not update comment count: $updateError');
+        debugPrint(
+          'âš ï¸ Warning: Could not update comment count: $updateError',
+        );
         // Don't fail the entire operation if count update fails
       }
 
@@ -4170,7 +4182,7 @@ class _CommentsPageState extends State<_CommentsPage> {
         );
       }
     } catch (e) {
-      debugPrint('❌ Failed to post comment: $e');
+      debugPrint('âŒ Failed to post comment: $e');
       debugPrint('Stack trace: ${StackTrace.current}');
       debugPrint('Error type: ${e.runtimeType}');
       if (mounted) {
@@ -4233,7 +4245,7 @@ class _CommentsPageState extends State<_CommentsPage> {
         comment['userVote'] = newVote;
       });
     } catch (e) {
-      debugPrint('❌ Failed to update comment vote: $e');
+      debugPrint('âŒ Failed to update comment vote: $e');
     }
   }
 
@@ -4272,7 +4284,7 @@ class _CommentsPageState extends State<_CommentsPage> {
         comment['userVote'] = newVote;
       });
     } catch (e) {
-      debugPrint('❌ Failed to update comment vote: $e');
+      debugPrint('âŒ Failed to update comment vote: $e');
     }
   }
 
@@ -4727,10 +4739,10 @@ class _CommentsPageState extends State<_CommentsPage> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // IMAGE ZOOM DIALOG
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class _ImageZoomDialog extends StatelessWidget {
   final String imageUrl;
@@ -4811,10 +4823,10 @@ class _ImageZoomDialog extends StatelessWidget {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // FIREBASE STORAGE IMAGE LOADER
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 /// Loads images directly from Firebase Storage using the download URL
 /// Uses Image.memory for better control and error handling
 
@@ -4834,13 +4846,13 @@ class _NetworkImageLoaderState extends State<_NetworkImageLoader> {
   @override
   void initState() {
     super.initState();
-    debugPrint('🖼️ [NetworkImageLoader] Init - URL: ${widget.url}');
+    debugPrint('ðŸ–¼ï¸ [NetworkImageLoader] Init - URL: ${widget.url}');
   }
 
   void _retry() {
     if (_retryCount < _maxRetries) {
       setState(() => _retryCount++);
-      debugPrint('🔄 Retry attempt ${_retryCount + 1}/$_maxRetries');
+      debugPrint('ðŸ”„ Retry attempt ${_retryCount + 1}/$_maxRetries');
     }
   }
 
@@ -4855,7 +4867,7 @@ class _NetworkImageLoaderState extends State<_NetworkImageLoader> {
       filterQuality: FilterQuality.high,
       loadingBuilder: (context, child, loadingProgress) {
         if (loadingProgress == null) {
-          debugPrint('✅ Image loaded successfully');
+          debugPrint('âœ… Image loaded successfully');
           return child;
         }
         final percent = loadingProgress.expectedTotalBytes != null
@@ -4863,7 +4875,7 @@ class _NetworkImageLoaderState extends State<_NetworkImageLoader> {
                       loadingProgress.expectedTotalBytes!) *
                   100
             : 0;
-        debugPrint('⏳ Loading... ${percent.toStringAsFixed(0)}%');
+        debugPrint('â³ Loading... ${percent.toStringAsFixed(0)}%');
         return Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -4883,40 +4895,41 @@ class _NetworkImageLoaderState extends State<_NetworkImageLoader> {
       errorBuilder: (context, error, stackTrace) {
         String errorString = 'Unknown error';
         try {
-          errorString = error?.toString() ?? 'Unknown error';
+          errorString = error.toString();
         } catch (e) {
           errorString = 'Error object inaccessible: $e';
         }
 
         debugPrint(
-          '❌ [ImageLoader] Load failed:\n'
+          'âŒ [ImageLoader] Load failed:\n'
           '   URL: ${widget.url}\n'
           '   Error: $errorString\n'
-          '   Type: ${error?.runtimeType ?? 'unknown'}',
+          '   Type: ${error.runtimeType}',
         );
 
         String diagnosis = 'Failed to load image';
 
         if (errorString.contains('statusCode: 0')) {
-          diagnosis = '📡 No Internet\n(Check connection or emulator network)';
+          diagnosis =
+              'ðŸ“¡ No Internet\n(Check connection or emulator network)';
         } else if (errorString.contains('401') ||
             errorString.contains('403') ||
             errorString.contains('Permission') ||
             errorString.contains('denied')) {
-          diagnosis = '🔒 Access Denied\n(Check Storage Rules)';
+          diagnosis = 'ðŸ”’ Access Denied\n(Check Storage Rules)';
         } else if (errorString.contains('404') ||
             errorString.contains('not found')) {
-          diagnosis = '❌ File Not Found';
+          diagnosis = 'âŒ File Not Found';
         } else if (errorString.contains('timeout') ||
             errorString.contains('Time out')) {
-          diagnosis = '⏱️ Network Timeout';
+          diagnosis = 'â±ï¸ Network Timeout';
         } else if (errorString.contains('Network') ||
             errorString.contains('Connection') ||
             errorString.contains('SocketException')) {
-          diagnosis = '🌐 Network Error\n(Check internet connection)';
+          diagnosis = 'ðŸŒ Network Error\n(Check internet connection)';
         } else if (errorString.contains('Certificate') ||
             errorString.contains('SSL')) {
-          diagnosis = '🔐 SSL Error';
+          diagnosis = 'ðŸ” SSL Error';
         }
 
         return Container(

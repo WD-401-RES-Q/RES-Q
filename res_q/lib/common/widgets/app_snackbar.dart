@@ -75,12 +75,6 @@ class AppSnackBar {
     Duration duration = const Duration(seconds: 2),
   }) {
     final overlay = Overlay.of(context, rootOverlay: true);
-    if (overlay == null) {
-      final messenger = ScaffoldMessenger.of(context);
-      messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(build(message, type: type, duration: duration));
-      return;
-    }
 
     _activeOverlay?.remove();
     _activeOverlay = null;
@@ -116,7 +110,7 @@ class AppSnackBar {
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
+                      color: Colors.black.withValues(alpha: 0.2),
                       blurRadius: 10,
                       offset: const Offset(0, 6),
                     ),
@@ -167,7 +161,6 @@ class AppSnackBar {
       case AppSnackBarType.error:
         return AppColors.appRed;
       case AppSnackBarType.info:
-      default:
         return AppColors.appBlack;
     }
   }
@@ -185,7 +178,6 @@ class AppSnackBar {
         icon = Icons.error_outline;
         break;
       case AppSnackBarType.info:
-      default:
         icon = Icons.info_outline;
         break;
     }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -27,9 +28,11 @@ class _LoginPageState extends State<LoginPage>
     with SingleTickerProviderStateMixin {
   // Brand colors
   static const appBlue = Color(0xFFAC1B22);
-  static const appRed = Color(0xFFFFC806);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
+  static const Duration _phoneValidationCacheTtl = Duration(seconds: 12);
+  static const bool _enableSemiAdminBootstrap = false;
+  static const String _semiAdminBootstrapDoneKey = 'semi_admin_bootstrap_done';
 
   final _formKey = GlobalKey<FormState>();
   bool _loading = false;
@@ -41,6 +44,12 @@ class _LoginPageState extends State<LoginPage>
   String _pinErrorMessage = '';
   bool _showPhoneError = false;
   String _phoneErrorMessage = '';
+  bool _isPendingApprovalPhone = false;
+  bool _showSavedPhoneCard = false;
+  bool _isPhoneVerifiedForPin = false;
+  int _phoneValidationRequestId = 0;
+  Timer? _phoneValidationDebounce;
+  final Map<String, _PhoneValidationCacheEntry> _phoneValidationCache = {};
 
   // Shake animation
   late AnimationController _shakeController;
@@ -53,6 +62,13 @@ class _LoginPageState extends State<LoginPage>
   String? _biometricsPhone;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  bool get _isPinUnlocked => _isPhoneVerifiedForPin;
+
+  Future<void> _saveApprovedLoginState(String phoneDigits) async {
+    await RegistrationPrefs.savePhoneNumber(phoneDigits);
+    await RegistrationPrefs.setApprovedLoginCompleted(true);
+  }
 
   Future<void> _updateSemiAdminPresence({
     required Map<String, dynamic> semiAdminData,
@@ -180,17 +196,25 @@ class _LoginPageState extends State<LoginPage>
     final phone = '+63$phoneInput';
 
     try {
-      // Check semi_admins collection first
-      final semiAdminQuery = await _firestore
-          .collection('semi_admins')
-          .where('contactNumber', isEqualTo: phone)
-          .limit(1)
-          .get();
+      final accountQueries = await Future.wait([
+        _firestore
+            .collection('semi_admins')
+            .where('contactNumber', isEqualTo: phone)
+            .limit(1)
+            .get(),
+        _firestore
+            .collection('approved_users')
+            .where('contactNumber', isEqualTo: phone)
+            .limit(1)
+            .get(),
+      ]);
+      final semiAdminQuery = accountQueries[0];
+      final userQuery = accountQueries[1];
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin biometric login successful!');
         // Persist phone locally for faster next login.
-        await RegistrationPrefs.savePhoneNumber(phoneInput);
+        await _saveApprovedLoginState(phoneInput);
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
         UserSession.setUserData({
@@ -210,16 +234,14 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
-      // Check approved_users collection
-      final userQuery = await _firestore
-          .collection('approved_users')
-          .where('contactNumber', isEqualTo: phone)
-          .limit(1)
-          .get();
-
       if (userQuery.docs.isEmpty) {
+        final isPending = await _isPhonePendingApproval(phone);
         setState(() => _loading = false);
-        _showError('Phone number not found. Please register first.');
+        if (isPending) {
+          _showPendingApprovalDialog();
+        } else {
+          _showError('No account found with this phone number.');
+        }
         return;
       }
 
@@ -245,7 +267,7 @@ class _LoginPageState extends State<LoginPage>
 
       // Login successful
       // Persist phone locally for faster next login.
-      await RegistrationPrefs.savePhoneNumber(phoneInput);
+      await _saveApprovedLoginState(phoneInput);
       UserSession.setUserData(userData);
 
       // Use phone number as user ID for easier tracking
@@ -290,6 +312,170 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
+  _PhoneValidationResult? _readCachedPhoneValidation(String phoneDigits) {
+    final cached = _phoneValidationCache[phoneDigits];
+    if (cached == null) return null;
+
+    final cacheAge = DateTime.now().difference(cached.checkedAt);
+    if (cacheAge > _phoneValidationCacheTtl) {
+      _phoneValidationCache.remove(phoneDigits);
+      return null;
+    }
+
+    return cached.result;
+  }
+
+  Future<_PhoneValidationResult> _fetchPhoneValidation(String phone) async {
+    final accountQueries = await Future.wait([
+      _firestore
+          .collection('semi_admins')
+          .where('contactNumber', isEqualTo: phone)
+          .limit(1)
+          .get(),
+      _firestore
+          .collection('approved_users')
+          .where('contactNumber', isEqualTo: phone)
+          .limit(1)
+          .get(),
+    ]);
+
+    final hasSemiAdminAccount = accountQueries[0].docs.isNotEmpty;
+    final hasApprovedAccount = accountQueries[1].docs.isNotEmpty;
+
+    if (hasSemiAdminAccount || hasApprovedAccount) {
+      return _PhoneValidationResult(
+        hasSemiAdminAccount: hasSemiAdminAccount,
+        hasApprovedAccount: hasApprovedAccount,
+        isPendingAccount: false,
+      );
+    }
+
+    final pendingQuery = await _firestore
+        .collection('pending_users')
+        .where('contactNumber', isEqualTo: phone)
+        .limit(1)
+        .get();
+
+    return _PhoneValidationResult(
+      hasSemiAdminAccount: false,
+      hasApprovedAccount: false,
+      isPendingAccount: pendingQuery.docs.isNotEmpty,
+    );
+  }
+
+  Future<void> _validatePhoneForPinEntry(String phoneDigits) async {
+    if (phoneDigits.length != 10) return;
+
+    final requestId = ++_phoneValidationRequestId;
+    final phone = '+63$phoneDigits';
+
+    try {
+      final validationResult =
+          _readCachedPhoneValidation(phoneDigits) ??
+          await _fetchPhoneValidation(phone);
+      _phoneValidationCache[phoneDigits] = _PhoneValidationCacheEntry(
+        result: validationResult,
+        checkedAt: DateTime.now(),
+      );
+      if (!mounted || requestId != _phoneValidationRequestId) return;
+
+      if (validationResult.isPendingAccount) {
+        setState(() {
+          _isPhoneVerifiedForPin = false;
+          _isPendingApprovalPhone = true;
+          _showPhoneError = false;
+          _phoneErrorMessage = '';
+          _pinCtl.clear();
+          _showPinError = false;
+          _pinErrorMessage = '';
+        });
+        _showPendingApprovalDialog();
+        return;
+      }
+
+      if (!validationResult.hasAnyAccount) {
+        setState(() {
+          _isPhoneVerifiedForPin = false;
+          _isPendingApprovalPhone = false;
+          _showPhoneError = true;
+          _phoneErrorMessage = 'No account found with this phone number.';
+          _pinCtl.clear();
+          _showPinError = false;
+          _pinErrorMessage = '';
+        });
+        return;
+      }
+
+      setState(() {
+        _isPhoneVerifiedForPin = true;
+        _isPendingApprovalPhone = false;
+        _showPhoneError = false;
+        _phoneErrorMessage = '';
+      });
+
+      await RegistrationPrefs.savePhoneNumber(phoneDigits);
+    } catch (e) {
+      debugPrint('Error validating phone number for PIN login: $e');
+      if (!mounted || requestId != _phoneValidationRequestId) return;
+      setState(() {
+        _isPhoneVerifiedForPin = false;
+        _isPendingApprovalPhone = false;
+        _showPhoneError = true;
+        _phoneErrorMessage = 'Unable to verify phone number. Please try again.';
+        _pinCtl.clear();
+        _showPinError = false;
+        _pinErrorMessage = '';
+      });
+    }
+  }
+
+  void _onPhoneChanged(String _) {
+    final digits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
+    _phoneValidationDebounce?.cancel();
+    _phoneValidationRequestId++;
+
+    final shouldRebuild =
+        _pinCtl.text.isNotEmpty ||
+        _showPinError ||
+        _pinErrorMessage.isNotEmpty ||
+        _isPhoneVerifiedForPin ||
+        _isPendingApprovalPhone ||
+        _showPhoneError ||
+        _phoneErrorMessage.isNotEmpty;
+
+    if (shouldRebuild) {
+      setState(() {
+        _showPinError = false;
+        _pinErrorMessage = '';
+        _pinCtl.clear();
+        _isPhoneVerifiedForPin = false;
+        _isPendingApprovalPhone = false;
+        _showPhoneError = false;
+        _phoneErrorMessage = '';
+      });
+    }
+
+    if (digits.length == 10) {
+      _phoneValidationDebounce = Timer(const Duration(milliseconds: 300), () {
+        unawaited(_validatePhoneForPinEntry(digits));
+      });
+    }
+  }
+
+  Future<bool> _isPhonePendingApproval(String phone) async {
+    try {
+      final pendingQuery = await _firestore
+          .collection('pending_users')
+          .where('contactNumber', isEqualTo: phone)
+          .limit(1)
+          .get();
+      return pendingQuery.docs.isNotEmpty;
+    } catch (e) {
+      debugPrint('Error checking pending_users: $e');
+      return false;
+    }
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -309,13 +495,25 @@ class _LoginPageState extends State<LoginPage>
     if (mounted) {
       setState(() => _initializing = false);
     }
-    // Run Firestore setup in background so local login prefill is instant.
-    unawaited(_seedAndBackfillSemiAdminPresence());
+    if (kDebugMode && _enableSemiAdminBootstrap) {
+      // Keep maintenance work out of normal app startup to reduce APK jank.
+      unawaited(_seedAndBackfillSemiAdminPresence());
+    }
   }
 
   Future<void> _seedAndBackfillSemiAdminPresence() async {
-    await _seedSemiAdminsIfEmpty();
-    await _backfillSemiAdminPresenceDefaults();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final alreadyBootstrapped =
+          prefs.getBool(_semiAdminBootstrapDoneKey) ?? false;
+      if (alreadyBootstrapped) return;
+
+      await _seedSemiAdminsIfEmpty();
+      await _backfillSemiAdminPresenceDefaults();
+      await prefs.setBool(_semiAdminBootstrapDoneKey, true);
+    } catch (e) {
+      debugPrint('Failed semi-admin bootstrap: $e');
+    }
   }
 
   Future<void> _loadSavedData() async {
@@ -328,11 +526,16 @@ class _LoginPageState extends State<LoginPage>
         'Biometrics enabled: $_biometricsEnabled, phone: $_biometricsPhone',
       );
 
+      final approvedLoginCompleted =
+          await RegistrationPrefs.isApprovedLoginCompleted();
+
       // Load saved phone number for convenience
       final savedPhone = await RegistrationPrefs.getPhoneNumber();
       if (savedPhone != null && savedPhone.isNotEmpty && mounted) {
+        final normalizedSavedPhone = savedPhone.replaceAll(RegExp(r'\D'), '');
         setState(() {
           _phoneCtl.text = _formatPhoneNumber(savedPhone);
+          _showSavedPhoneCard = approvedLoginCompleted;
         });
         // Sync biometrics from Firestore in background.
         unawaited(
@@ -340,6 +543,13 @@ class _LoginPageState extends State<LoginPage>
             '+63${savedPhone.replaceAll(RegExp(r'\D'), '')}',
           ),
         );
+        if (normalizedSavedPhone.length == 10) {
+          unawaited(_validatePhoneForPinEntry(normalizedSavedPhone));
+        }
+      } else if (mounted) {
+        setState(() {
+          _showSavedPhoneCard = false;
+        });
       }
     } catch (e) {
       debugPrint('Error loading saved data: $e');
@@ -379,6 +589,7 @@ class _LoginPageState extends State<LoginPage>
 
   @override
   void dispose() {
+    _phoneValidationDebounce?.cancel();
     _pinCtl.dispose();
     _phoneCtl.dispose();
     _shakeController.dispose();
@@ -413,6 +624,9 @@ class _LoginPageState extends State<LoginPage>
       setState(() {
         _showPhoneError = true;
         _phoneErrorMessage = 'Enter phone number';
+        _pinCtl.clear();
+        _showPinError = false;
+        _pinErrorMessage = '';
       });
       return;
     }
@@ -421,6 +635,9 @@ class _LoginPageState extends State<LoginPage>
       setState(() {
         _showPhoneError = true;
         _phoneErrorMessage = 'Enter 10 digits';
+        _pinCtl.clear();
+        _showPinError = false;
+        _pinErrorMessage = '';
       });
       return;
     }
@@ -429,6 +646,23 @@ class _LoginPageState extends State<LoginPage>
       setState(() {
         _showPhoneError = true;
         _phoneErrorMessage = 'Must start with 9';
+        _pinCtl.clear();
+        _showPinError = false;
+        _pinErrorMessage = '';
+      });
+      return;
+    }
+
+    if (!_isPinUnlocked) {
+      final lockedMessage = _phoneErrorMessage.isNotEmpty
+          ? _phoneErrorMessage
+          : 'Verifying phone number. Please wait.';
+      setState(() {
+        _showPhoneError = true;
+        _phoneErrorMessage = lockedMessage;
+        _pinCtl.clear();
+        _showPinError = false;
+        _pinErrorMessage = '';
       });
       return;
     }
@@ -479,18 +713,27 @@ class _LoginPageState extends State<LoginPage>
     final phone = '+63$phoneInput';
 
     try {
-      // First check semi_admins collection
-      final semiAdminQuery = await _firestore
-          .collection('semi_admins')
-          .where('contactNumber', isEqualTo: phone)
-          .where('pin', isEqualTo: pin)
-          .limit(1)
-          .get();
+      final authQueries = await Future.wait([
+        _firestore
+            .collection('semi_admins')
+            .where('contactNumber', isEqualTo: phone)
+            .where('pin', isEqualTo: pin)
+            .limit(1)
+            .get(),
+        _firestore
+            .collection('approved_users')
+            .where('contactNumber', isEqualTo: phone)
+            .where('pin', isEqualTo: pin)
+            .limit(1)
+            .get(),
+      ]);
+      final semiAdminQuery = authQueries[0];
+      final userQuery = authQueries[1];
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin login successful via PIN!');
         // Persist phone locally for faster next login.
-        await RegistrationPrefs.savePhoneNumber(phoneInput);
+        await _saveApprovedLoginState(phoneInput);
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
         UserSession.setUserData({
@@ -510,16 +753,22 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
-      // Find user by both phone number AND PIN in approved_users
-      final userQuery = await _firestore
-          .collection('approved_users')
-          .where('contactNumber', isEqualTo: phone)
-          .where('pin', isEqualTo: pin)
-          .limit(1)
-          .get();
-
       if (userQuery.docs.isEmpty) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _pinCtl.clear();
+          _showPinError = false;
+          _pinErrorMessage = '';
+        });
+        final cachedValidation = _readCachedPhoneValidation(phoneInput);
+        if (cachedValidation != null && !cachedValidation.hasAnyAccount) {
+          _resetPinWithError('No account found with this phone number.');
+          return;
+        }
+        if (cachedValidation != null && cachedValidation.isPendingAccount) {
+          _showPendingApprovalDialog();
+          return;
+        }
         _resetPinWithError('Wrong PIN');
         return;
       }
@@ -546,7 +795,7 @@ class _LoginPageState extends State<LoginPage>
 
       // Login successful
       // Persist phone locally for faster next login.
-      await RegistrationPrefs.savePhoneNumber(phoneInput);
+      await _saveApprovedLoginState(phoneInput);
       UserSession.setUserData(userData);
 
       // Use phone number as user ID for easier tracking
@@ -725,27 +974,52 @@ class _LoginPageState extends State<LoginPage>
     showDialog(
       context: context,
       builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.pending_actions, size: 64, color: appRed),
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: appBlue.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: appBlue, width: 2),
+                ),
+                child: Icon(Icons.hourglass_top, size: 48, color: appBlue),
+              ),
               const SizedBox(height: 16),
               Text(
-                'Account Pending Approval',
+                'ACCOUNT PENDING',
                 style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  color: appBlue,
+                  letterSpacing: 1.2,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Awaiting Admin Approval',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
                   color: appBlack,
+                  letterSpacing: 0.5,
                 ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
               Text(
-                'Your account is currently pending admin approval. Please wait up to 48 hours for an administrator to review and approve your account.',
-                style: const TextStyle(fontSize: 14, color: appBlack),
+                'Your account is currently pending admin approval. This usually takes up to 48 hours.\n\nYou will receive a text message once approved and can then log in with your PIN.',
+                style: TextStyle(
+                  fontSize: 13.5,
+                  color: appBlack.withValues(alpha: 0.85),
+                  height: 1.4,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 24),
@@ -756,15 +1030,17 @@ class _LoginPageState extends State<LoginPage>
                   style: ElevatedButton.styleFrom(
                     backgroundColor: appBlue,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                   child: Text(
-                    'OK',
+                    'GOT IT',
                     style: const TextStyle(
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                       color: Colors.white,
+                      fontSize: 16,
+                      letterSpacing: 1.1,
                     ),
                   ),
                 ),
@@ -782,6 +1058,35 @@ class _LoginPageState extends State<LoginPage>
 
   void _handlePinKey(String value) {
     if (_loading) return;
+    if (!_isPinUnlocked) {
+      final phoneDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
+      if (_isPendingApprovalPhone && phoneDigits.length == 10) {
+        setState(() {
+          _showPhoneError = false;
+          _phoneErrorMessage = '';
+          _showPinError = false;
+          _pinErrorMessage = '';
+          _pinCtl.clear();
+        });
+        _showPendingApprovalDialog();
+        return;
+      }
+      final message = phoneDigits.isEmpty
+          ? 'Please enter your phone number first.'
+          : phoneDigits.length < 10
+          ? 'Please complete your 10-digit phone number first.'
+          : (_phoneErrorMessage.isNotEmpty
+                ? _phoneErrorMessage
+                : 'Verifying phone number. Please wait.');
+      setState(() {
+        _showPhoneError = true;
+        _phoneErrorMessage = message;
+        _showPinError = false;
+        _pinErrorMessage = '';
+        _pinCtl.clear();
+      });
+      return;
+    }
     setState(() {
       _showPinError = false; // Clear error when user starts typing
       if (value == 'C') {
@@ -816,6 +1121,20 @@ class _LoginPageState extends State<LoginPage>
       buffer.write(digits[i]);
     }
     return buffer.toString();
+  }
+
+  String _formatPhoneWithCountryCode(String text) {
+    final digits = text.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return '+63';
+    return '+63 ${_formatPhoneNumber(digits)}';
+  }
+
+  void _enablePhoneFieldEditing() {
+    setState(() {
+      _showSavedPhoneCard = false;
+      _showPhoneError = false;
+      _phoneErrorMessage = '';
+    });
   }
 
   @override
@@ -868,123 +1187,160 @@ class _LoginPageState extends State<LoginPage>
                                   ),
                                 ),
                                 const SizedBox(height: 4),
-                                Container(
-                                  height: 56,
-                                  decoration: BoxDecoration(
-                                    color: appOffWhite,
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: Colors.black,
-                                      width: 2,
+                                if (_showSavedPhoneCard)
+                                  Container(
+                                    height: 72,
+                                    decoration: BoxDecoration(
+                                      color: appOffWhite,
+                                      borderRadius: BorderRadius.circular(18),
+                                      border: Border.all(
+                                        color: appBlack.withValues(alpha: 0.3),
+                                        width: 2,
+                                      ),
                                     ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      // Phone icon
-                                      const Padding(
-                                        padding: EdgeInsets.only(left: 12),
-                                        child: Icon(
-                                          Icons.phone_outlined,
+                                    child: Row(
+                                      children: [
+                                        const SizedBox(width: 16),
+                                        Expanded(
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              const Icon(
+                                                Icons.phone_android,
+                                                size: 28,
+                                                color: appBlack,
+                                              ),
+                                              const SizedBox(width: 14),
+                                              Text(
+                                                _formatPhoneWithCountryCode(
+                                                  _phoneCtl.text,
+                                                ),
+                                                style: const TextStyle(
+                                                  fontFamily: 'RobotoCondensed',
+                                                  fontWeight: FontWeight.w500,
+                                                  fontSize: 16,
+                                                  color: appBlack,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        IconButton(
+                                          onPressed: _enablePhoneFieldEditing,
+                                          icon: const Icon(
+                                            Icons.edit_outlined,
+                                            color: appBlack,
+                                          ),
+                                          tooltip: 'Change phone number',
+                                        ),
+                                        const SizedBox(width: 8),
+                                      ],
+                                    ),
+                                  )
+                                else
+                                  Container(
+                                    height: 56,
+                                    decoration: BoxDecoration(
+                                      color: appOffWhite,
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: Colors.black,
+                                        width: 2,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        // Phone icon
+                                        const Padding(
+                                          padding: EdgeInsets.only(left: 12),
+                                          child: Icon(
+                                            Icons.phone_outlined,
+                                            color: Colors.black,
+                                          ),
+                                        ),
+                                        // +63 prefix
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                          ),
+                                          child: Text(
+                                            '+63',
+                                            style: TextStyle(
+                                              fontFamily: 'RobotoCondensed',
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 14,
+                                              color: appBlack,
+                                            ),
+                                          ),
+                                        ),
+                                        // Divider
+                                        Container(
+                                          width: 1.5,
+                                          height: 28,
                                           color: Colors.black,
                                         ),
-                                      ),
-                                      // +63 prefix
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                        ),
-                                        child: Text(
-                                          '+63',
-                                          style: TextStyle(
-                                            fontFamily: 'RobotoCondensed',
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 14,
-                                            color: appBlack,
-                                          ),
-                                        ),
-                                      ),
-                                      // Divider
-                                      Container(
-                                        width: 1.5,
-                                        height: 28,
-                                        color: Colors.black,
-                                      ),
-                                      // Phone input field
-                                      Expanded(
-                                        child: TextFormField(
-                                          controller: _phoneCtl,
-                                          keyboardType: TextInputType.phone,
-                                          autofillHints: const [
-                                            AutofillHints.telephoneNumber,
-                                          ],
-                                          inputFormatters: [
-                                            FilteringTextInputFormatter
-                                                .digitsOnly,
-                                            LengthLimitingTextInputFormatter(
-                                              10,
-                                            ),
-                                            TextInputFormatter.withFunction((
-                                              oldValue,
-                                              newValue,
-                                            ) {
-                                              return TextEditingValue(
-                                                text: _formatPhoneNumber(
-                                                  newValue.text,
-                                                ),
-                                                selection:
-                                                    TextSelection.collapsed(
-                                                      offset:
-                                                          _formatPhoneNumber(
-                                                            newValue.text,
-                                                          ).length,
-                                                    ),
-                                              );
-                                            }),
-                                          ],
-                                          style: const TextStyle(
-                                            fontFamily: 'RobotoCondensed',
-                                            fontWeight: FontWeight.w400,
-                                            fontSize: 14,
-                                            color: appBlack,
-                                          ),
-                                          decoration: InputDecoration(
-                                            hintText: '912-345-6789',
-                                            hintStyle: TextStyle(
+                                        // Phone input field
+                                        Expanded(
+                                          child: TextFormField(
+                                            controller: _phoneCtl,
+                                            keyboardType: TextInputType.phone,
+                                            autofillHints: const [
+                                              AutofillHints.telephoneNumber,
+                                            ],
+                                            inputFormatters: [
+                                              FilteringTextInputFormatter
+                                                  .digitsOnly,
+                                              LengthLimitingTextInputFormatter(
+                                                10,
+                                              ),
+                                              TextInputFormatter.withFunction((
+                                                oldValue,
+                                                newValue,
+                                              ) {
+                                                return TextEditingValue(
+                                                  text: _formatPhoneNumber(
+                                                    newValue.text,
+                                                  ),
+                                                  selection:
+                                                      TextSelection.collapsed(
+                                                        offset:
+                                                            _formatPhoneNumber(
+                                                              newValue.text,
+                                                            ).length,
+                                                      ),
+                                                );
+                                              }),
+                                            ],
+                                            style: const TextStyle(
                                               fontFamily: 'RobotoCondensed',
                                               fontWeight: FontWeight.w400,
                                               fontSize: 14,
-                                              color: appBlack.withValues(
-                                                alpha: 0.5,
-                                              ),
+                                              color: appBlack,
                                             ),
-                                            border: InputBorder.none,
-                                            contentPadding:
-                                                const EdgeInsets.symmetric(
-                                                  horizontal: 12,
-                                                  vertical: 16,
+                                            decoration: InputDecoration(
+                                              hintText: '912-345-6789',
+                                              hintStyle: TextStyle(
+                                                fontFamily: 'RobotoCondensed',
+                                                fontWeight: FontWeight.w400,
+                                                fontSize: 14,
+                                                color: appBlack.withValues(
+                                                  alpha: 0.5,
                                                 ),
+                                              ),
+                                              border: InputBorder.none,
+                                              contentPadding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 16,
+                                                  ),
+                                            ),
+                                            onChanged: _onPhoneChanged,
                                           ),
-                                          onChanged: (_) {
-                                            if (_showPhoneError) {
-                                              setState(
-                                                () => _showPhoneError = false,
-                                              );
-                                            }
-                                            final digits = _phoneCtl.text
-                                                .replaceAll(RegExp(r'\D'), '');
-                                            if (digits.length == 10) {
-                                              unawaited(
-                                                RegistrationPrefs.savePhoneNumber(
-                                                  digits,
-                                                ),
-                                              );
-                                            }
-                                          },
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
-                                ),
                                 // Show phone error message below phone input, outside the box
                                 if (_showPhoneError) ...[
                                   const SizedBox(height: 6),
@@ -1082,7 +1438,9 @@ class _LoginPageState extends State<LoginPage>
                                   enabled: !_loading,
                                   onKeyTap: _handlePinKey,
                                   actionBackgroundColor: appOffWhite,
-                                  textColor: appBlack,
+                                  textColor: _isPinUnlocked
+                                      ? appBlack
+                                      : appBlack.withValues(alpha: 0.25),
                                   showBiometrics: true,
                                   onBiometricsTap: _authenticateWithBiometrics,
                                 ),
@@ -1202,4 +1560,28 @@ class _LoginPageState extends State<LoginPage>
       ),
     );
   }
+}
+
+class _PhoneValidationResult {
+  const _PhoneValidationResult({
+    required this.hasSemiAdminAccount,
+    required this.hasApprovedAccount,
+    required this.isPendingAccount,
+  });
+
+  final bool hasSemiAdminAccount;
+  final bool hasApprovedAccount;
+  final bool isPendingAccount;
+
+  bool get hasAnyAccount => hasSemiAdminAccount || hasApprovedAccount;
+}
+
+class _PhoneValidationCacheEntry {
+  const _PhoneValidationCacheEntry({
+    required this.result,
+    required this.checkedAt,
+  });
+
+  final _PhoneValidationResult result;
+  final DateTime checkedAt;
 }

@@ -119,7 +119,7 @@ class BottomNavBar extends StatelessWidget {
   List<BottomNavItemConfig> get _defaultItems => const [
     BottomNavItemConfig(
       label: "HOME",
-      activeIconPath: "$_navIconSvgPath/NAV-HOMEPAGE-ICON-YELLOW.svg",
+      activeIconPath: "$_navIconSvgPath/NAV-HOME-ICON-YELLOW.svg",
       inactiveIconPath: "$_navIconSvgPath/NAV-HOME-ICON.svg",
     ),
     BottomNavItemConfig(
