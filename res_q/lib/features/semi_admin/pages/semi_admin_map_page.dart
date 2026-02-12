@@ -46,7 +46,6 @@ class _AdminMapPageState extends State<AdminMapPage>
     with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   final MapController _mapController = MapController();
   late final AnimationController _pinBounceController;
-  WeatherState _weatherState = WeatherState.none;
   bool _showWeatherCard = false;
   bool _isWeatherLoading = false;
   String? _weatherError;
@@ -96,7 +95,6 @@ class _AdminMapPageState extends State<AdminMapPage>
 
   // Simulate moving along route
   Timer? _trackingTimer;
-  bool _isMapReady = false;
 
   @override
   void initState() {
@@ -707,7 +705,6 @@ class _AdminMapPageState extends State<AdminMapPage>
       if (!mounted) return;
       setState(() {
         _weatherData = data;
-        _weatherState = data.state;
         _isWeatherLoading = false;
       });
     } catch (e) {
@@ -716,19 +713,6 @@ class _AdminMapPageState extends State<AdminMapPage>
         _weatherError = 'Unable to load weather';
         _isWeatherLoading = false;
       });
-    }
-  }
-
-  String _weatherLabel(WeatherState state) {
-    switch (state) {
-      case WeatherState.sunny:
-        return 'Sunny';
-      case WeatherState.cloudy:
-        return 'Cloudy';
-      case WeatherState.rainy:
-        return 'Rainy';
-      case WeatherState.none:
-        return '';
     }
   }
 
@@ -1017,25 +1001,6 @@ class _AdminMapPageState extends State<AdminMapPage>
       default:
         return 'assets/icons/locations/LOC-OTHERS.png';
     }
-  }
-
-  void _addSampleComments() {
-    _adminComments.addAll([
-      AdminComment(
-        id: '1',
-        text: 'Unit 3 dispatched to this location',
-        author: 'Admin John',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 5)),
-        position: const LatLng(15.1460, 120.5900),
-      ),
-      AdminComment(
-        id: '2',
-        text: 'Road closure on MacArthur Highway',
-        author: 'Admin Sarah',
-        timestamp: DateTime.now().subtract(const Duration(minutes: 15)),
-        position: const LatLng(15.1480, 120.5920),
-      ),
-    ]);
   }
 
   Future<void> _postAdminComment({
@@ -2081,30 +2046,6 @@ class _AdminMapPageState extends State<AdminMapPage>
     );
   }
 
-  void _setDestinationFromIncident(String incidentType) {
-    LatLng destination;
-
-    switch (incidentType) {
-      case 'Fire Incident':
-        destination = const LatLng(15.1450, 120.5887);
-        break;
-      case 'Road Obstruction':
-        destination = const LatLng(15.1500, 120.5950);
-        break;
-      case 'Medical Emergency':
-        destination = const LatLng(15.1400, 120.5800);
-        break;
-      case 'Flood Warning':
-        destination = const LatLng(15.1550, 120.5850);
-        break;
-      default:
-        destination = const LatLng(15.1450, 120.5887);
-    }
-
-    _destination = destination;
-    _calculateRoute();
-  }
-
   Future<void> _syncUserLocation() async {
     final position = await LocationService.getCurrentPosition();
     if (position == null) return;
@@ -2635,11 +2576,6 @@ class _AdminMapPageState extends State<AdminMapPage>
               initialZoom: _initialZoom,
               minZoom: 5,
               maxZoom: 18,
-              onMapReady: () {
-                setState(() {
-                  _isMapReady = true;
-                });
-              },
               onTap: (position, latlng) {
                 // Allow setting destination by tapping on map
                 if (!_isRouting) {

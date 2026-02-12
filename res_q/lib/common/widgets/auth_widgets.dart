@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1215,22 +1214,6 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     );
   }
 
-  /// Read image aspect ratio (width / height)
-  Future<double?> _getImageAspectRatio(String imagePath) async {
-    try {
-      final file = File(imagePath);
-      final bytes = await file.readAsBytes();
-      final codec = await ui.instantiateImageCodec(bytes);
-      final frame = await codec.getNextFrame();
-      final image = frame.image;
-      if (image.height == 0) return null;
-      return image.width / image.height;
-    } catch (e) {
-      debugPrint('Aspect ratio read error: $e');
-      return null;
-    }
-  }
-
   /// Read image aspect ratio from bytes (width / height)
   Future<double?> _getImageAspectRatioFromBytes(Uint8List bytes) async {
     try {
@@ -1459,7 +1442,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                           .toDouble();
                   final double previewHeight = aspectRatio == null
                       ? boxHeight
-                      : (constraints.maxWidth / aspectRatio!)
+                      : (constraints.maxWidth / aspectRatio)
                             .clamp(boxHeight, maxPreviewHeight)
                             .toDouble();
                   return GestureDetector(

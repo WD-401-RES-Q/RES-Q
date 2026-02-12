@@ -25,7 +25,6 @@ class MapPage extends StatefulWidget {
 class _MapPageState extends State<MapPage> {
   final MapController _mapController = MapController();
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
-  WeatherState _weatherState = WeatherState.none;
 
   // Weather cache (shared across instances, 15 min TTL)
   static _WeatherData? _cachedWeatherData;
@@ -579,7 +578,6 @@ class _MapPageState extends State<MapPage> {
       if (!mounted) return;
       setState(() {
         _weatherData = data;
-        _weatherState = data.state;
         _isWeatherLoading = false;
       });
     } catch (e) {
@@ -667,8 +665,6 @@ class _MapPageState extends State<MapPage> {
     _reportsSubscription?.cancel();
     _reportsSubscription = FirebaseFirestore.instance
         .collection('reports')
-        .where('location', isNotEqualTo: null)
-        .orderBy('location')
         .orderBy('reportedAt', descending: true)
         .limit(_reportFetchLimit) // Limit most recent reports for performance
         .snapshots()
@@ -684,7 +680,7 @@ class _MapPageState extends State<MapPage> {
               _hasShownIndexWarning = true;
               if (kDebugMode) {
                 debugPrint(
-                  'Firestore index required for reports query. Check logs for the index link.',
+                  'Firestore reports query failed due to missing index. Falling back to simpler query configuration.',
                 );
               }
             }
@@ -1244,13 +1240,6 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
-  @visibleForTesting
-  static void resetWeatherCacheForTesting() {
-    _cachedWeatherData = null;
-    _weatherCacheTime = null;
-    _weatherRequestInFlight = null;
-  }
-
   Future<_WeatherData> _fetchWeatherForAngeles() async {
     // Return cached data if still valid
     if (_cachedWeatherData != null && _weatherCacheTime != null) {
@@ -1366,8 +1355,6 @@ class _MapPageState extends State<MapPage> {
     try {
       final snapshot = await FirebaseFirestore.instance
           .collection('reports')
-          .where('location', isNotEqualTo: null)
-          .orderBy('location')
           .orderBy('reportedAt', descending: true)
           .limit(_reportFetchLimit)
           .get();
