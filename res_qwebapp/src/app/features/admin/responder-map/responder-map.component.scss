@@ -1,4 +1,5 @@
 .map-page {
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -7,19 +8,21 @@
 .map-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 16px;
 }
 
 .map-header h1 {
-  margin: 0 0 6px 0;
-  font-size: 24px;
-  font-weight: 700;
-  color: #1c1c1c;
+  margin: 0;
+  font-size: 32px;
+  font-weight: 800;
+  color: #1f2937;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
 }
 
 .map-header p {
-  margin: 0;
+  margin: 6px 0 0 0;
   color: #5b5b5b;
   font-size: 14px;
 }
@@ -464,6 +467,10 @@
 }
 
 @media (max-width: 1100px) {
+  .map-header h1 {
+    font-size: 28px;
+  }
+
   .map-layout {
     grid-template-columns: 1fr;
   }

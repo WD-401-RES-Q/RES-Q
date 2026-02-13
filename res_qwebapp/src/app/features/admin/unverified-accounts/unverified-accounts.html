@@ -2,6 +2,14 @@
   <header class="page-header">
     <h1>Unverified Accounts ({{ accounts.length }})</h1>
   </header>
+  
+  <div
+    *ngIf="showStatusBanner"
+    class="status-banner"
+    [class.status-banner--error]="statusType === 'error'"
+  >
+    {{ statusMessage }}
+  </div>
 
   <div *ngIf="isLoading$ | async" class="empty-state">
     <p>Loading pending accounts...</p>
@@ -13,6 +21,16 @@
 
   <div *ngIf="accounts.length > 0" class="accounts-table-wrapper">
     <table class="accounts-table">
+      <colgroup>
+        <col class="col-name" />
+        <col class="col-email" />
+        <col class="col-address" />
+        <col class="col-birthdate" />
+        <col class="col-phone" />
+        <col class="col-valid-id" />
+        <col class="col-selfie-id" />
+        <col class="col-actions" />
+      </colgroup>
       <thead>
         <tr>
           <th>Name</th>
@@ -21,37 +39,94 @@
           <th>Birthdate</th>
           <th>Phone</th>
           <th>Valid ID</th>
+          <th>Selfie with ID</th>
           <th>Actions</th>
         </tr>
       </thead>
 
       <tbody>
-        <tr *ngFor="let acc of accounts">
-          <td>{{ acc.fullName }}</td>
-          <td>{{ acc.email }}</td>
-          <td>{{ acc.address }}</td>
-          <td>{{ acc.dateOfBirth }}</td>
-          <td>{{ acc.contactNumber }}</td>
+        <tr *ngFor="let acc of paginatedAccounts">
+          <td>{{ acc.fullName || 'N/A' }}</td>
+          <td>{{ acc.email || 'N/A' }}</td>
+          <td>{{ acc.address || 'N/A' }}</td>
+          <td>{{ acc.dateOfBirth || 'N/A' }}</td>
+          <td>{{ acc.contactNumber || 'N/A' }}</td>
 
           <td>
-            <button *ngIf="getIdPhotoUrl(acc)" type="button" class="id-badge id-link" (click)="openIdModal(acc)">✓ View ID</button>
-            <span *ngIf="!getIdPhotoUrl(acc)" class="id-badge missing">✗ Missing</span>
+            <a
+              *ngIf="getIdPhotoUrl(acc)"
+              href=""
+              class="id-link"
+              (click)="$event.preventDefault(); openIdModal(acc)"
+              >View ID</a
+            >
+            <span *ngIf="!getIdPhotoUrl(acc)" class="id-badge missing">Missing</span>
+          </td>
+          <td>
+            <a
+              *ngIf="getSelfieWithIdUrl(acc)"
+              href=""
+              class="id-link"
+              (click)="$event.preventDefault(); openSelfieWithIdModal(acc)"
+              >View Selfie</a
+            >
+            <span *ngIf="!getSelfieWithIdUrl(acc)" class="id-badge missing">Missing</span>
           </td>
 
           <td>
             <div class="action-buttons">
-              <button class="btn btn-approve" (click)="openApproveConfirm(acc)">
-                Approve
+              <button
+                class="btn btn-approve btn-icon"
+                (click)="openApproveConfirm(acc)"
+                [disabled]="processing"
+                aria-label="Approve"
+                title="Approve"
+              >
+                &#10003;
               </button>
 
-              <button class="btn btn-reject" (click)="openRejectConfirm(acc)">
-                Reject
+              <button
+                class="btn btn-reject btn-icon"
+                (click)="openRejectConfirm(acc)"
+                [disabled]="processing"
+                aria-label="Reject"
+                title="Reject"
+              >
+                &#10005;
               </button>
             </div>
           </td>
         </tr>
       </tbody>
     </table>
+
+    <div *ngIf="accounts.length > pageSize" class="table-pagination">
+      <div class="pagination-info">
+        Showing {{ startItem }}-{{ endItem }} of {{ accounts.length }}
+      </div>
+
+      <div class="pagination-controls">
+        <button
+          type="button"
+          class="pagination-btn"
+          (click)="previousPage()"
+          [disabled]="!canGoPrevious"
+        >
+          Previous
+        </button>
+
+        <span class="pagination-page">Page {{ currentPage }} of {{ totalPages }}</span>
+
+        <button
+          type="button"
+          class="pagination-btn"
+          (click)="nextPage()"
+          [disabled]="!canGoNext"
+        >
+          Next
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Confirmation Modal -->
@@ -80,38 +155,46 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-cancel" (click)="closeConfirmModal()">Cancel</button>
+        <button class="btn btn-cancel" (click)="closeConfirmModal()" [disabled]="processing">Cancel</button>
         <button
           *ngIf="confirmAction === 'approve'"
           class="btn btn-confirm-approve"
           (click)="confirmApprove()"
+          [disabled]="processing"
         >
-          Yes, Approve
+          {{ processing ? 'Approving...' : 'Yes, Approve' }}
         </button>
         <button
           *ngIf="confirmAction === 'reject'"
           class="btn btn-confirm-reject"
           (click)="confirmReject()"
-          [disabled]="!rejectionReason.trim()"
+          [disabled]="processing || !rejectionReason.trim()"
         >
-          Yes, Reject
+          {{ processing ? 'Rejecting...' : 'Yes, Reject' }}
         </button>
       </div>
     </div>
   </div>
 
   <!-- Result Modal -->
-  <div *ngIf="showModal" class="modal-overlay" (click)="closeModal()">
-    <div class="modal-content" (click)="$event.stopPropagation()" [class.error]="modalType === 'error'">
-      <div class="modal-header">
-        <h3>{{ modalTitle }}</h3>
-        <button class="modal-close" (click)="closeModal()">&times;</button>
+  <div *ngIf="showResultModal" class="modal-overlay" (click)="closeResultModal()">
+    <div class="modal-content result-modal" (click)="$event.stopPropagation()">
+      <div class="modal-header" [class.reject-header]="resultType === 'error'">
+        <h3>{{ resultTitle }}</h3>
+        <button class="modal-close" (click)="closeResultModal()">&times;</button>
       </div>
       <div class="modal-body">
-        <p>{{ modalMessage }}</p>
+        <p>{{ resultMessage }}</p>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-primary" (click)="closeModal()">OK</button>
+        <button
+          class="btn"
+          [class.btn-confirm-reject]="resultType === 'error'"
+          [class.btn-confirm-approve]="resultType !== 'error'"
+          (click)="closeResultModal()"
+        >
+          OK
+        </button>
       </div>
     </div>
   </div>
@@ -120,11 +203,11 @@
   <div class="modal-overlay" *ngIf="showIdModal" (click)="closeIdModal()">
     <div class="modal-content id-modal" (click)="$event.stopPropagation()">
       <div class="id-modal-header">
-        <h3 class="modal-title">VALID ID</h3>
-        <button type="button" class="id-modal-close" (click)="closeIdModal()">×</button>
+        <h3 class="modal-title">{{ idModalTitle }}</h3>
+        <button type="button" class="id-modal-close" (click)="closeIdModal()">&times;</button>
       </div>
       <div class="id-modal-body">
-        <img *ngIf="idModalUrl" [src]="idModalUrl" alt="Valid ID" />
+        <img *ngIf="idModalUrl" [src]="idModalUrl" [alt]="idModalTitle" />
       </div>
     </div>
   </div>

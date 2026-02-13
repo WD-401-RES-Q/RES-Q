@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, NgZone, ChangeDetectorRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, NgZone, ChangeDetectorRef, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FirestoreService } from '../../../core/services/firestore.service';
@@ -8,12 +8,19 @@ import { Subscription, Observable } from 'rxjs';
 
 interface Account {
   id: string;
-  fullName: string;
+  fullName?: string;
   email: string;
   address: string;
   dateOfBirth: string;
   contactNumber: string;
   idPhotoPath: string;
+  idPhotoFront?: string;
+  idPhotoSelfie?: string;
+  profilePhotoUrl?: string;
+  profilePictureUrl?: string;
+  profileImageUrl?: string;
+  photoUrl?: string;
+  avatarUrl?: string;
   accountStatus: string;
   approvedAt?: any;
   approvedBy?: string;
@@ -34,19 +41,22 @@ interface BanReason {
   styleUrls: ['./accounts.component.scss'],
 })
 export class AccountsComponent implements OnInit, OnDestroy {
+  @ViewChild('adminPasswordField') adminPasswordField?: ElementRef<HTMLInputElement>;
   accounts$: Observable<any[]>;
   isLoading$: Observable<boolean>;
   accounts: Account[] = [];
+  encryptedAccounts: Account[] = [];
   filteredAccounts: Account[] = [];
-  selected: Account | null = null;
+  readonly cardsPerPage = 6;
+  currentPage = 1;
   searchQuery: string = '';
-  showBanModal = false;
   showBanReasonsModal = false;
   showBanConfirmationModal = false;
   showUnbanConfirmationModal = false;
   accountToBan: Account | null = null;
   accountToUnban: Account | null = null;
   showIdModal = false;
+  idModalTitle = 'VALID ID';
   idModalUrl: string | null = null;
   banDuration: 'permanent' | '7days' | null = null;
   banDurationText: string = '';
@@ -59,12 +69,17 @@ export class AccountsComponent implements OnInit, OnDestroy {
     { id: 'false-validation', label: 'False Validation', checked: false },
   ];
   private subscription?: Subscription;
-    // Modal for password entry
-    showPasswordModal = true;
-    adminPasswordInput = '';
-    passwordError = '';
-    isVerifyingPassword = false;
-    decryptedMode = false;
+  showPasswordModal = false;
+  adminPasswordInput = '';
+  passwordError = '';
+  isVerifyingPassword = false;
+  private pendingUnlockAccountId: string | null = null;
+  private pendingUnlockAll = false;
+  private unlockedAccountIds = new Set<string>();
+  private decryptedAccountsById = new Map<string, Account>();
+  private decryptedNamesById = new Map<string, string>();
+  private isPrefetchingNames = false;
+  private searchQueryBeforePasswordModal: string | null = null;
 
   constructor(
     private firestoreService: FirestoreService,
@@ -73,7 +88,6 @@ export class AccountsComponent implements OnInit, OnDestroy {
     private ngZone: NgZone,
     private cdr: ChangeDetectorRef
   ) {
-    console.log('AccountsComponent constructor called');
     // Expose the observables directly
     this.accounts$ = this.firestoreService.approvedUsers$;
     this.isLoading$ = this.firestoreService.isLoading$;
@@ -84,11 +98,18 @@ export class AccountsComponent implements OnInit, OnDestroy {
       return;
     }
 
+    if (!this.pendingUnlockAll && !this.pendingUnlockAccountId) {
+      this.passwordError = 'Select an account to unlock.';
+      this.focusPasswordField();
+      return;
+    }
+
     this.passwordError = '';
     const password = (this.adminPasswordInput || '').trim();
 
     if (!password) {
       this.passwordError = 'Please enter your password.';
+      this.focusPasswordField();
       return;
     }
 
@@ -98,17 +119,19 @@ export class AccountsComponent implements OnInit, OnDestroy {
       const ok = await this.authService.verifyCurrentAdminPassword(password);
       if (!ok) {
         this.passwordError = 'Incorrect password.';
+        this.focusPasswordField();
         return;
       }
 
+      if (this.pendingUnlockAll) {
+        await this.unlockAllAccounts();
+      } else if (this.pendingUnlockAccountId) {
+        await this.unlockAccountById(this.pendingUnlockAccountId);
+      }
       this.ngZone.run(() => {
-        this.showPasswordModal = false;
-        this.adminPasswordInput = '';
-        this.passwordError = '';
+        this.resetPasswordModalState();
         this.cdr.markForCheck();
       });
-
-      await this.loadDecryptedAccounts();
     } catch (error) {
       console.error('Error verifying admin password:', error);
       this.passwordError = 'Unable to verify password. Please try again.';
@@ -119,44 +142,25 @@ export class AccountsComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
-    console.log('=== ACCOUNTS COMPONENT INIT ===');
-    console.log('Component instance created at:', new Date().toISOString());
     
-    // Show password modal on page load
-    this.showPasswordModal = true;
-    this.decryptedMode = false;
-    // Do not load decrypted accounts until password is verified
+    // Start locked; reveal only after password verification.
+    this.showPasswordModal = false;
     
     // Subscribe only to handle selection logic
     this.subscription = this.accounts$.subscribe(
       (users) => {
-        console.log('=== APPROVED USERS DATA RECEIVED IN COMPONENT ===');
-        console.log('Users count:', users.length);
         
-        // Only use stream if we haven't loaded decrypted data yet
-        if (this.accounts.length === 0) {
-          this.accounts = users as Account[];
-          this.filterAccounts();
-        }
-        
-        // Select first account if none selected
-        if (this.filteredAccounts.length > 0 && !this.selected) {
-          this.selected = this.filteredAccounts[0];
-          console.log('Auto-selected first account:', this.selected?.fullName);
-        }
-        
-        // Clear selection if selected account no longer exists
-        if (this.selected && !this.filteredAccounts.find(acc => acc.id === this.selected!.id)) {
-          this.selected = this.filteredAccounts.length > 0 ? this.filteredAccounts[0] : null;
-          console.log('Selection updated');
-        }
+        const mappedUsers = (users as any[]).map((user) => this.mapAccount(user));
+        this.encryptedAccounts = mappedUsers;
+        this.pruneUnlockedAccounts(mappedUsers);
+        this.rebuildVisibleAccounts();
+        void this.prefetchDecryptedNamesIfNeeded();
       },
       (error) => {
         console.error('=== ERROR IN APPROVED USERS SUBSCRIPTION ===', error);
       }
     );
-    
-    console.log('Subscription to approvedUsers$ established');
+
   }
 
   filterAccounts() {
@@ -174,55 +178,191 @@ export class AccountsComponent implements OnInit, OnDestroy {
         (acc.address?.toLowerCase().includes(query) || false)
       );
     }
-    console.log('Filtered accounts:', this.filteredAccounts.length, 'Search query:', this.searchQuery);
+
+    this.ensureCurrentPageInBounds();
   }
 
-  /**
-   * Load decrypted account data using Cloud Functions
-   */
-  async loadDecryptedAccounts() {
+  private async unlockAccountById(accountId: string): Promise<void> {
     const admin = this.authService.currentAdmin();
     if (!admin?.id) {
-      console.log('No admin authenticated, using encrypted data from stream');
-      return;
+      throw new Error('No authenticated admin found.');
     }
     try {
-      console.log('Loading decrypted accounts for admin:', admin.id);
-      const decryptedUsers = await this.firestoreService.getDecryptedApprovedUsers(admin.id);
+      const decryptedUser = await this.firestoreService.getDecryptedUser(accountId, 'approved_users', admin.id);
+      const mappedAccount = this.mapAccount({ ...(decryptedUser ?? {}), id: accountId });
       this.ngZone.run(() => {
-        this.accounts = decryptedUsers as Account[];
-        this.filterAccounts();
-        if (this.filteredAccounts.length > 0 && !this.selected) {
-          this.selected = this.filteredAccounts[0];
-        }
+        this.decryptedAccountsById.set(accountId, mappedAccount);
+        this.unlockedAccountIds.add(accountId);
+        this.rebuildVisibleAccounts();
         this.cdr.detectChanges();
       });
-      this.decryptedMode = true;
-      console.log('Decrypted accounts loaded:', this.accounts.length);
     } catch (error) {
-      console.error('Failed to load decrypted accounts:', error);
-      // Will fall back to encrypted data from stream
-      this.decryptedMode = false;
+      console.error('Failed to load decrypted account:', error);
+      throw error;
     }
+  }
+
+  private pruneUnlockedAccounts(latestAccounts: Account[]): void {
+    const ids = new Set(latestAccounts.map((account) => account.id));
+    for (const unlockedId of Array.from(this.unlockedAccountIds)) {
+      if (!ids.has(unlockedId)) {
+        this.unlockedAccountIds.delete(unlockedId);
+        this.decryptedAccountsById.delete(unlockedId);
+      }
+    }
+  }
+
+  private rebuildVisibleAccounts(): void {
+    this.accounts = this.encryptedAccounts.map((baseAccount) => {
+      const decryptedName = this.decryptedNamesById.get(baseAccount.id);
+      const baseWithName = decryptedName
+        ? { ...baseAccount, fullName: decryptedName }
+        : baseAccount;
+
+      const decryptedAccount = this.decryptedAccountsById.get(baseAccount.id);
+      if (!decryptedAccount) {
+        return baseWithName;
+      }
+      return {
+        ...baseWithName,
+        ...decryptedAccount,
+        fullName: decryptedAccount.fullName || baseWithName.fullName,
+        id: baseAccount.id,
+      };
+    });
+    this.filterAccounts();
+  }
+
+  private async prefetchDecryptedNamesIfNeeded(): Promise<void> {
+    if (this.isPrefetchingNames) {
+      return;
+    }
+
+    const needsNames = this.encryptedAccounts.some(
+      (account) => !account.fullName && !this.decryptedNamesById.has(account.id)
+    );
+
+    if (!needsNames) {
+      return;
+    }
+
+    const admin = this.authService.currentAdmin();
+    if (!admin?.id) {
+      return;
+    }
+
+    this.isPrefetchingNames = true;
+    try {
+      const decryptedUsers = await this.firestoreService.getDecryptedApprovedUsers(admin.id);
+      const nextNames = new Map<string, string>(this.decryptedNamesById);
+
+      for (const raw of decryptedUsers as any[]) {
+        const id = typeof raw?.id === 'string' ? raw.id : '';
+        const fullName = typeof raw?.fullName === 'string' ? raw.fullName.trim() : '';
+        if (!id || !fullName) {
+          continue;
+        }
+        nextNames.set(id, fullName);
+      }
+
+      this.ngZone.run(() => {
+        this.decryptedNamesById = nextNames;
+        this.rebuildVisibleAccounts();
+        this.cdr.markForCheck();
+      });
+    } catch (error) {
+      console.error('Failed to prefetch decrypted full names:', error);
+    } finally {
+      this.isPrefetchingNames = false;
+    }
+  }
+
+  private mapAccount(raw: any): Account {
+    const account: Account = {
+      id: typeof raw?.id === 'string' ? raw.id : '',
+      fullName: typeof raw?.fullName === 'string' ? raw.fullName : undefined,
+      email: typeof raw?.email === 'string' ? raw.email : '',
+      address: typeof raw?.address === 'string' ? raw.address : '',
+      dateOfBirth: typeof raw?.dateOfBirth === 'string' ? raw.dateOfBirth : '',
+      contactNumber: typeof raw?.contactNumber === 'string' ? raw.contactNumber : '',
+      idPhotoPath: typeof raw?.idPhotoPath === 'string'
+        ? raw.idPhotoPath
+        : (typeof raw?.idPhotoFront === 'string' ? raw.idPhotoFront : ''),
+      idPhotoFront: typeof raw?.idPhotoFront === 'string' ? raw.idPhotoFront : undefined,
+      idPhotoSelfie: typeof raw?.idPhotoSelfie === 'string' ? raw.idPhotoSelfie : undefined,
+      profilePhotoUrl: typeof raw?.profilePhotoUrl === 'string' ? raw.profilePhotoUrl : undefined,
+      profilePictureUrl: typeof raw?.profilePictureUrl === 'string' ? raw.profilePictureUrl : undefined,
+      profileImageUrl: typeof raw?.profileImageUrl === 'string' ? raw.profileImageUrl : undefined,
+      photoUrl: typeof raw?.photoUrl === 'string' ? raw.photoUrl : undefined,
+      avatarUrl: typeof raw?.avatarUrl === 'string' ? raw.avatarUrl : undefined,
+      accountStatus: typeof raw?.accountStatus === 'string' ? raw.accountStatus : 'N/A',
+      approvedAt: raw?.approvedAt ?? null,
+      approvedBy: typeof raw?.approvedBy === 'string' ? raw.approvedBy : undefined,
+      bannedUntil: raw?.bannedUntil ?? null,
+    };
+
+    const encryptedFields = ['email', 'address', 'dateOfBirth', 'contactNumber'];
+    for (const field of encryptedFields) {
+      const cipherKey = `${field}_cipher`;
+      if (typeof raw?.[cipherKey] === 'string') {
+        (account as any)[cipherKey] = raw[cipherKey];
+      }
+    }
+
+    return account;
   }
 
   onSearchChange() {
+    this.currentPage = 1;
     this.filterAccounts();
-    // Reset selection if current selection is not in filtered list
-    if (this.selected && !this.filteredAccounts.find(acc => acc.id === this.selected!.id)) {
-      this.selected = this.filteredAccounts.length > 0 ? this.filteredAccounts[0] : null;
+  }
+
+  get paginatedAccounts(): Account[] {
+    const start = (this.currentPage - 1) * this.cardsPerPage;
+    return this.filteredAccounts.slice(start, start + this.cardsPerPage);
+  }
+
+  get totalPages(): number {
+    return Math.max(1, Math.ceil(this.filteredAccounts.length / this.cardsPerPage));
+  }
+
+  get canGoPrevious(): boolean {
+    return this.currentPage > 1;
+  }
+
+  get canGoNext(): boolean {
+    return this.currentPage < this.totalPages;
+  }
+
+  get startItem(): number {
+    if (this.filteredAccounts.length === 0) {
+      return 0;
     }
+    return (this.currentPage - 1) * this.cardsPerPage + 1;
+  }
+
+  get endItem(): number {
+    return Math.min(this.currentPage * this.cardsPerPage, this.filteredAccounts.length);
+  }
+
+  previousPage(): void {
+    if (!this.canGoPrevious) {
+      return;
+    }
+    this.currentPage -= 1;
+  }
+
+  nextPage(): void {
+    if (!this.canGoNext) {
+      return;
+    }
+    this.currentPage += 1;
   }
 
   ngOnDestroy() {
-      console.log('AccountsComponent ngOnDestroy called');
       if (this.subscription) {
         this.subscription.unsubscribe();
       }
-  }
-
-  select(account: Account) {
-    this.selected = account;
   }
 
   getApprovedDate(account: Account): Date | null {
@@ -264,10 +404,8 @@ export class AccountsComponent implements OnInit, OnDestroy {
   }
 
   openUnbanConfirmation(account: Account) {
-    console.log('=== OPEN UNBAN CONFIRMATION ===', account.fullName);
     this.accountToUnban = account;
     this.showUnbanConfirmationModal = true;
-    console.log('showUnbanConfirmationModal set to true');
   }
 
   cancelUnban() {
@@ -276,15 +414,12 @@ export class AccountsComponent implements OnInit, OnDestroy {
   }
 
   async confirmUnban() {
-    console.log('=== CONFIRM UNBAN CALLED ===');
     if (!this.accountToUnban || this.isProcessingUnban) {
-      console.log('Early return: accountToUnban=', this.accountToUnban, 'isProcessingUnban=', this.isProcessingUnban);
       return;
     }
     
     const accountId = this.accountToUnban.id;
     this.isProcessingUnban = true;
-    console.log('Starting unban for:', this.accountToUnban.fullName);
     
     try {
       await this.firestoreService.updateDocument('approved_users', accountId, {
@@ -293,14 +428,12 @@ export class AccountsComponent implements OnInit, OnDestroy {
         banReasons: [],
         bannedAt: null,
       });
-      console.log('Unban successful, closing modal now');
       
       this.ngZone.run(() => {
         this.showUnbanConfirmationModal = false;
         this.accountToUnban = null;
         this.isProcessingUnban = false;
         this.cdr.markForCheck();
-        console.log('Modal state updated and marked for check');
       });
     } catch (error) {
       console.error('Error unbanning account:', error);
@@ -347,32 +480,23 @@ export class AccountsComponent implements OnInit, OnDestroy {
   }
 
   async finalConfirmBan() {
-    console.log('=== FINAL CONFIRM BAN CALLED ===');
-    console.log('isProcessingBan:', this.isProcessingBan);
-    console.log('accountToBan:', this.accountToBan);
 
     if (this.isProcessingBan) {
-      console.log('Already processing ban, ignoring duplicate call');
       return;
     }
 
     if (!this.accountToBan) {
-      console.log('No account to ban, returning');
       return;
     }
 
     this.isProcessingBan = true;
-    console.log('selectedBanReasons:', this.selectedBanReasons);
-    console.log('banDuration:', this.banDuration);
 
     const accountId = this.accountToBan.id;
 
     try {
       if (this.banDuration === 'permanent') {
         // Permanent ban: Delete the account from Firebase
-        console.log('Permanent ban - deleting account from Firebase');
         await this.firestoreService.deleteDocument('approved_users', accountId);
-        console.log('Account permanently deleted');
       } else {
         // Temporary ban: Update status with ban expiry date
         const banUntil = new Date();
@@ -385,9 +509,7 @@ export class AccountsComponent implements OnInit, OnDestroy {
           bannedUntil: banUntil
         };
 
-        console.log('Temporary ban - updating Firestore with data:', updateData);
         await this.firestoreService.updateDocument('approved_users', accountId, updateData);
-        console.log('Temporary ban successful');
       }
 
       this.ngZone.run(() => {
@@ -397,12 +519,7 @@ export class AccountsComponent implements OnInit, OnDestroy {
         this.selectedBanReasons = [];
         this.resetBanReasons();
         this.isProcessingBan = false;
-        // Clear selection if the account was deleted
-        if (this.selected?.id === accountId) {
-          this.selected = this.filteredAccounts.length > 0 ? this.filteredAccounts[0] : null;
-        }
         this.cdr.markForCheck();
-        console.log('Modal state updated and marked for check');
       });
     } catch (error) {
       console.error('Error banning account:', error);
@@ -421,6 +538,42 @@ export class AccountsComponent implements OnInit, OnDestroy {
     if (!url) {
       return;
     }
+    this.idModalTitle = 'VALID ID';
+    this.idModalUrl = url;
+    this.showIdModal = true;
+  }
+
+  private async unlockAllAccounts(): Promise<void> {
+    const admin = this.authService.currentAdmin();
+    if (!admin?.id) {
+      throw new Error('No authenticated admin found.');
+    }
+
+    const decryptedUsers = await this.firestoreService.getDecryptedApprovedUsers(
+      admin.id
+    );
+
+    this.ngZone.run(() => {
+      for (const raw of decryptedUsers as any[]) {
+        const id = typeof raw?.id === 'string' ? raw.id : '';
+        if (!id) {
+          continue;
+        }
+        const mappedAccount = this.mapAccount({ ...(raw ?? {}), id });
+        this.decryptedAccountsById.set(id, mappedAccount);
+        this.unlockedAccountIds.add(id);
+      }
+      this.rebuildVisibleAccounts();
+      this.cdr.detectChanges();
+    });
+  }
+
+  openSelfieWithIdModal(account: Account) {
+    const url = this.getSelfieWithIdUrl(account);
+    if (!url) {
+      return;
+    }
+    this.idModalTitle = 'SELFIE WITH ID';
     this.idModalUrl = url;
     this.showIdModal = true;
   }
@@ -435,7 +588,7 @@ export class AccountsComponent implements OnInit, OnDestroy {
   }
 
   getIdPhotoUrl(account: Account): string | null {
-    const path = (account.idPhotoPath || '').trim();
+    const path = (account.idPhotoPath || account.idPhotoFront || '').trim();
     if (!path) {
       return null;
     }
@@ -445,8 +598,165 @@ export class AccountsComponent implements OnInit, OnDestroy {
     return this.firebaseStorageService.getDownloadUrl(path);
   }
 
+  getSelfieWithIdUrl(account: Account): string | null {
+    const path = (
+      account.idPhotoSelfie ||
+      (account as any).selfieWithId ||
+      (account as any).selfieWithIdUrl ||
+      ''
+    ).trim();
+    if (!path) {
+      return null;
+    }
+    if (path.startsWith('http')) {
+      return path;
+    }
+    return this.firebaseStorageService.getDownloadUrl(path);
+  }
+
+  closePasswordModal() {
+    if (this.isVerifyingPassword) return;
+    this.resetPasswordModalState();
+  }
+
+  openDecryptModal(accountId: string) {
+    if (!accountId || this.isVerifyingPassword || this.isAccountUnlocked(accountId)) {
+      return;
+    }
+    this.searchQueryBeforePasswordModal = this.searchQuery;
+    this.pendingUnlockAll = false;
+    this.pendingUnlockAccountId = accountId;
+    this.adminPasswordInput = '';
+    this.passwordError = '';
+    this.showPasswordModal = true;
+    this.focusPasswordField();
+  }
+
+  openUnlockAllModal() {
+    if (this.isVerifyingPassword || !this.hasLockedAccounts) {
+      return;
+    }
+    this.searchQueryBeforePasswordModal = this.searchQuery;
+    this.pendingUnlockAll = true;
+    this.pendingUnlockAccountId = null;
+    this.adminPasswordInput = '';
+    this.passwordError = '';
+    this.showPasswordModal = true;
+    this.focusPasswordField();
+  }
+
+  getProfilePhotoUrl(account: Account): string | null {
+    const candidates = [
+      account.profilePhotoUrl,
+      account.profilePictureUrl,
+      account.profileImageUrl,
+      account.photoUrl,
+      account.avatarUrl,
+    ];
+
+    for (const finalUrl of candidates) {
+      const value = (finalUrl || '').trim();
+      if (!value) {
+        continue;
+      }
+      if (value.startsWith('http://') || value.startsWith('https://')) {
+        return value;
+      }
+      return this.firebaseStorageService.getDownloadUrl(value);
+    }
+
+    return null;
+  }
+
+  getAccountInitial(account: Account): string {
+    const name = this.getPublicName(account, { fallback: 'U' });
+    if (!name) {
+      return 'U';
+    }
+    return name[0].toUpperCase();
+  }
+
+  getPublicName(
+    account: Account | null | undefined,
+    options?: { fallback?: string }
+  ): string {
+    const fallback = options?.fallback ?? '[ENCRYPTED]';
+    if (!account) {
+      return fallback;
+    }
+
+    const visibleName = (account.fullName || '').trim();
+
+    return visibleName || fallback;
+  }
+
+  getEncryptedValue(account: Account, field: string): string {
+    const cipherKey = `${field}_cipher`;
+    const cipherValue = (account as any)[cipherKey];
+    if (typeof cipherValue === 'string' && cipherValue.trim()) {
+      return cipherValue;
+    }
+    return '[ENCRYPTED]';
+  }
+
+  getDisplayValue(account: Account, field: string): string {
+    if (field === 'fullName') {
+      return this.getPublicName(account, { fallback: 'User' });
+    }
+    if (this.isAccountUnlocked(account.id)) {
+      const plainValue = (account as any)[field];
+      if (plainValue == null || plainValue === '') {
+        return 'N/A';
+      }
+      return String(plainValue);
+    }
+    return this.getEncryptedValue(account, field);
+  }
+  private resetPasswordModalState(): void {
+    this.showPasswordModal = false;
+    this.pendingUnlockAccountId = null;
+    this.pendingUnlockAll = false;
+    this.adminPasswordInput = '';
+    this.passwordError = '';
+    if (
+      this.searchQueryBeforePasswordModal !== null &&
+      this.searchQuery !== this.searchQueryBeforePasswordModal
+    ) {
+      this.searchQuery = this.searchQueryBeforePasswordModal;
+      this.filterAccounts();
+    }
+    this.searchQueryBeforePasswordModal = null;
+  }
+
+  private focusPasswordField(): void {
+    setTimeout(() => {
+      this.adminPasswordField?.nativeElement?.focus();
+      this.adminPasswordField?.nativeElement?.select();
+    });
+  }
+
+  private ensureCurrentPageInBounds(): void {
+    if (this.currentPage < 1) {
+      this.currentPage = 1;
+      return;
+    }
+    const maxPage = this.totalPages;
+    if (this.currentPage > maxPage) {
+      this.currentPage = maxPage;
+    }
+  }
+
+  isAccountUnlocked(accountId: string): boolean {
+    return this.unlockedAccountIds.has(accountId);
+  }
+
+  get hasLockedAccounts(): boolean {
+    return this.filteredAccounts.some((account) => !this.isAccountUnlocked(account.id));
+  }
+
   // Check if account has a temporary ban (has bannedUntil date)
   isTemporaryBan(account: Account): boolean {
     return account.accountStatus === 'BANNED' && account.bannedUntil != null;
   }
 }
+

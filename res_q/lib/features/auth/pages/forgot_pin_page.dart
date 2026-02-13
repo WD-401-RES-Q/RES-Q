@@ -6,6 +6,7 @@ import '../../../common/constants/app_dimensions.dart';
 import '../../../common/theme/app_text_styles.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/services/registration_prefs.dart';
+import '../../../common/utils/security_hash.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
@@ -52,12 +53,22 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
     setState(() => _loading = true);
 
     try {
+      final phoneHash = SecurityHash.sha256Hex(phone);
+
       // Check if phone exists in approved_users
-      final userQuery = await _firestore
+      var userQuery = await _firestore
           .collection('approved_users')
-          .where('contactNumber', isEqualTo: phone)
+          .where('contactNumber_hash', isEqualTo: phoneHash)
           .limit(1)
           .get();
+
+      if (userQuery.docs.isEmpty) {
+        userQuery = await _firestore
+            .collection('approved_users')
+            .where('contactNumber', isEqualTo: phone)
+            .limit(1)
+            .get();
+      }
 
       if (!mounted) return;
 
@@ -73,7 +84,7 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
 
       final doc = userQuery.docs.first;
       _userId = doc.id;
-      _userData = doc.data();
+      _userData = {...doc.data(), 'contactNumber': phone};
 
       // Allow PIN reset - no longer blocking users who have existing PIN
       setState(() {

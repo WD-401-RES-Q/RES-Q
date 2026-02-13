@@ -9,11 +9,12 @@
     <!-- STATUS FILTER -->
     <div class="filter-group">
       <span class="filter-label">Status:</span>
-      <div class="filter-dropdown-wrapper">
+      <div class="filter-dropdown-wrapper" [class.open]="showFilterDropdown">
         <button
           class="filter-dropdown-btn"
+          [class.open]="showFilterDropdown"
           (click)="toggleFilterDropdown()">
-          {{ currentFilter | uppercase }}
+          <span class="filter-value">{{ currentFilter | uppercase }}</span>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
@@ -45,11 +46,12 @@
     <!-- DATE FILTER -->
     <div class="filter-group">
       <span class="filter-label">Date:</span>
-      <div class="filter-dropdown-wrapper">
+      <div class="filter-dropdown-wrapper" [class.open]="showDateDropdown">
         <button
           class="filter-dropdown-btn"
+          [class.open]="showDateDropdown"
           (click)="toggleDateDropdown()">
-          {{ getDateFilterLabel() }}
+          <span class="filter-value">{{ getDateFilterLabel() }}</span>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
@@ -93,11 +95,12 @@
     <!-- INCIDENT TYPE FILTER -->
     <div class="filter-group">
       <span class="filter-label">Type:</span>
-      <div class="filter-dropdown-wrapper">
+      <div class="filter-dropdown-wrapper" [class.open]="showIncidentDropdown">
         <button
           class="filter-dropdown-btn"
+          [class.open]="showIncidentDropdown"
           (click)="toggleIncidentDropdown()">
-          {{ getIncidentFilterLabel() }}
+          <span class="filter-value">{{ getIncidentFilterLabel() }}</span>
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
@@ -147,9 +150,25 @@
 
   <div class="reports-list">
     <article class="report-card" *ngFor="let report of filteredReports">
-      <!-- IMAGE -->
+      <!-- MEDIA -->
       <div class="image-wrap">
-        <img [src]="report.image" [alt]="report.title" class="report-image" />
+        <button
+          type="button"
+          class="media-frame"
+          (click)="openMediaViewer(report)"
+          [attr.aria-label]="isVideoMedia(report) ? 'Open report video' : 'Open report image'">
+          <ng-container *ngIf="isVideoMedia(report); else imagePreview">
+            <video
+              [src]="report.image"
+              class="report-media"
+              preload="metadata"
+              muted
+              playsinline></video>
+          </ng-container>
+          <ng-template #imagePreview>
+            <img [src]="report.image" [alt]="report.title" class="report-media" />
+          </ng-template>
+        </button>
       </div>
 
       <!-- DETAILS -->
@@ -176,7 +195,10 @@
           <span class="meta-value">{{ report.time }}</span>
         </div>
 
-        <p class="description">{{ report.description }}</p>
+        <div class="meta-group">
+          <span class="meta-label">Description:</span>
+          <span class="meta-value description">{{ report.description }}</span>
+        </div>
 
         <!-- COUNTERS -->
         <div class="counters">
@@ -301,6 +323,35 @@
 
   <div class="loading-overlay" *ngIf="isLoading">
     <div class="loading-card">Loading reports…</div>
+  </div>
+
+  <!-- MEDIA VIEWER -->
+  <div class="media-viewer-overlay" *ngIf="showMediaViewer" (click)="closeMediaViewer()">
+    <div class="media-viewer-card" (click)="$event.stopPropagation()">
+      <div class="media-viewer-header">
+        <button
+          type="button"
+          class="media-viewer-close"
+          aria-label="Close media viewer"
+          (click)="closeMediaViewer()">
+          &times;
+        </button>
+      </div>
+      <div class="media-viewer-body">
+        <img
+          *ngIf="activeMediaType === 'photo'"
+          [src]="activeMediaUrl"
+          [alt]="activeMediaTitle"
+          class="media-viewer-media" />
+        <video
+          *ngIf="activeMediaType === 'video'"
+          [src]="activeMediaUrl"
+          class="media-viewer-media"
+          controls
+          autoplay
+          playsinline></video>
+      </div>
+    </div>
   </div>
 
   <!-- APPROVE MODAL -->

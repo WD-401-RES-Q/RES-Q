@@ -14,6 +14,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/registration_prefs.dart';
+import '../../../common/utils/security_hash.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../auth/pages/login_page.dart';
 
@@ -45,6 +46,7 @@ class _ProfilePageState extends State<ProfilePage>
   void initState() {
     super.initState();
     _loadSavedProfilePhoto();
+    _refreshProfileDataFromFirestore();
   }
 
   /// Load the saved profile photo URL from UserSession
@@ -54,6 +56,154 @@ class _ProfilePageState extends State<ProfilePage>
       setState(() {
         _profilePhotoUrl = savedUrl;
       });
+    }
+  }
+
+  bool _isLikelyEncryptedField(Map<String, dynamic> data, String field) {
+    final rawValue = data[field];
+    if (rawValue is! String) {
+      return false;
+    }
+
+    final value = rawValue.trim();
+    if (value.isEmpty) {
+      return false;
+    }
+
+    final mirroredCipher = data['${field}_cipher'];
+    if (mirroredCipher is String && mirroredCipher.trim() == value) {
+      return true;
+    }
+
+    if (data['${field}_encrypted'] == true) {
+      final looksBase64 = RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(value);
+      return looksBase64 && value.length >= 40 && !value.contains(' ');
+    }
+
+    return false;
+  }
+
+  String _readProfileField(
+    Map<String, dynamic> data,
+    String field, {
+    List<String> fallbacks = const [],
+  }) {
+    final rawValue = data[field];
+    if (rawValue is String) {
+      final value = rawValue.trim();
+      if (value.isNotEmpty && !_isLikelyEncryptedField(data, field)) {
+        return value;
+      }
+    }
+
+    for (final fallbackField in fallbacks) {
+      final fallbackValue = data[fallbackField];
+      if (fallbackValue is String && fallbackValue.trim().isNotEmpty) {
+        return fallbackValue.trim();
+      }
+    }
+
+    return '';
+  }
+
+  Future<void> _refreshProfileDataFromFirestore() async {
+    final sessionData = UserSession.currentUserData;
+    if (sessionData == null) {
+      return;
+    }
+
+    final role = (sessionData['role'] ?? '').toString().toLowerCase();
+    if (role == 'semi-admin' || role == 'semi_admin' || role == 'responder') {
+      return;
+    }
+
+    final contactNumber = sessionData['contactNumber']?.toString().trim() ?? '';
+    if (contactNumber.isEmpty) {
+      return;
+    }
+
+    try {
+      DocumentSnapshot<Map<String, dynamic>>? userDoc;
+      final docId = sessionData['docId']?.toString().trim() ?? '';
+
+      if (docId.isNotEmpty) {
+        final candidate = await FirebaseFirestore.instance
+            .collection('approved_users')
+            .doc(docId)
+            .get();
+        if (candidate.exists) {
+          userDoc = candidate;
+        }
+      }
+
+      if (userDoc == null) {
+        final contactHash = SecurityHash.sha256Hex(contactNumber);
+        var query = await FirebaseFirestore.instance
+            .collection('approved_users')
+            .where('contactNumber_hash', isEqualTo: contactHash)
+            .limit(1)
+            .get();
+
+        if (query.docs.isEmpty) {
+          query = await FirebaseFirestore.instance
+              .collection('approved_users')
+              .where('contactNumber', isEqualTo: contactNumber)
+              .limit(1)
+              .get();
+        }
+
+        if (query.docs.isNotEmpty) {
+          userDoc = query.docs.first;
+        }
+      }
+
+      if (userDoc == null || !userDoc.exists) {
+        return;
+      }
+
+      final mergedData = <String, dynamic>{
+        ...sessionData,
+        ...?userDoc.data(),
+        'docId': userDoc.id,
+        'contactNumber': contactNumber,
+      };
+
+      final fullName = _readProfileField(
+        mergedData,
+        'fullName',
+        fallbacks: const ['displayName'],
+      );
+      final email = _readProfileField(mergedData, 'email');
+      final address = _readProfileField(mergedData, 'address');
+
+      if (fullName.isNotEmpty) {
+        mergedData['fullName'] = fullName;
+      } else {
+        mergedData.remove('fullName');
+      }
+      if (email.isNotEmpty) {
+        mergedData['email'] = email;
+      } else {
+        mergedData.remove('email');
+      }
+      if (address.isNotEmpty) {
+        mergedData['address'] = address;
+      } else {
+        mergedData.remove('address');
+      }
+
+      UserSession.setUserData(mergedData);
+
+      final latestPhotoUrl = mergedData['profilePhotoUrl']?.toString();
+      if (mounted && latestPhotoUrl != null && latestPhotoUrl.isNotEmpty) {
+        setState(() {
+          _profilePhotoUrl = latestPhotoUrl;
+        });
+      } else if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint('Failed to refresh profile data: $e');
     }
   }
 
@@ -597,6 +747,7 @@ class _ProfilePageState extends State<ProfilePage>
   Future<void> _uploadProfilePhotoToFirebase(String filePath) async {
     final contactNumber =
         UserSession.currentUserData?['contactNumber'] as String?;
+    final docId = UserSession.currentUserData?['docId']?.toString() ?? '';
     if (contactNumber == null) {
       debugPrint('❌ Cannot upload profile photo: No contact number found');
       return;
@@ -624,25 +775,40 @@ class _ProfilePageState extends State<ProfilePage>
       debugPrint('✅ Profile photo uploaded: $downloadUrl');
 
       // Save URL to Firestore in approved_users collection
-      final userQuery = await FirebaseFirestore.instance
-          .collection('approved_users')
-          .where('contactNumber', isEqualTo: contactNumber)
-          .limit(1)
-          .get();
+      if (docId.isNotEmpty) {
+        await FirebaseFirestore.instance
+            .collection('approved_users')
+            .doc(docId)
+            .set({'profilePhotoUrl': downloadUrl}, SetOptions(merge: true));
+      } else {
+        // Backward compatibility for sessions without stored docId.
+        final contactHash = SecurityHash.sha256Hex(contactNumber);
+        var userQuery = await FirebaseFirestore.instance
+            .collection('approved_users')
+            .where('contactNumber_hash', isEqualTo: contactHash)
+            .limit(1)
+            .get();
 
-      if (userQuery.docs.isNotEmpty) {
-        await userQuery.docs.first.reference.update({
-          'profilePhotoUrl': downloadUrl,
-        });
-        debugPrint('✅ Profile photo URL saved to Firestore');
+        if (userQuery.docs.isEmpty) {
+          userQuery = await FirebaseFirestore.instance
+              .collection('approved_users')
+              .where('contactNumber', isEqualTo: contactNumber)
+              .limit(1)
+              .get();
+        }
 
-        // Update local UserSession data
-        UserSession.currentUserData?['profilePhotoUrl'] = downloadUrl;
-        setState(() {
-          _profilePhotoUrl = downloadUrl;
-        });
+        if (userQuery.docs.isNotEmpty) {
+          await userQuery.docs.first.reference.update({
+            'profilePhotoUrl': downloadUrl,
+          });
+          UserSession.currentUserData?['docId'] = userQuery.docs.first.id;
+        }
       }
 
+      UserSession.currentUserData?['profilePhotoUrl'] = downloadUrl;
+      setState(() {
+        _profilePhotoUrl = downloadUrl;
+      });
       if (mounted) {
         AppSnackBar.show(
           context,
@@ -652,7 +818,7 @@ class _ProfilePageState extends State<ProfilePage>
         );
       }
     } catch (e) {
-      debugPrint('❌ Failed to upload profile photo: $e');
+      debugPrint('Failed to upload profile photo: $e');
       if (mounted) {
         AppSnackBar.show(
           context,
@@ -844,15 +1010,16 @@ class _ProfilePageState extends State<ProfilePage>
 
   Widget _buildPersonalInfoContent() {
     final userData = UserSession.currentUserData ?? {};
-    final fullNameCtl = TextEditingController(
-      text: userData['fullName']?.toString() ?? '',
+    final fullNameValue = _readProfileField(
+      userData,
+      'fullName',
+      fallbacks: const ['displayName'],
     );
-    final emailCtl = TextEditingController(
-      text: userData['email']?.toString() ?? '',
-    );
-    final addressCtl = TextEditingController(
-      text: userData['address']?.toString() ?? '',
-    );
+    final emailValue = _readProfileField(userData, 'email');
+    final addressValue = _readProfileField(userData, 'address');
+    final fullNameCtl = TextEditingController(text: fullNameValue);
+    final emailCtl = TextEditingController(text: emailValue);
+    final addressCtl = TextEditingController(text: addressValue);
     final phoneNumber = userData['contactNumber']?.toString() ?? '';
     // Get the Firestore document ID (set during login)
     final docId = userData['docId']?.toString() ?? '';
@@ -946,11 +1113,9 @@ class _ProfilePageState extends State<ProfilePage>
                         child: OutlinedButton(
                           onPressed: () {
                             // Reset to original values
-                            fullNameCtl.text =
-                                userData['fullName']?.toString() ?? '';
-                            emailCtl.text = userData['email']?.toString() ?? '';
-                            addressCtl.text =
-                                userData['address']?.toString() ?? '';
+                            fullNameCtl.text = fullNameValue;
+                            emailCtl.text = emailValue;
+                            addressCtl.text = addressValue;
                             setModalState(() {
                               isEditing = false;
                               errorMessage = null;
@@ -1834,18 +1999,26 @@ class _ProfilePageState extends State<ProfilePage>
                                   // Verify current PIN
                                   setDialogState(() => isLoading = true);
                                   try {
-                                    final query = await FirebaseFirestore
+                                    final userDoc = await FirebaseFirestore
                                         .instance
                                         .collection('approved_users')
-                                        .where(
-                                          'contactNumber',
-                                          isEqualTo: contactNumber,
-                                        )
-                                        .where('pin', isEqualTo: pin)
-                                        .limit(1)
+                                        .doc(docId)
                                         .get();
 
-                                    if (query.docs.isEmpty) {
+                                    final data = userDoc.data();
+                                    final enteredPinHash =
+                                        SecurityHash.sha256Hex(pin);
+                                    final storedPinHash = data?['pin_hash']
+                                        ?.toString();
+                                    final storedLegacyPin = data?['pin']
+                                        ?.toString();
+                                    final isPinValid =
+                                        (storedPinHash != null &&
+                                            storedPinHash == enteredPinHash) ||
+                                        (storedLegacyPin != null &&
+                                            storedLegacyPin == pin);
+
+                                    if (!isPinValid) {
                                       setDialogState(() {
                                         isLoading = false;
                                         errorMessage = 'Incorrect PIN';
@@ -2262,9 +2435,15 @@ class _ProfilePageState extends State<ProfilePage>
                           });
 
                           final userData = UserSession.currentUserData ?? {};
-                          final displayName =
-                              userData['fullName']?.toString() ?? 'User';
-                          final email = userData['email']?.toString() ?? '';
+                          final resolvedDisplayName = _readProfileField(
+                            userData,
+                            'fullName',
+                            fallbacks: const ['displayName'],
+                          );
+                          final displayName = resolvedDisplayName.isNotEmpty
+                              ? resolvedDisplayName
+                              : 'User';
+                          final email = _readProfileField(userData, 'email');
 
                           final Uri emailUri = Uri(
                             scheme: 'mailto',
@@ -2438,11 +2617,16 @@ class _ProfilePageState extends State<ProfilePage>
                           });
 
                           final userData = UserSession.currentUserData ?? {};
-                          final displayName =
-                              userData['fullName']?.toString() ??
-                              userData['contactNumber']?.toString() ??
-                              'User';
-                          final email = userData['email']?.toString() ?? '';
+                          final resolvedDisplayName = _readProfileField(
+                            userData,
+                            'fullName',
+                            fallbacks: const ['displayName'],
+                          );
+                          final displayName = resolvedDisplayName.isNotEmpty
+                              ? resolvedDisplayName
+                              : (userData['contactNumber']?.toString() ??
+                                    'User');
+                          final email = _readProfileField(userData, 'email');
 
                           final ratingStars =
                               '★' * feedbackRating + '☆' * (5 - feedbackRating);
@@ -2595,12 +2779,15 @@ class _ProfilePageState extends State<ProfilePage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final profileName =
-        (UserSession.currentUserData?['fullName'] ??
-                UserSession.currentUserData?['contactNumber'] ??
-                'User')
-            .toString()
-            .trim();
+    final userData = UserSession.currentUserData ?? {};
+    final resolvedProfileName = _readProfileField(
+      userData,
+      'fullName',
+      fallbacks: const ['displayName'],
+    );
+    final profileName = resolvedProfileName.isNotEmpty
+        ? resolvedProfileName
+        : (userData['contactNumber']?.toString() ?? 'User').trim();
     final profileInitial = profileName.isNotEmpty
         ? profileName[0].toUpperCase()
         : '?';

@@ -7,6 +7,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
@@ -2002,18 +2003,40 @@ class _ReportMapPageState extends State<ReportMapPage>
   String _getMarkerAssetForIncidentType(String type) {
     switch (type.toUpperCase()) {
       case 'FIRE':
-        return 'assets/icons/locations/LOC-FIRE.png';
+        return 'assets/icons/locations/LOC-FIRE.svg';
       case 'FLOOD':
-        return 'assets/icons/locations/LOC-FLOOD.png';
+        return 'assets/icons/locations/LOC-FLOOD.svg';
       case 'EARTHQUAKE':
-        return 'assets/icons/locations/LOC-EARTHQUAKE.png';
+        return 'assets/icons/locations/LOC-EARTHQUAKE.svg';
       case 'VEHICULAR':
-        return 'assets/icons/locations/LOC-CRASH.png';
+        return 'assets/icons/locations/LOC-CRASH.svg';
       case 'ROAD OBSTRUCTION':
-        return 'assets/icons/locations/LOC-OTHERS.png';
+        return 'assets/icons/locations/LOC-OTHERS.svg';
       default:
-        return 'assets/icons/locations/LOC-OTHERS.png';
+        return 'assets/icons/locations/LOC-OTHERS.svg';
     }
+  }
+
+  Widget _buildIncidentAsset(
+    String assetPath, {
+    required double width,
+    required double height,
+  }) {
+    if (assetPath.toLowerCase().endsWith('.svg')) {
+      return SvgPicture.asset(
+        assetPath,
+        width: width,
+        height: height,
+        fit: BoxFit.contain,
+      );
+    }
+
+    return Image.asset(
+      assetPath,
+      width: width,
+      height: height,
+      fit: BoxFit.contain,
+    );
   }
 
   @override
@@ -2096,7 +2119,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                           onTap: () => _showIncidentInfo(
                             _liveReportData ?? widget.reportData,
                           ),
-                          child: Image.asset(
+                          child: _buildIncidentAsset(
                             _getMarkerAssetForIncidentType(
                               (_liveReportData?['incidentType'] ??
                                       widget.reportData['incidentType'] ??
@@ -2105,7 +2128,6 @@ class _ReportMapPageState extends State<ReportMapPage>
                             ),
                             width: 64,
                             height: 64,
-                            fit: BoxFit.contain,
                           ),
                         ),
                       ),

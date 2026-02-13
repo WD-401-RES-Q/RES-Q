@@ -1,20 +1,23 @@
 .dashboard-page {
-    padding: 20px;
-  }
-
-  .dash-header h1 {
-    margin: 0 0 18px;
-    font-size: 28px;
-    font-weight: 700;
-    color: var(--text-dark, #212121);
-    font-family: 'Roboto', sans-serif;
+    padding: 0;
   }
 
   .dash-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
+    gap: 16px;
     margin-bottom: 20px;
+  }
+
+  .dash-header h1 {
+    margin: 0;
+    font-size: 32px;
+    font-weight: 800;
+    color: #1f2937;
+    font-family: 'Roboto', sans-serif;
+    letter-spacing: -0.02em;
+    line-height: 1.12;
   }
 
   /* TOP SUMMARY ROW */

@@ -10,6 +10,7 @@ import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../../common/services/registration_prefs.dart';
+import '../../../common/utils/security_hash.dart';
 
 /// User registration page with AES-256-GCM encrypted PII storage.
 /// See docs/AES-256-GCM-ENCRYPTION.md for encryption architecture details.
@@ -22,6 +23,8 @@ class RegistrationPage extends StatefulWidget {
 }
 
 class _RegistrationPageState extends State<RegistrationPage> {
+  static const int _maxAddressLength = 256;
+
   final _formKey = GlobalKey<FormState>();
   final _firstNameCtl = TextEditingController();
   final _lastNameCtl = TextEditingController();
@@ -36,6 +39,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
   bool _agree = false;
   bool _dobSubmitAttempted = false;
   String? _frontIdUrl;
+  String? _selfieWithIdUrl;
   String? _termsError;
   String? _idPhotoError;
 
@@ -76,7 +80,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
   void _onIdUploadComplete(String? frontUrl, String? backUrl) {
     setState(() {
       _frontIdUrl = frontUrl;
-      if (frontUrl != null) {
+      _selfieWithIdUrl = backUrl;
+      if (frontUrl != null && backUrl != null) {
         _idPhotoError = null;
       }
     });
@@ -106,10 +111,12 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
   Future<bool> _checkPhoneNumberExists(String phone) async {
     try {
+      final phoneHash = SecurityHash.sha256Hex(phone);
+
       // Check in pending_users
       final pendingQuery = await FirebaseFirestore.instance
           .collection('pending_users')
-          .where('contactNumber', isEqualTo: phone)
+          .where('contactNumber_hash', isEqualTo: phoneHash)
           .limit(1)
           .get();
 
@@ -117,14 +124,35 @@ class _RegistrationPageState extends State<RegistrationPage> {
         return true;
       }
 
+      // Backward compatibility fallback (pre-hash records).
+      final pendingLegacyQuery = await FirebaseFirestore.instance
+          .collection('pending_users')
+          .where('contactNumber', isEqualTo: phone)
+          .limit(1)
+          .get();
+
+      if (pendingLegacyQuery.docs.isNotEmpty) {
+        return true;
+      }
+
       // Check in approved_users
       final approvedQuery = await FirebaseFirestore.instance
+          .collection('approved_users')
+          .where('contactNumber_hash', isEqualTo: phoneHash)
+          .limit(1)
+          .get();
+
+      if (approvedQuery.docs.isNotEmpty) {
+        return true;
+      }
+
+      final approvedLegacyQuery = await FirebaseFirestore.instance
           .collection('approved_users')
           .where('contactNumber', isEqualTo: phone)
           .limit(1)
           .get();
 
-      return approvedQuery.docs.isNotEmpty;
+      return approvedLegacyQuery.docs.isNotEmpty;
     } catch (e) {
       debugPrint('Error checking phone number: $e');
       return false;
@@ -150,15 +178,23 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
     final formValid = _formKey.currentState?.validate() ?? false;
     final termsValid = _agree;
-    final idValid = _frontIdUrl != null;
+    final hasFrontId = _frontIdUrl != null;
+    final hasSelfieWithId = _selfieWithIdUrl != null;
+    final idValid = hasFrontId && hasSelfieWithId;
 
     setState(() {
       _termsError = termsValid
           ? null
           : 'Please read and agree to terms and conditions';
-      _idPhotoError = idValid
-          ? null
-          : 'Please upload the front of your government ID';
+      if (idValid) {
+        _idPhotoError = null;
+      } else if (!hasFrontId && !hasSelfieWithId) {
+        _idPhotoError = 'Please upload your ID front and your selfie with ID';
+      } else if (!hasFrontId) {
+        _idPhotoError = 'Please upload the front of your government ID';
+      } else {
+        _idPhotoError = 'Please capture your selfie with ID';
+      }
     });
 
     if (!formValid || !termsValid || !idValid) {
@@ -201,6 +237,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
       'dateOfBirth': '$dobMonth/$dobDay/$dobYear',
       'idPhotoFront': _frontIdUrl,
       'idPhotoBack': null,
+      'idPhotoSelfie': _selfieWithIdUrl,
       'role': 'user',
     };
 
@@ -299,7 +336,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }
 
   bool _isValidAddress(String address) {
-    if (address.length < 5 || address.length > 120) return false;
+    if (address.length < 5 || address.length > _maxAddressLength) return false;
     return RegExp(r'[A-Za-z0-9]').hasMatch(address);
   }
 
@@ -343,6 +380,9 @@ class _RegistrationPageState extends State<RegistrationPage> {
   String? _validateAddress(String? value) {
     final address = (value ?? '').trim();
     if (address.isEmpty) return 'Home address is required';
+    if (address.length > _maxAddressLength) {
+      return 'Address must be $_maxAddressLength characters or fewer';
+    }
     return _isValidAddress(address) ? null : 'Enter a valid home address';
   }
 
@@ -509,6 +549,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                   label: 'HOME ADDRESS',
                                   hintText:
                                       'e.g. Blk 3 Lot 2, Brgy. Mabini, QC',
+                                  inputFormatters: [
+                                    LengthLimitingTextInputFormatter(
+                                      _maxAddressLength,
+                                    ),
+                                  ],
                                   autofillHints: const [
                                     AutofillHints.fullStreetAddress,
                                   ],
@@ -534,7 +579,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                   height: AppDimensions.paddingLarge,
                                 ),
 
-                                // ID VERIFICATION WIDGET (FRONT ONLY)
+                                // ID VERIFICATION WIDGET (FRONT + SELFIE WITH ID)
                                 IdVerificationWidget(
                                   onUploadComplete: _onIdUploadComplete,
                                   initialFrontUrl: _frontIdUrl,
@@ -577,7 +622,10 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                 ResqPillButton(
                                   label: 'CREATE ACCOUNT',
                                   loading: _loading,
-                                  onPressed: (_loading || _frontIdUrl == null)
+                                  onPressed:
+                                      (_loading ||
+                                          _frontIdUrl == null ||
+                                          _selfieWithIdUrl == null)
                                       ? null
                                       : _submit,
                                   height: 48,

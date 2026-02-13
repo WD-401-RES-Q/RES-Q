@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupOldReports = exports.migrateToEncrypted = exports.getDecryptedUsers = exports.decryptUserData = exports.registerUserEncrypted = void 0;
+exports.cleanupOldReports = exports.syncRejectedUsersEncryption = exports.syncApprovedUsersEncryption = exports.syncPendingUsersEncryption = exports.migratePendingUsersToPlaintext = exports.migrateToEncrypted = exports.getDecryptedUsers = exports.decryptUserData = exports.registerUserEncrypted = void 0;
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
@@ -12,12 +12,31 @@ const PII_FIELDS = [
     'email',
     'address',
     'dateOfBirth',
-    'contactNumber'
+    'contactNumber',
+    'password',
+    'pin'
 ];
+const ENCRYPTION_VERSION = 'aes-256-gcm-v2-compat';
+const DISPLAY_NAME_FIELD = 'displayName';
 /**
  * AES-256-GCM Encryption using Node.js crypto
  */
 class EncryptionHelper {
+    static isNonEmptyString(value) {
+        return typeof value === 'string' && value.trim().length > 0;
+    }
+    static cipherField(field) {
+        return `${field}${this.CIPHER_SUFFIX}`;
+    }
+    static hashField(field) {
+        return `${field}${this.HASH_SUFFIX}`;
+    }
+    static hashValue(value) {
+        return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+    }
+    static hashForLookup(value) {
+        return this.hashValue(value);
+    }
     static getMasterKey() {
         var _a;
         // Master key should be stored in Firebase environment config
@@ -57,17 +76,156 @@ class EncryptionHelper {
     static encryptUserData(userData) {
         const encrypted = Object.assign({}, userData);
         for (const field of PII_FIELDS) {
-            if (encrypted[field] && typeof encrypted[field] === 'string') {
-                encrypted[field] = this.encrypt(encrypted[field]);
-                encrypted[`${field}_encrypted`] = true;
+            const value = encrypted[field];
+            const cipherField = this.cipherField(field);
+            const hashField = this.hashField(field);
+            const encryptedFlagField = `${field}_encrypted`;
+            if (this.isNonEmptyString(value)) {
+                // Compatibility mode:
+                // Keep plaintext fields for existing mobile/web query flows,
+                // while storing AES-256-GCM encrypted mirrors for defense/security proof.
+                encrypted[cipherField] = this.encrypt(value);
+                encrypted[hashField] = this.hashValue(value);
+                encrypted[encryptedFlagField] = true;
+            }
+            else {
+                delete encrypted[cipherField];
+                delete encrypted[hashField];
+                delete encrypted[encryptedFlagField];
             }
         }
         encrypted['_encryptedAt'] = admin.firestore.FieldValue.serverTimestamp();
+        encrypted['_encryptionVersion'] = ENCRYPTION_VERSION;
         return encrypted;
+    }
+    static normalizeLegacyUserData(userData) {
+        const normalized = Object.assign({}, userData);
+        for (const field of PII_FIELDS) {
+            const cipherField = this.cipherField(field);
+            const encryptedFlagField = `${field}_encrypted`;
+            const mirroredCipherValue = normalized[cipherField];
+            if (this.isNonEmptyString(mirroredCipherValue)) {
+                try {
+                    normalized[field] = this.decrypt(mirroredCipherValue);
+                    continue;
+                }
+                catch (error) {
+                    console.error(`Failed to decrypt mirrored field ${field}:`, error);
+                }
+            }
+            // Backward compatibility for legacy v1 format where the top-level field
+            // itself may contain ciphertext and <field>_encrypted is true.
+            if (normalized[encryptedFlagField] && this.isNonEmptyString(normalized[field])) {
+                try {
+                    normalized[field] = this.decrypt(normalized[field]);
+                }
+                catch (_a) {
+                    // Keep original value if it was already plaintext.
+                }
+            }
+        }
+        return normalized;
+    }
+    static buildEncryptionFieldUpdates(afterData, beforeData) {
+        const updates = {};
+        let hasChanges = false;
+        for (const field of PII_FIELDS) {
+            const value = afterData[field];
+            let beforeValue = beforeData === null || beforeData === void 0 ? void 0 : beforeData[field];
+            const cipherField = this.cipherField(field);
+            const hashField = this.hashField(field);
+            const encryptedFlagField = `${field}_encrypted`;
+            if (!this.isNonEmptyString(beforeValue) && beforeData && this.isNonEmptyString(beforeData[cipherField])) {
+                try {
+                    beforeValue = this.decrypt(beforeData[cipherField]);
+                }
+                catch (_a) {
+                    // Ignore and keep fallback comparison value.
+                }
+            }
+            if (this.isNonEmptyString(value)) {
+                const plaintextHash = this.hashValue(value);
+                const storedHash = typeof afterData[hashField] === 'string'
+                    ? afterData[hashField]
+                    : '';
+                const hasCipher = this.isNonEmptyString(afterData[cipherField]);
+                const hasEncryptedFlag = afterData[encryptedFlagField] === true;
+                const plaintextChanged = beforeData
+                    ? value !== beforeValue
+                    : false;
+                if (plaintextChanged || !hasCipher || storedHash !== plaintextHash || !hasEncryptedFlag) {
+                    updates[cipherField] = this.encrypt(value);
+                    updates[hashField] = plaintextHash;
+                    updates[encryptedFlagField] = true;
+                    hasChanges = true;
+                }
+            }
+            else {
+                const hasCipher = afterData[cipherField] != null;
+                const hasHash = afterData[hashField] != null;
+                const hasEncryptedFlag = afterData[encryptedFlagField] != null;
+                if (hasCipher || hasHash || hasEncryptedFlag) {
+                    updates[cipherField] = admin.firestore.FieldValue.delete();
+                    updates[hashField] = admin.firestore.FieldValue.delete();
+                    updates[encryptedFlagField] = admin.firestore.FieldValue.delete();
+                    hasChanges = true;
+                }
+            }
+        }
+        if (hasChanges) {
+            updates['_encryptedAt'] = admin.firestore.FieldValue.serverTimestamp();
+            updates['_encryptionVersion'] = ENCRYPTION_VERSION;
+        }
+        return updates;
+    }
+    static buildPlaintextFieldRestoreUpdates(normalizedData, currentData) {
+        const updates = {};
+        for (const field of PII_FIELDS) {
+            const normalizedValue = normalizedData[field];
+            const currentValue = currentData[field];
+            if (this.isNonEmptyString(normalizedValue) && currentValue !== normalizedValue) {
+                updates[field] = normalizedValue;
+            }
+        }
+        return updates;
+    }
+    static buildEncryptionArtifactDeleteUpdates() {
+        const updates = {};
+        for (const field of PII_FIELDS) {
+            updates[this.cipherField(field)] = admin.firestore.FieldValue.delete();
+            updates[this.hashField(field)] = admin.firestore.FieldValue.delete();
+            updates[`${field}_encrypted`] = admin.firestore.FieldValue.delete();
+        }
+        updates['_encryptedAt'] = admin.firestore.FieldValue.delete();
+        updates['_encryptionVersion'] = admin.firestore.FieldValue.delete();
+        return updates;
+    }
+    static stripEncryptionArtifacts(userData) {
+        const cleaned = Object.assign({}, userData);
+        for (const field of PII_FIELDS) {
+            delete cleaned[this.cipherField(field)];
+            delete cleaned[this.hashField(field)];
+            delete cleaned[`${field}_encrypted`];
+        }
+        delete cleaned['_encryptedAt'];
+        delete cleaned['_encryptionVersion'];
+        return cleaned;
     }
     static decryptUserData(userData) {
         const decrypted = Object.assign({}, userData);
         for (const field of PII_FIELDS) {
+            const cipherField = this.cipherField(field);
+            if (this.isNonEmptyString(decrypted[cipherField])) {
+                try {
+                    decrypted[field] = this.decrypt(decrypted[cipherField]);
+                    continue;
+                }
+                catch (error) {
+                    console.error(`Failed to decrypt mirrored field ${field}:`, error);
+                    decrypted[field] = '[Decryption Failed]';
+                    continue;
+                }
+            }
             if (decrypted[field] && decrypted[`${field}_encrypted`]) {
                 try {
                     decrypted[field] = this.decrypt(decrypted[field]);
@@ -81,46 +239,102 @@ class EncryptionHelper {
         return decrypted;
     }
 }
+EncryptionHelper.CIPHER_SUFFIX = '_cipher';
+EncryptionHelper.HASH_SUFFIX = '_hash';
 /**
- * Cloud Function to register a new user with encrypted PII
- * Called from the mobile app during registration
+ * Cloud Function to register a new user in pending_users.
+ * Pending accounts are stored as plaintext for admin review.
+ * Encryption is enforced once the account is moved to approved_users.
  */
 exports.registerUserEncrypted = functions
     .region('asia-east2')
     .https.onCall(async (data, context) => {
     try {
-        const userData = data;
+        const payload = Object.assign({}, data);
         // Validate required fields
-        if (!userData.contactNumber) {
+        const contactNumberRaw = payload.contactNumber;
+        if (!contactNumberRaw || typeof contactNumberRaw !== 'string') {
             throw new functions.https.HttpsError('invalid-argument', 'Contact number is required');
         }
+        const phoneNumber = contactNumberRaw.trim();
+        if (!phoneNumber) {
+            throw new functions.https.HttpsError('invalid-argument', 'Contact number is required');
+        }
+        // Optional: allow caller to set specific document ID (UID) for idempotent writes.
+        const uid = typeof payload.uid === 'string' && payload.uid.trim().length > 0
+            ? payload.uid.trim()
+            : null;
+        delete payload.uid;
+        const phoneHash = EncryptionHelper.hashForLookup(phoneNumber);
         // Check if phone already exists
-        const phoneNumber = userData.contactNumber;
-        const pendingQuery = await db.collection('pending_users')
-            .where('contactNumber', '==', phoneNumber)
-            .limit(1)
-            .get();
-        if (!pendingQuery.empty) {
+        const pendingQueries = await Promise.all([
+            db.collection('pending_users')
+                .where('contactNumber_hash', '==', phoneHash)
+                .limit(5)
+                .get(),
+            db.collection('pending_users')
+                .where('contactNumber', '==', phoneNumber)
+                .limit(5)
+                .get(),
+        ]);
+        const pendingIds = new Set();
+        const pendingDocs = pendingQueries.flatMap((querySnapshot) => querySnapshot.docs)
+            .filter((doc) => {
+            if (pendingIds.has(doc.id)) {
+                return false;
+            }
+            pendingIds.add(doc.id);
+            return true;
+        });
+        const phoneExistsInPending = pendingDocs.some((doc) => uid == null || doc.id !== uid);
+        if (phoneExistsInPending) {
             throw new functions.https.HttpsError('already-exists', 'This phone number is already registered');
         }
-        const approvedQuery = await db.collection('approved_users')
-            .where('contactNumber', '==', phoneNumber)
-            .limit(1)
-            .get();
-        if (!approvedQuery.empty) {
+        const approvedQueries = await Promise.all([
+            db.collection('approved_users')
+                .where('contactNumber_hash', '==', phoneHash)
+                .limit(1)
+                .get(),
+            db.collection('approved_users')
+                .where('contactNumber', '==', phoneNumber)
+                .limit(1)
+                .get(),
+        ]);
+        if (approvedQueries.some((querySnapshot) => !querySnapshot.empty)) {
             throw new functions.https.HttpsError('already-exists', 'This phone number is already registered');
         }
-        // Encrypt PII fields
-        const encryptedUserData = EncryptionHelper.encryptUserData(userData);
+        // Normalize user payload and keep plaintext in pending_users.
+        const normalizedUserData = EncryptionHelper.normalizeLegacyUserData(payload);
+        normalizedUserData.contactNumber = phoneNumber;
+        const pendingUserData = Object.assign({}, normalizedUserData);
+        pendingUserData.contactNumber_hash = phoneHash;
+        if (typeof normalizedUserData.fullName === 'string' && normalizedUserData.fullName.trim().length > 0) {
+            pendingUserData[DISPLAY_NAME_FIELD] = normalizedUserData.fullName.trim();
+        }
         // Add metadata
-        encryptedUserData['registeredAt'] = admin.firestore.FieldValue.serverTimestamp();
-        encryptedUserData['status'] = 'pending';
+        pendingUserData['registeredAt'] = admin.firestore.FieldValue.serverTimestamp();
+        pendingUserData['status'] = 'pending';
+        pendingUserData['accountStatus'] = 'pending';
+        pendingUserData['createdAt'] = admin.firestore.FieldValue.serverTimestamp();
+        if (!pendingUserData['pinCreatedAt']) {
+            pendingUserData['pinCreatedAt'] = admin.firestore.FieldValue.serverTimestamp();
+        }
+        const cleanupEncryptionArtifacts = EncryptionHelper.buildEncryptionArtifactDeleteUpdates();
+        const pendingWritePayload = Object.assign(Object.assign({}, cleanupEncryptionArtifacts), pendingUserData);
         // Store in pending_users collection
-        const docRef = await db.collection('pending_users').add(encryptedUserData);
-        console.log(`User registered with encrypted data: ${docRef.id}`);
+        let userId;
+        if (uid) {
+            await db.collection('pending_users').doc(uid).set(pendingWritePayload, { merge: true });
+            userId = uid;
+        }
+        else {
+            const docRef = await db.collection('pending_users').add(pendingWritePayload);
+            userId = docRef.id;
+        }
+        console.log(`User registered in pending_users (plaintext pending flow): ${userId}`);
         return {
             success: true,
-            userId: docRef.id,
+            userId,
             message: 'Registration successful. Pending admin approval.'
         };
     }
@@ -216,19 +430,30 @@ exports.migrateToEncrypted = functions
         if (!adminDoc.exists) {
             throw new functions.https.HttpsError('permission-denied', 'Admin not found');
         }
-        const collections = ['pending_users', 'approved_users', 'rejected_users'];
+        const collections = ['approved_users', 'rejected_users'];
         let totalMigrated = 0;
         for (const collectionName of collections) {
             const snapshot = await db.collection(collectionName).get();
             for (const doc of snapshot.docs) {
                 const userData = doc.data();
-                // Skip if already encrypted
-                if (userData['_encryptedAt']) {
+                const normalizedData = EncryptionHelper.normalizeLegacyUserData(userData);
+                // Build only the missing/stale mirror encryption updates.
+                const encryptionUpdates = EncryptionHelper.buildEncryptionFieldUpdates(normalizedData, userData);
+                const plaintextRestoreUpdates = EncryptionHelper.buildPlaintextFieldRestoreUpdates(normalizedData, userData);
+                const updates = Object.assign(Object.assign({}, encryptionUpdates), plaintextRestoreUpdates);
+                const displayName = typeof normalizedData.fullName === 'string'
+                    ? normalizedData.fullName.trim()
+                    : '';
+                if (displayName.length > 0) {
+                    updates[DISPLAY_NAME_FIELD] = displayName;
+                }
+                else if (Object.prototype.hasOwnProperty.call(userData, DISPLAY_NAME_FIELD)) {
+                    updates[DISPLAY_NAME_FIELD] = admin.firestore.FieldValue.delete();
+                }
+                if (Object.keys(updates).length === 0) {
                     continue;
                 }
-                // Encrypt and update
-                const encryptedData = EncryptionHelper.encryptUserData(userData);
-                await doc.ref.update(encryptedData);
+                await doc.ref.set(updates, { merge: true });
                 totalMigrated++;
             }
         }
@@ -242,6 +467,105 @@ exports.migrateToEncrypted = functions
         throw new functions.https.HttpsError('internal', 'Migration failed');
     }
 });
+/**
+ * One-time callable to convert existing pending_users docs to plaintext.
+ * Keeps PII readable in pending queue and removes encryption mirror artifacts.
+ */
+exports.migratePendingUsersToPlaintext = functions
+    .region('asia-east2')
+    .https.onCall(async (data, context) => {
+    try {
+        const { adminId } = data;
+        const adminDoc = await db.collection('admins').doc(adminId).get();
+        if (!adminDoc.exists) {
+            throw new functions.https.HttpsError('permission-denied', 'Admin not found');
+        }
+        const snapshot = await db.collection('pending_users').get();
+        let totalUpdated = 0;
+        for (const docSnap of snapshot.docs) {
+            const currentData = docSnap.data();
+            const normalizedData = EncryptionHelper.normalizeLegacyUserData(currentData);
+            const plaintextData = EncryptionHelper.stripEncryptionArtifacts(normalizedData);
+            const normalizedPhone = typeof plaintextData.contactNumber === 'string'
+                ? plaintextData.contactNumber.trim()
+                : '';
+            if (normalizedPhone.length > 0) {
+                plaintextData.contactNumber = normalizedPhone;
+                plaintextData.contactNumber_hash = EncryptionHelper.hashForLookup(normalizedPhone);
+            }
+            else {
+                delete plaintextData.contactNumber_hash;
+            }
+            const displayName = typeof plaintextData.fullName === 'string'
+                ? plaintextData.fullName.trim()
+                : '';
+            if (displayName.length > 0) {
+                plaintextData[DISPLAY_NAME_FIELD] = displayName;
+            }
+            else {
+                delete plaintextData[DISPLAY_NAME_FIELD];
+            }
+            plaintextData.status = 'pending';
+            plaintextData.accountStatus = 'pending';
+            await docSnap.ref.set(plaintextData, { merge: false });
+            totalUpdated++;
+        }
+        return {
+            success: true,
+            message: `Converted ${totalUpdated} pending user records to plaintext format`,
+        };
+    }
+    catch (error) {
+        console.error('Pending plaintext migration error:', error);
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        throw new functions.https.HttpsError('internal', 'Pending plaintext migration failed');
+    }
+});
+async function syncEncryptedMirrorsOnWrite(change) {
+    var _a, _b;
+    if (!change.after.exists) {
+        return null;
+    }
+    const afterData = ((_a = change.after.data()) !== null && _a !== void 0 ? _a : {});
+    const beforeData = change.before.exists
+        ? ((_b = change.before.data()) !== null && _b !== void 0 ? _b : {})
+        : undefined;
+    const normalizedAfterData = EncryptionHelper.normalizeLegacyUserData(afterData);
+    const encryptionUpdates = EncryptionHelper.buildEncryptionFieldUpdates(normalizedAfterData, beforeData);
+    const plaintextRestoreUpdates = EncryptionHelper.buildPlaintextFieldRestoreUpdates(normalizedAfterData, afterData);
+    const updates = Object.assign(Object.assign({}, encryptionUpdates), plaintextRestoreUpdates);
+    const displayName = typeof normalizedAfterData.fullName === 'string'
+        ? normalizedAfterData.fullName.trim()
+        : '';
+    const currentDisplayName = typeof afterData[DISPLAY_NAME_FIELD] === 'string'
+        ? afterData[DISPLAY_NAME_FIELD].trim()
+        : '';
+    if (displayName.length > 0 && displayName !== currentDisplayName) {
+        updates[DISPLAY_NAME_FIELD] = displayName;
+    }
+    else if (displayName.length === 0 && Object.prototype.hasOwnProperty.call(afterData, DISPLAY_NAME_FIELD)) {
+        updates[DISPLAY_NAME_FIELD] = admin.firestore.FieldValue.delete();
+    }
+    if (Object.keys(updates).length === 0) {
+        return null;
+    }
+    await change.after.ref.set(updates, { merge: true });
+    return null;
+}
+exports.syncPendingUsersEncryption = functions
+    .region('asia-east2')
+    .firestore.document('pending_users/{userId}')
+    .onWrite(() => null);
+exports.syncApprovedUsersEncryption = functions
+    .region('asia-east2')
+    .firestore.document('approved_users/{userId}')
+    .onWrite((change) => syncEncryptedMirrorsOnWrite(change));
+exports.syncRejectedUsersEncryption = functions
+    .region('asia-east2')
+    .firestore.document('rejected_users/{userId}')
+    .onWrite((change) => syncEncryptedMirrorsOnWrite(change));
 /**
  * Scheduled function that runs daily at midnight (Asia/Manila time)
  * Deletes reports older than 30 days from the database

@@ -385,19 +385,7 @@ class _HomePageContentState extends State<_HomePageContent>
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               // Icon
-              Image.asset(
-                imgPath,
-                width: iconSize,
-                height: iconSize,
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) {
-                  return const Icon(
-                    Icons.warning,
-                    color: Colors.white,
-                    size: 35,
-                  );
-                },
-              ),
+              _buildAssetIcon(imgPath, width: iconSize, height: iconSize),
               const SizedBox(height: 6),
 
               // Label
@@ -419,6 +407,31 @@ class _HomePageContentState extends State<_HomePageContent>
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildAssetIcon(
+    String assetPath, {
+    required double width,
+    required double height,
+  }) {
+    if (assetPath.toLowerCase().endsWith('.svg')) {
+      return SvgPicture.asset(
+        assetPath,
+        width: width,
+        height: height,
+        fit: BoxFit.contain,
+      );
+    }
+
+    return Image.asset(
+      assetPath,
+      width: width,
+      height: height,
+      fit: BoxFit.contain,
+      errorBuilder: (context, error, stackTrace) {
+        return const Icon(Icons.warning, color: Colors.white, size: 35);
+      },
     );
   }
 
