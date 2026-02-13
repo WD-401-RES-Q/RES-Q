@@ -731,7 +731,7 @@ enum _IdImageSource { camera, gallery }
 class IdVerificationWidget extends StatefulWidget {
   final Function(String? frontUrl, String? backUrl) onUploadComplete;
   final String? initialFrontUrl;
-  // Kept for hot-reload compatibility; back is not used in UI.
+  // Reused to preload selfie-with-ID when available.
   final String? initialBackUrl;
   final String? usernameForPath;
 
@@ -756,11 +756,18 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
   Uint8List? _frontBytes;
   bool _uploadingFront = false;
   String? _frontError;
+  String? _selfieWithIdUrl;
+  String? _selfieWithIdLocalPath;
+  double? _selfieWithIdAspectRatio;
+  Uint8List? _selfieWithIdBytes;
+  bool _uploadingSelfieWithId = false;
+  String? _selfieWithIdError;
 
   @override
   void initState() {
     super.initState();
     _frontIdUrl = widget.initialFrontUrl;
+    _selfieWithIdUrl = widget.initialBackUrl;
   }
 
   /// Show dialog with accepted ID types
@@ -1290,7 +1297,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
       });
 
       // Notify parent
-      widget.onUploadComplete(_frontIdUrl, null);
+      widget.onUploadComplete(_frontIdUrl, _selfieWithIdUrl);
 
       if (mounted) {
         AppSnackBar.show(
@@ -1304,6 +1311,79 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
       setState(() {
         _uploadingFront = false;
         _frontError = 'Failed to upload: $e';
+      });
+    }
+  }
+
+  /// Pick and validate image for selfie with ID (capture only)
+  Future<void> _pickAndValidateSelfieWithIdImage() async {
+    try {
+      final pickedFile = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: 1920,
+        maxHeight: 1920,
+        imageQuality: 85,
+      );
+
+      final imagePath = pickedFile?.path;
+      if (imagePath == null) return;
+
+      setState(() {
+        _uploadingSelfieWithId = true;
+        _selfieWithIdError = null;
+      });
+
+      final normalizedPath = _normalizePath(imagePath);
+      final croppedPath = await _cropImage(normalizedPath);
+      if (croppedPath == null) {
+        setState(() {
+          _uploadingSelfieWithId = false;
+        });
+        return;
+      }
+
+      final proceed = await _showIdUploadDisclaimer();
+      if (!proceed) {
+        setState(() {
+          _uploadingSelfieWithId = false;
+        });
+        return;
+      }
+
+      final bytes = await File(croppedPath).readAsBytes();
+      final aspectRatio = await _getImageAspectRatioFromBytes(bytes);
+
+      setState(() {
+        _selfieWithIdAspectRatio = aspectRatio;
+        _selfieWithIdBytes = bytes;
+      });
+
+      final downloadUrl = await _uploadToFirebase(
+        XFile(croppedPath),
+        'selfie_with_id',
+        bytes,
+      );
+
+      setState(() {
+        _selfieWithIdUrl = downloadUrl;
+        _selfieWithIdLocalPath = croppedPath;
+        _uploadingSelfieWithId = false;
+      });
+
+      widget.onUploadComplete(_frontIdUrl, _selfieWithIdUrl);
+
+      if (mounted) {
+        AppSnackBar.show(
+          context,
+          'Selfie with ID uploaded successfully',
+          type: AppSnackBarType.success,
+          duration: const Duration(seconds: 2),
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _uploadingSelfieWithId = false;
+        _selfieWithIdError = 'Failed to upload: $e';
       });
     }
   }
@@ -1352,6 +1432,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     required bool isUploading,
     required String? error,
     required VoidCallback onUpload,
+    String emptyLabel = 'TAP TO UPLOAD',
   }) {
     final bool hasImage =
         bytes != null || localPath != null || uploadedUrl != null;
@@ -1460,7 +1541,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
                             ? buildPreview()
                             : Center(
                                 child: Text(
-                                  'TAP TO UPLOAD',
+                                  emptyLabel,
                                   style: const TextStyle(
                                     fontSize: 13,
                                     color: AppTheme.appBlack,
@@ -1577,6 +1658,20 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
           isUploading: _uploadingFront,
           error: _frontError,
           onUpload: _pickAndValidateFrontImage,
+        ),
+        const SizedBox(height: 14),
+
+        // Selfie with ID (capture only)
+        _buildIdSection(
+          title: 'SELFIE WITH ID',
+          uploadedUrl: _selfieWithIdUrl,
+          localPath: _selfieWithIdLocalPath,
+          aspectRatio: _selfieWithIdAspectRatio,
+          bytes: _selfieWithIdBytes,
+          isUploading: _uploadingSelfieWithId,
+          error: _selfieWithIdError,
+          onUpload: _pickAndValidateSelfieWithIdImage,
+          emptyLabel: 'TAP TO CAPTURE',
         ),
       ],
     );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/theme/app_theme.dart';
@@ -29,6 +30,9 @@ class _PINCreationPageState extends State<PINCreationPage> {
   String? _uid;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
+    region: 'asia-east2',
+  );
   final LocalAuthentication _localAuth = LocalAuthentication();
 
   @override
@@ -312,9 +316,32 @@ class _PINCreationPageState extends State<PINCreationPage> {
       final userData = _userData ?? {};
       userData['pin'] = _pin;
       userData['accountStatus'] = 'pending';
-      userData['createdAt'] = FieldValue.serverTimestamp();
+      userData['contactNumber'] = _phoneNumber;
 
-      await _firestore.collection('pending_users').doc(uid).set(userData);
+      try {
+        final registerCallable = _functions.httpsCallable(
+          'registerUserEncrypted',
+        );
+        await registerCallable.call({...userData, 'uid': uid});
+      } on FirebaseFunctionsException catch (functionError) {
+        const fallbackCodes = <String>{
+          'unavailable',
+          'not-found',
+          'deadline-exceeded',
+        };
+        if (!fallbackCodes.contains(functionError.code)) {
+          rethrow;
+        }
+        debugPrint(
+          'registerUserEncrypted callable failed (${functionError.code}). Falling back to direct Firestore write.',
+        );
+        userData['createdAt'] = FieldValue.serverTimestamp();
+        userData['pinCreatedAt'] = FieldValue.serverTimestamp();
+        await _firestore
+            .collection('pending_users')
+            .doc(uid)
+            .set(userData, SetOptions(merge: true));
+      }
 
       // End temporary phone-auth session; pending accounts should still use login.
       try {
@@ -336,16 +363,29 @@ class _PINCreationPageState extends State<PINCreationPage> {
 
       await _showApprovalPendingDialog();
     } catch (e) {
+      var message = 'Registration failed. Please try again.';
+      if (e is FirebaseFunctionsException) {
+        if (e.code == 'already-exists') {
+          message = 'This phone number is already registered.';
+        } else if (e.code == 'invalid-argument') {
+          message = e.message ?? 'Invalid registration details.';
+        } else if (e.message != null && e.message!.isNotEmpty) {
+          message = e.message!;
+        }
+      } else {
+        message = 'Error: $e';
+      }
+
       if (mounted) {
         setState(() {
           _loading = false;
           _showError = true;
-          _errorMessage = 'Error: $e';
+          _errorMessage = message;
           _pin = '';
         });
       }
       if (mounted) {
-        AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
+        AppSnackBar.show(context, message, type: AppSnackBarType.error);
       }
     }
   }

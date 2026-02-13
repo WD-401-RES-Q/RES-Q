@@ -1,8 +1,6 @@
 .posting-page {
   padding: 24px;
-  background: radial-gradient(circle at top left, rgba(172, 27, 34, 0.08), transparent 45%),
-    radial-gradient(circle at bottom right, rgba(255, 200, 6, 0.12), transparent 40%),
-    #f7f8fb;
+  background: var(--resq-light, #f7f8f3);
   min-height: 100vh;
 }
   .page-header h1 {

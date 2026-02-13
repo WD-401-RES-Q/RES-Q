@@ -15,6 +15,7 @@ import '../../semi_admin/pages/semi_admin_main_page.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/registration_prefs.dart';
 import '../../../common/services/notification_service.dart';
+import '../../../common/utils/security_hash.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 class LoginPage extends StatefulWidget {
@@ -64,6 +65,122 @@ class _LoginPageState extends State<LoginPage>
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
   bool get _isPinUnlocked => _isPhoneVerifiedForPin;
+
+  Future<QuerySnapshot<Map<String, dynamic>>> _queryUsersByPhone({
+    required String collection,
+    required String phone,
+  }) async {
+    final phoneHash = SecurityHash.sha256Hex(phone);
+    final hashedQuery = await _firestore
+        .collection(collection)
+        .where('contactNumber_hash', isEqualTo: phoneHash)
+        .limit(1)
+        .get();
+    if (hashedQuery.docs.isNotEmpty) {
+      return hashedQuery;
+    }
+
+    // Backward compatibility fallback for legacy plaintext docs.
+    return _firestore
+        .collection(collection)
+        .where('contactNumber', isEqualTo: phone)
+        .limit(1)
+        .get();
+  }
+
+  bool _isPinMatch(Map<String, dynamic> userData, String pin) {
+    final storedPinHash = userData['pin_hash']?.toString();
+    if (storedPinHash != null && storedPinHash.isNotEmpty) {
+      return storedPinHash == SecurityHash.sha256Hex(pin);
+    }
+
+    final storedPin = userData['pin']?.toString();
+    return storedPin != null && storedPin == pin;
+  }
+
+  bool _isLikelyEncryptedField(Map<String, dynamic> userData, String field) {
+    final rawValue = userData[field];
+    if (rawValue is! String) {
+      return false;
+    }
+
+    final value = rawValue.trim();
+    if (value.isEmpty) {
+      return false;
+    }
+
+    final mirroredCipher = userData['${field}_cipher'];
+    if (mirroredCipher is String && mirroredCipher.trim() == value) {
+      return true;
+    }
+
+    if (userData['${field}_encrypted'] == true) {
+      final looksBase64 = RegExp(r'^[A-Za-z0-9+/=]+$').hasMatch(value);
+      return looksBase64 && value.length >= 40 && !value.contains(' ');
+    }
+
+    return false;
+  }
+
+  String _readReadableField(
+    Map<String, dynamic> userData,
+    String field, {
+    List<String> fallbacks = const [],
+  }) {
+    final rawValue = userData[field];
+    if (rawValue is String) {
+      final value = rawValue.trim();
+      if (value.isNotEmpty && !_isLikelyEncryptedField(userData, field)) {
+        return value;
+      }
+    }
+
+    for (final fallbackField in fallbacks) {
+      final fallbackValue = userData[fallbackField];
+      if (fallbackValue is String && fallbackValue.trim().isNotEmpty) {
+        return fallbackValue.trim();
+      }
+    }
+
+    return '';
+  }
+
+  Map<String, dynamic> _buildSessionUserData({
+    required DocumentSnapshot<Map<String, dynamic>> userDoc,
+    required String contactNumber,
+  }) {
+    final userData = <String, dynamic>{
+      ...?userDoc.data(),
+      'docId': userDoc.id,
+      'contactNumber': contactNumber,
+    };
+
+    final fullName = _readReadableField(
+      userData,
+      'fullName',
+      fallbacks: const ['displayName'],
+    );
+    final email = _readReadableField(userData, 'email');
+    final address = _readReadableField(userData, 'address');
+
+    if (fullName.isNotEmpty) {
+      userData['fullName'] = fullName;
+    } else {
+      userData.remove('fullName');
+    }
+    if (email.isNotEmpty) {
+      userData['email'] = email;
+    } else {
+      userData.remove('email');
+    }
+    if (address.isNotEmpty) {
+      userData['address'] = address;
+    } else {
+      userData.remove('address');
+    }
+
+    return userData;
+  }
 
   Future<void> _saveApprovedLoginState(String phoneDigits) async {
     await RegistrationPrefs.savePhoneNumber(phoneDigits);
@@ -202,11 +319,7 @@ class _LoginPageState extends State<LoginPage>
             .where('contactNumber', isEqualTo: phone)
             .limit(1)
             .get(),
-        _firestore
-            .collection('approved_users')
-            .where('contactNumber', isEqualTo: phone)
-            .limit(1)
-            .get(),
+        _queryUsersByPhone(collection: 'approved_users', phone: phone),
       ]);
       final semiAdminQuery = accountQueries[0];
       final userQuery = accountQueries[1];
@@ -246,7 +359,10 @@ class _LoginPageState extends State<LoginPage>
       }
 
       final userDoc = userQuery.docs.first;
-      final userData = {...userDoc.data(), 'docId': userDoc.id};
+      final userData = _buildSessionUserData(
+        userDoc: userDoc,
+        contactNumber: phone,
+      );
       final accountStatus = userData['accountStatus'] as String?;
 
       if (accountStatus != 'approved') {
@@ -332,11 +448,7 @@ class _LoginPageState extends State<LoginPage>
           .where('contactNumber', isEqualTo: phone)
           .limit(1)
           .get(),
-      _firestore
-          .collection('approved_users')
-          .where('contactNumber', isEqualTo: phone)
-          .limit(1)
-          .get(),
+      _queryUsersByPhone(collection: 'approved_users', phone: phone),
     ]);
 
     final hasSemiAdminAccount = accountQueries[0].docs.isNotEmpty;
@@ -350,11 +462,10 @@ class _LoginPageState extends State<LoginPage>
       );
     }
 
-    final pendingQuery = await _firestore
-        .collection('pending_users')
-        .where('contactNumber', isEqualTo: phone)
-        .limit(1)
-        .get();
+    final pendingQuery = await _queryUsersByPhone(
+      collection: 'pending_users',
+      phone: phone,
+    );
 
     return _PhoneValidationResult(
       hasSemiAdminAccount: false,
@@ -464,11 +575,10 @@ class _LoginPageState extends State<LoginPage>
 
   Future<bool> _isPhonePendingApproval(String phone) async {
     try {
-      final pendingQuery = await _firestore
-          .collection('pending_users')
-          .where('contactNumber', isEqualTo: phone)
-          .limit(1)
-          .get();
+      final pendingQuery = await _queryUsersByPhone(
+        collection: 'pending_users',
+        phone: phone,
+      );
       return pendingQuery.docs.isNotEmpty;
     } catch (e) {
       debugPrint('Error checking pending_users: $e');
@@ -720,12 +830,7 @@ class _LoginPageState extends State<LoginPage>
             .where('pin', isEqualTo: pin)
             .limit(1)
             .get(),
-        _firestore
-            .collection('approved_users')
-            .where('contactNumber', isEqualTo: phone)
-            .where('pin', isEqualTo: pin)
-            .limit(1)
-            .get(),
+        _queryUsersByPhone(collection: 'approved_users', phone: phone),
       ]);
       final semiAdminQuery = authQueries[0];
       final userQuery = authQueries[1];
@@ -774,7 +879,22 @@ class _LoginPageState extends State<LoginPage>
       }
 
       final userDoc = userQuery.docs.first;
-      final userData = {...userDoc.data(), 'docId': userDoc.id};
+      final userData = _buildSessionUserData(
+        userDoc: userDoc,
+        contactNumber: phone,
+      );
+
+      if (!_isPinMatch(userData, pin)) {
+        setState(() {
+          _loading = false;
+          _pinCtl.clear();
+          _showPinError = false;
+          _pinErrorMessage = '';
+        });
+        _resetPinWithError('Wrong PIN');
+        return;
+      }
+
       final accountStatus = userData['accountStatus'] as String?;
 
       if (accountStatus != 'approved') {

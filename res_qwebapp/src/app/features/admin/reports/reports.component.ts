@@ -17,6 +17,7 @@ interface Report {
   reporter: string;
   description: string;
   image: string;
+  mediaType?: 'photo' | 'video';
   greenFlags?: number;
   redFlags?: number;
   comments?: number;
@@ -99,6 +100,12 @@ export class ReportsComponent implements OnInit, OnDestroy {
   expandedReportId: string | null = null;
   reportComments: { [key: string]: Comment[] } = {};
   loadingComments: { [key: string]: boolean } = {};
+
+  // Media viewer state
+  showMediaViewer = false;
+  activeMediaUrl = '';
+  activeMediaTitle = 'Report media';
+  activeMediaType: 'photo' | 'video' = 'photo';
 
   // Computed property for filtered reports
   get filteredReports(): Report[] {
@@ -307,6 +314,8 @@ export class ReportsComponent implements OnInit, OnDestroy {
     const dateObj = this.coerceDate(reportedAt);
     const [dateStr, timeStr] = this.formatDateTime(dateObj);
     const sortTimestamp = dateObj ? dateObj.getTime() : 0;
+    const mediaUrl = this.firebaseStorageService.getDownloadUrl(doc.mediaUrl);
+    const mediaType = this.resolveMediaType(doc.mediaType, mediaUrl);
 
     // Normalize location display
     let locationStr = 'Unknown location';
@@ -329,7 +338,8 @@ export class ReportsComponent implements OnInit, OnDestroy {
       time: timeStr,
       reporter: doc.name ?? doc.reporter ?? 'Unknown reporter',
       description: doc.details ?? doc.description ?? 'No description provided.',
-      image: this.firebaseStorageService.getDownloadUrl(doc.mediaUrl),
+      image: mediaUrl,
+      mediaType,
       greenFlags: doc.greenFlags ?? 0,
       redFlags: doc.redFlags ?? 0,
       comments: doc.comments ?? 0,
@@ -361,6 +371,45 @@ export class ReportsComponent implements OnInit, OnDestroy {
     const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
     const timeOptions: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit', hour12: true };
     return [date.toLocaleDateString(undefined, options), date.toLocaleTimeString(undefined, timeOptions)];
+  }
+
+  isVideoMedia(report: Report): boolean {
+    return this.resolveMediaType(report.mediaType, report.image) === 'video';
+  }
+
+  openMediaViewer(report: Report) {
+    const mediaUrl = (report.image ?? '').toString().trim();
+    if (!mediaUrl) return;
+
+    this.activeMediaUrl = mediaUrl;
+    this.activeMediaType = this.resolveMediaType(report.mediaType, mediaUrl);
+    this.activeMediaTitle = (report.title ?? 'Report media').toString().trim() || 'Report media';
+    this.showMediaViewer = true;
+    this.cdr.markForCheck();
+  }
+
+  closeMediaViewer() {
+    this.showMediaViewer = false;
+    this.activeMediaUrl = '';
+    this.activeMediaTitle = 'Report media';
+    this.activeMediaType = 'photo';
+    this.cdr.markForCheck();
+  }
+
+  private resolveMediaType(rawType: unknown, mediaUrl: string): 'photo' | 'video' {
+    const normalizedType = (rawType ?? '').toString().trim().toLowerCase();
+    if (normalizedType.includes('video')) return 'video';
+    if (normalizedType.includes('photo') || normalizedType.includes('image')) return 'photo';
+
+    const normalizedUrl = (mediaUrl ?? '').toString().toLowerCase();
+    if (
+      /\.(mp4|mov|webm|m4v|ogg)(\?|$)/.test(normalizedUrl) ||
+      normalizedUrl.includes('video%2f')
+    ) {
+      return 'video';
+    }
+
+    return 'photo';
   }
 
   // Filter switching

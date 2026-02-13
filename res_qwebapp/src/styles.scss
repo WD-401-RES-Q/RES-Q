@@ -306,15 +306,69 @@ body.login-no-scroll app-root {
 }
 
 /* ==========================================================
-   SEARCH BAR STYLING (Accounts Page)
+   ADMIN PAGE LAYOUT CONSISTENCY
    ========================================================== */
 
-.page-header {
+.admin-page {
+  width: 100%;
+  max-width: 1320px !important;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  box-sizing: border-box;
+}
+
+.admin-page .page-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  gap: 20px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 0 0 20px 0 !important;
 }
+
+.admin-page .page-header h1 {
+  margin: 0 !important;
+  font-size: 32px !important;
+  font-weight: 800 !important;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: #1f2937 !important;
+}
+
+.admin-page .page-header .subtitle {
+  order: 2;
+  flex: 1 0 100%;
+  margin: 0 !important;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.admin-page .dash-header,
+.admin-page .map-header {
+  margin: 0 0 20px 0 !important;
+}
+
+.admin-page .dash-header h1,
+.admin-page .map-header h1 {
+  margin: 0 !important;
+  font-size: 32px !important;
+  font-weight: 800 !important;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: #1f2937 !important;
+}
+
+@media (max-width: 900px) {
+  .admin-page .page-header h1,
+  .admin-page .dash-header h1,
+  .admin-page .map-header h1 {
+    font-size: 28px !important;
+  }
+}
+
+/* ==========================================================
+   SEARCH BAR STYLING (Accounts Page)
+   ========================================================== */
 
 .search-bar {
   width: 250px;

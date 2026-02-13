@@ -1,22 +1,25 @@
-<section class="admin-page accounts-page">
-    <!-- ADMIN PASSWORD MODAL -->
-    <div class="modal-overlay" *ngIf="showPasswordModal">
-      <div class="modal-content password-modal" (click)="$event.stopPropagation()">
-        <h3 class="modal-title">Admin Password Required</h3>
-        <p class="modal-subtitle">Enter your admin password to view decrypted user data.</p>
-        <input type="password" [(ngModel)]="adminPasswordInput" placeholder="Password" autofocus />
-        <div class="modal-actions">
-          <button type="button" class="btn-modal btn-yes" (click)="verifyAdminPassword()" [disabled]="isVerifyingPassword">Submit</button>
-        </div>
-        <div class="modal-error" *ngIf="passwordError">{{ passwordError }}</div>
-      </div>
-    </div>
+<section class="admin-page accounts-page details-hidden">
   <header class="page-header">
-    <h1>Verified Accounts ({{ filteredAccounts.length }})</h1>
+    <div class="page-header-row">
+      <h1>Verified Accounts ({{ filteredAccounts.length }})</h1>
+      <button
+        type="button"
+        class="unlock-all-btn"
+        (click)="openUnlockAllModal()"
+        [disabled]="showPasswordModal || isVerifyingPassword || !hasLockedAccounts"
+      >
+        {{ hasLockedAccounts ? 'Unlock All User Details' : 'All Details Unlocked' }}
+      </button>
+    </div>
     <input 
       type="text" 
       class="search-bar" 
       placeholder="Search..."
+      autocomplete="off"
+      autocapitalize="off"
+      autocorrect="off"
+      spellcheck="false"
+      [disabled]="showPasswordModal"
       [(ngModel)]="searchQuery"
       (input)="onSearchChange()"
     />
@@ -31,73 +34,132 @@
   </div>
 
   <div *ngIf="accounts.length > 0" class="accounts-layout">
-    <!-- TABLE SECTION -->
-    <div class="accounts-table-wrapper">
-      <table class="accounts-table">
-        <thead>
-          <tr>
-            <th class="col-name">Name</th>
-            <th class="col-email">Email</th>
-            <th class="col-phone">Phone</th>
-            <th class="col-date">Approved Date</th>
-            <th class="col-actions">Actions</th>
-          </tr>
-        </thead>
+    <article class="account-profile-card" *ngFor="let acc of paginatedAccounts; trackBy: trackById">
+      <div class="profile-head">
+        <div class="profile-head-main">
+          <div class="profile-avatar">
+            <img
+              *ngIf="getProfilePhotoUrl(acc) as photoUrl; else avatarInitial"
+              [src]="photoUrl"
+              [alt]="getPublicName(acc, { fallback: 'Encrypted account' }) + ' profile'"
+            />
+            <ng-template #avatarInitial>
+              <span>{{ getAccountInitial(acc) }}</span>
+            </ng-template>
+          </div>
+          <div class="profile-head-text">
+            <h2>{{ getDisplayValue(acc, 'fullName') }}</h2>
+          </div>
+        </div>
+      </div>
 
-        <tbody>
-          <tr
-            *ngFor="let acc of filteredAccounts; trackBy: trackById"
-            (click)="select(acc)"
-            [class.selected-row]="selected?.id === acc.id"
+      <div class="details-shell" [class.details-shell--locked]="!isAccountUnlocked(acc.id)">
+        <div class="detail-grid card-detail-grid">
+          <p><strong>Address:</strong> <span class="encrypted-text">{{ getDisplayValue(acc, 'address') }}</span></p>
+          <p><strong>Birthdate:</strong> <span class="encrypted-text">{{ getDisplayValue(acc, 'dateOfBirth') }}</span></p>
+          <p><strong>Phone:</strong> <span class="encrypted-text">{{ getDisplayValue(acc, 'contactNumber') }}</span></p>
+          <p><strong>Status:</strong> {{ acc.accountStatus || 'N/A' }}</p>
+          <p><strong>Approved By:</strong> {{ isAccountUnlocked(acc.id) ? (acc.approvedBy || 'N/A') : '[ENCRYPTED]' }}</p>
+          <p><strong>Approved On:</strong> {{ isAccountUnlocked(acc.id) ? (getApprovedDate(acc) ? (getApprovedDate(acc) | date:'medium') : 'N/A') : '[ENCRYPTED]' }}</p>
+          <p><strong>Email:</strong> <span class="encrypted-text">{{ getDisplayValue(acc, 'email') }}</span></p>
+          <p class="detail-id-row" *ngIf="isAccountUnlocked(acc.id)">
+            <strong>Valid ID:</strong>
+            <button *ngIf="getIdPhotoUrl(acc)" type="button" class="id-badge id-link" (click)="openIdModal(acc)">Uploaded (View)</button>
+            <span *ngIf="!getIdPhotoUrl(acc)" class="id-badge missing">Missing</span>
+          </p>
+          <p class="detail-id-row" *ngIf="isAccountUnlocked(acc.id)">
+            <strong>Selfie with ID:</strong>
+            <button
+              *ngIf="getSelfieWithIdUrl(acc)"
+              type="button"
+              class="id-badge id-link"
+              (click)="openSelfieWithIdModal(acc)"
+            >
+              Uploaded (View)
+            </button>
+            <span *ngIf="!getSelfieWithIdUrl(acc)" class="id-badge missing">Missing</span>
+          </p>
+        </div>
+
+        <div class="details-cover" *ngIf="!isAccountUnlocked(acc.id)">
+          <button
+            type="button"
+            class="details-lock-btn details-lock-btn--overlay"
+            (click)="openDecryptModal(acc.id)"
+            aria-label="Unlock user details"
+            title="Unlock user details"
           >
-            <td class="col-name">{{ decryptedMode ? acc.fullName : (acc.fullName || '[ENCRYPTED]') }}</td>
-            <td class="col-email">{{ decryptedMode ? acc.email : '[ENCRYPTED]' }}</td>
-            <td class="col-phone">{{ decryptedMode ? acc.contactNumber : '[ENCRYPTED]' }}</td>
-            <td class="col-date">
-              {{ decryptedMode ? (getApprovedDate(acc) ? (getApprovedDate(acc) | date:'mediumDate') : 'N/A') : '[ENCRYPTED]' }}
-            </td>
+            <span class="lock-icon" aria-hidden="true">&#128274;</span>
+            <span class="lock-label">UNLOCK</span>
+          </button>
+        </div>
+      </div>
 
-            <!-- prevent row-click from double firing when pressing buttons -->
-            <td class="col-actions" (click)="$event.stopPropagation()">
-              <div class="action-buttons">
-                <button type="button" class="btn btn-view" (click)="select(acc)">View</button>
-                <!-- Only show Unban for temporary bans (has bannedUntil date) -->
-                <button *ngIf="isTemporaryBan(acc)" type="button" class="btn btn-ban" (click)="openUnbanConfirmation(acc)">Unban</button>
-                <!-- Show Ban button for non-banned accounts -->
-                <button *ngIf="acc.accountStatus !== 'BANNED'" type="button" class="btn btn-ban" (click)="ban(acc)">Ban</button>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div class="card-actions">
+        <button *ngIf="isTemporaryBan(acc)" type="button" class="btn btn-ban big" (click)="openUnbanConfirmation(acc)">Revert Ban</button>
+        <button *ngIf="acc.accountStatus !== 'BANNED'" type="button" class="btn btn-ban big" (click)="ban(acc)">Ban Account</button>
+      </div>
+    </article>
+  </div>
 
-      <p class="hint">Click a row to view details.</p>
+  <div
+    *ngIf="accounts.length > 0 && filteredAccounts.length > cardsPerPage"
+    class="cards-pagination"
+  >
+    <div class="pagination-info">
+      Showing {{ startItem }}-{{ endItem }} of {{ filteredAccounts.length }}
     </div>
 
-    <!-- DETAILS PANEL -->
-    <div class="account-details" *ngIf="selected as acc">
-      <h2>Account Details</h2>
+    <div class="pagination-controls">
+      <button
+        type="button"
+        class="pagination-btn"
+        (click)="previousPage()"
+        [disabled]="!canGoPrevious"
+      >
+        Previous
+      </button>
 
-      <div class="detail-grid">
-        <p><strong>Full Name:</strong> {{ decryptedMode ? acc.fullName : '[ENCRYPTED]' }}</p>
-        <p><strong>Email:</strong> {{ decryptedMode ? acc.email : '[ENCRYPTED]' }}</p>
-        <p><strong>Address:</strong> {{ decryptedMode ? acc.address : '[ENCRYPTED]' }}</p>
-        <p><strong>Birthdate:</strong> {{ decryptedMode ? acc.dateOfBirth : '[ENCRYPTED]' }}</p>
-        <p><strong>Phone:</strong> {{ decryptedMode ? acc.contactNumber : '[ENCRYPTED]' }}</p>
-        <p><strong>Status:</strong> {{ acc.accountStatus || 'N/A' }}</p>
-        <p><strong>Approved By:</strong> {{ decryptedMode ? acc.approvedBy : '[ENCRYPTED]' }}</p>
-        <p><strong>Approved On:</strong> {{ decryptedMode ? (getApprovedDate(acc) ? (getApprovedDate(acc) | date:'medium') : 'N/A') : '[ENCRYPTED]' }}</p>
+      <span class="pagination-page">Page {{ currentPage }} of {{ totalPages }}</span>
+
+      <button
+        type="button"
+        class="pagination-btn"
+        (click)="nextPage()"
+        [disabled]="!canGoNext"
+      >
+        Next
+      </button>
+    </div>
+  </div>
+
+  <!-- PASSWORD MODAL -->
+  <div class="modal-overlay" *ngIf="showPasswordModal" (click)="closePasswordModal()">
+    <div class="modal-content password-modal" (click)="$event.stopPropagation()">
+      <button type="button" class="modal-close-btn" (click)="closePasswordModal()" [disabled]="isVerifyingPassword">&times;</button>
+      <h3 class="modal-title">ADMIN PASSWORD REQUIRED</h3>
+      <p class="modal-subtitle">Enter your admin password to unlock user details.</p>
+
+      <input
+        #adminPasswordField
+        type="password"
+        [(ngModel)]="adminPasswordInput"
+        placeholder="Password"
+        autocomplete="off"
+        name="unlock_admin_password"
+        [disabled]="isVerifyingPassword"
+        (keydown)="$event.stopPropagation()"
+        (keyup.enter)="verifyAdminPassword()"
+      />
+
+      <p class="modal-error" *ngIf="passwordError">{{ passwordError }}</p>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-modal btn-yes" (click)="verifyAdminPassword()" [disabled]="isVerifyingPassword">
+          {{ isVerifyingPassword ? 'VERIFYING...' : 'UNLOCK DETAILS' }}
+        </button>
+        <button type="button" class="btn-modal btn-no" (click)="closePasswordModal()" [disabled]="isVerifyingPassword">CLOSE</button>
       </div>
-
-      <div class="id-preview" *ngIf="decryptedMode && getIdPhotoUrl(acc)">
-        <p><strong>Valid ID Status:</strong></p>
-        <button type="button" class="id-badge id-link" (click)="openIdModal(acc)">Uploaded (View)</button>
-      </div>
-
-      <!-- Only show Revert Ban for temporary bans -->
-      <button *ngIf="isTemporaryBan(acc)" type="button" class="btn btn-ban big" (click)="openUnbanConfirmation(acc)">Revert Ban</button>
-      <!-- Show Ban button for non-banned accounts -->
-      <button *ngIf="acc.accountStatus !== 'BANNED'" type="button" class="btn btn-ban big" (click)="ban(acc)">Ban Account</button>
     </div>
   </div>
 
@@ -105,7 +167,7 @@
   <div class="modal-overlay" *ngIf="showBanReasonsModal" (click)="cancelBan()">
     <div class="modal-content ban-reasons-modal" (click)="$event.stopPropagation()">
       <h3 class="modal-title">BAN ACCOUNT</h3>
-      <p class="modal-subtitle">Select reason(s) for banning {{ accountToBan?.fullName }}</p>
+      <p class="modal-subtitle">Select reason(s) for banning {{ getPublicName(accountToBan) }}</p>
       
       <div class="ban-reasons-list">
         <label class="reason-checkbox" *ngFor="let reason of banReasons">
@@ -126,7 +188,7 @@
   <div class="modal-overlay" *ngIf="showBanConfirmationModal" (click)="cancelBanConfirmation()">
     <div class="modal-content ban-confirmation-modal" (click)="$event.stopPropagation()">
       <h3 class="modal-title">CONFIRM BAN</h3>
-      <p class="modal-subtitle">{{ accountToBan?.fullName }}</p>
+      <p class="modal-subtitle">{{ getPublicName(accountToBan) }}</p>
       
       <div class="ban-summary">
         <div class="ban-info-item">
@@ -153,7 +215,7 @@
   <div class="modal-overlay" *ngIf="showUnbanConfirmationModal" (click)="cancelUnban()">
     <div class="modal-content ban-confirmation-modal" (click)="$event.stopPropagation()">
       <h3 class="modal-title">REVERT BAN</h3>
-      <p class="modal-subtitle">{{ accountToUnban?.fullName }}</p>
+      <p class="modal-subtitle">{{ getPublicName(accountToUnban) }}</p>
 
       <div class="ban-summary">
         <div class="ban-info-item">
@@ -177,11 +239,11 @@
   <div class="modal-overlay" *ngIf="showIdModal" (click)="closeIdModal()">
     <div class="modal-content id-modal" (click)="$event.stopPropagation()">
       <div class="id-modal-header">
-        <h3 class="modal-title">VALID ID</h3>
-        <button type="button" class="id-modal-close" (click)="closeIdModal()">×</button>
+        <h3 class="modal-title">{{ idModalTitle }}</h3>
+        <button type="button" class="id-modal-close" (click)="closeIdModal()">&times;</button>
       </div>
       <div class="id-modal-body">
-        <img *ngIf="idModalUrl" [src]="idModalUrl" alt="Valid ID" />
+        <img *ngIf="idModalUrl" [src]="idModalUrl" [alt]="idModalTitle" />
       </div>
     </div>
   </div>
