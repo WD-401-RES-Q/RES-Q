@@ -15,6 +15,7 @@ import '../../../common/theme/app_theme.dart';
 
 import '../../../common/services/location_service.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../home/pages/home_page.dart';
 
@@ -424,8 +425,14 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   String _normalizeStatusLabel(String status) {
-    final normalized = status.trim().toLowerCase();
-    if (normalized == 'flagged' || normalized == 'unverified') {
+    final normalized = status
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', ' ')
+        .replaceAll('_', ' ');
+    if (normalized == 'flagged' ||
+        normalized == 'unverified' ||
+        normalized == 'admin flagged') {
       return 'FLAGGED';
     }
     if (normalized == 'pending') {
@@ -439,6 +446,9 @@ class _ReportMapPageState extends State<ReportMapPage>
     }
     if (normalized == 'resolved' || normalized == 'incident resolved') {
       return 'RESOLVED';
+    }
+    if (normalized == 'approved') {
+      return 'APPROVED';
     }
     return status.toUpperCase();
   }
@@ -2022,20 +2032,43 @@ class _ReportMapPageState extends State<ReportMapPage>
     required double width,
     required double height,
   }) {
-    if (assetPath.toLowerCase().endsWith('.svg')) {
+    final resolvedPath = _resolveIconAssetPath(assetPath);
+
+    if (resolvedPath.toLowerCase().endsWith('.svg')) {
       return SvgPicture.asset(
-        assetPath,
+        resolvedPath,
         width: width,
         height: height,
         fit: BoxFit.contain,
+        placeholderBuilder: (_) =>
+            SizedBox(width: width, height: height, child: _missingIcon()),
       );
     }
 
     return Image.asset(
-      assetPath,
+      resolvedPath,
       width: width,
       height: height,
       fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => _missingIcon(),
+    );
+  }
+
+  String _resolveIconAssetPath(String assetPath) {
+    final lower = assetPath.toLowerCase();
+    if (lower.endsWith('.svg') &&
+        (lower.contains('/icons/buttons/') ||
+            lower.contains('/icons/locations/'))) {
+      return assetPath.substring(0, assetPath.length - 4) + '.png';
+    }
+    return assetPath;
+  }
+
+  Widget _missingIcon() {
+    return const Icon(
+      Icons.warning_amber_rounded,
+      color: Colors.white,
+      size: 24,
     );
   }
 
@@ -2236,11 +2269,9 @@ class _ReportMapPageState extends State<ReportMapPage>
                     children: [
                       Row(
                         children: [
-                          IconButton(
-                            icon: const Icon(
-                              Icons.arrow_back,
-                              color: Colors.white,
-                            ),
+                          ResqBackButton(
+                            style: ResqBackButtonStyle.ghost,
+                            iconColor: Colors.white,
                             onPressed: () => Navigator.pop(context),
                           ),
                           const SizedBox(width: 8),

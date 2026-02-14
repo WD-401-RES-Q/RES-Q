@@ -521,25 +521,17 @@ class _PINCreationPageState extends State<PINCreationPage> {
       body: SafeArea(
         child: Column(
           children: [
-            // Header with back button and logo
-            Padding(
+            ResqLogoHeader(
               padding: const EdgeInsets.only(
                 top: AppDimensions.paddingMedium,
                 left: AppDimensions.paddingXLarge,
                 right: AppDimensions.paddingXLarge,
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const ResqBackButton.outline(),
-                  const ResqLogo(fontSize: 53),
-                  const SizedBox(width: 44),
-                ],
-              ),
+              leading: const ResqBackButton.outline(),
+              title: Text('CREATE PIN', style: AppTextStyles.authPageTitle),
+              titleSpacing: AppDimensions.paddingSmall,
+              bottomSpacing: AppDimensions.paddingSmall,
             ),
-            const SizedBox(height: AppDimensions.paddingSmall),
-            Text('CREATE PIN', style: AppTextStyles.authPageTitle),
-            const SizedBox(height: AppDimensions.paddingSmall),
 
             // Content
             Expanded(

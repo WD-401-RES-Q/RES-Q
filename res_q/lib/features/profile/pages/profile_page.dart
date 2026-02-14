@@ -8,6 +8,7 @@ import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -15,6 +16,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/registration_prefs.dart';
 import '../../../common/utils/security_hash.dart';
+import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../auth/pages/login_page.dart';
 
@@ -37,10 +39,16 @@ class _ProfilePageState extends State<ProfilePage>
   bool _soundEnabled = true;
   bool _vibrationEnabled = true;
   final ImagePicker _imagePicker = ImagePicker();
+  final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
+    region: 'asia-east2',
+  );
   XFile? _profilePhoto;
   Uint8List? _profilePhotoBytes;
   String? _profilePhotoUrl; // URL from Firebase Storage
   bool _isUploadingPhoto = false;
+  bool _isRefreshingProfile = false;
+  DateTime? _lastProfileRefreshAt;
+  static const Duration _profileRefreshCooldown = Duration(seconds: 2);
 
   @override
   void initState() {
@@ -106,104 +114,249 @@ class _ProfilePageState extends State<ProfilePage>
     return '';
   }
 
-  Future<void> _refreshProfileDataFromFirestore() async {
-    final sessionData = UserSession.currentUserData;
-    if (sessionData == null) {
-      return;
-    }
-
-    final role = (sessionData['role'] ?? '').toString().toLowerCase();
-    if (role == 'semi-admin' || role == 'semi_admin' || role == 'responder') {
-      return;
-    }
-
-    final contactNumber = sessionData['contactNumber']?.toString().trim() ?? '';
-    if (contactNumber.isEmpty) {
+  Future<void> _ensureFirebaseAuthSession() async {
+    if (FirebaseAuth.instance.currentUser != null) {
       return;
     }
 
     try {
-      DocumentSnapshot<Map<String, dynamic>>? userDoc;
-      final docId = sessionData['docId']?.toString().trim() ?? '';
+      await FirebaseAuth.instance.signInAnonymously();
+    } catch (e) {
+      debugPrint('Anonymous auth unavailable: $e');
+    }
+  }
 
-      if (docId.isNotEmpty) {
-        final candidate = await FirebaseFirestore.instance
-            .collection('approved_users')
-            .doc(docId)
-            .get();
-        if (candidate.exists) {
-          userDoc = candidate;
+  Map<String, dynamic> _toStringKeyedMap(dynamic rawValue) {
+    if (rawValue is Map) {
+      return rawValue.map((key, value) => MapEntry(key.toString(), value));
+    }
+    return <String, dynamic>{};
+  }
+
+  List<String> _buildContactCandidates(String rawContactNumber) {
+    final normalized = rawContactNumber.trim();
+    final digitsOnly = normalized.replaceAll(RegExp(r'\D'), '');
+    final candidates = <String>{};
+
+    if (normalized.isNotEmpty) {
+      candidates.add(normalized);
+    }
+
+    if (digitsOnly.isNotEmpty) {
+      candidates.add(digitsOnly);
+      if (digitsOnly.startsWith('63')) {
+        candidates.add('+$digitsOnly');
+        if (digitsOnly.length == 12) {
+          candidates.add('0${digitsOnly.substring(2)}');
         }
+      } else if (digitsOnly.length == 10) {
+        candidates.add('+63$digitsOnly');
+        candidates.add('0$digitsOnly');
+      } else if (digitsOnly.startsWith('0') && digitsOnly.length == 11) {
+        final localNumber = digitsOnly.substring(1);
+        candidates.add('+63$localNumber');
+        candidates.add('63$localNumber');
       }
+    }
 
-      if (userDoc == null) {
-        final contactHash = SecurityHash.sha256Hex(contactNumber);
-        var query = await FirebaseFirestore.instance
-            .collection('approved_users')
-            .where('contactNumber_hash', isEqualTo: contactHash)
-            .limit(1)
-            .get();
+    return candidates.toList(growable: false);
+  }
 
-        if (query.docs.isEmpty) {
-          query = await FirebaseFirestore.instance
-              .collection('approved_users')
-              .where('contactNumber', isEqualTo: contactNumber)
-              .limit(1)
-              .get();
-        }
+  Future<String?> _resolveApprovedUserDocId({
+    required String contactNumber,
+    String? preferredDocId,
+  }) async {
+    final preferred = preferredDocId?.trim() ?? '';
+    final usersRef = FirebaseFirestore.instance.collection('approved_users');
 
-        if (query.docs.isNotEmpty) {
-          userDoc = query.docs.first;
-        }
+    if (preferred.isNotEmpty) {
+      final existingDoc = await usersRef.doc(preferred).get();
+      if (existingDoc.exists) {
+        return preferred;
       }
+    }
 
-      if (userDoc == null || !userDoc.exists) {
+    final contactCandidates = _buildContactCandidates(contactNumber);
+    for (final candidate in contactCandidates) {
+      final contactHash = SecurityHash.sha256Hex(candidate);
+      final hashedQuery = await usersRef
+          .where('contactNumber_hash', isEqualTo: contactHash)
+          .limit(1)
+          .get();
+      if (hashedQuery.docs.isNotEmpty) {
+        return hashedQuery.docs.first.id;
+      }
+    }
+
+    for (final candidate in contactCandidates) {
+      final plaintextQuery = await usersRef
+          .where('contactNumber', isEqualTo: candidate)
+          .limit(1)
+          .get();
+      if (plaintextQuery.docs.isNotEmpty) {
+        return plaintextQuery.docs.first.id;
+      }
+    }
+
+    return null;
+  }
+
+  void _cacheProfileData({
+    required Map<String, dynamic> sessionData,
+    required Map<String, dynamic> latestData,
+    required String contactNumber,
+    String? resolvedDocId,
+  }) {
+    final mergedData = <String, dynamic>{
+      ...sessionData,
+      ...latestData,
+      'contactNumber': contactNumber,
+    };
+
+    final effectiveDocId =
+        (resolvedDocId ?? mergedData['docId']?.toString() ?? '').trim();
+    if (effectiveDocId.isNotEmpty) {
+      mergedData['docId'] = effectiveDocId;
+    }
+
+    final fullName = _readProfileField(
+      mergedData,
+      'fullName',
+      fallbacks: const ['displayName'],
+    );
+    final email = _readProfileField(mergedData, 'email');
+    final address = _readProfileField(mergedData, 'address');
+
+    if (fullName.isNotEmpty) {
+      mergedData['fullName'] = fullName;
+      mergedData['displayName'] = fullName;
+    } else {
+      mergedData.remove('fullName');
+    }
+    if (email.isNotEmpty) {
+      mergedData['email'] = email;
+    } else {
+      mergedData.remove('email');
+    }
+    if (address.isNotEmpty) {
+      mergedData['address'] = address;
+    } else {
+      mergedData.remove('address');
+    }
+
+    UserSession.setUserData(mergedData);
+
+    final latestPhotoUrl = mergedData['profilePhotoUrl']?.toString();
+    if (!mounted) return;
+
+    if (latestPhotoUrl != null && latestPhotoUrl.isNotEmpty) {
+      setState(() {
+        _profilePhotoUrl = latestPhotoUrl;
+      });
+      return;
+    }
+
+    setState(() {});
+  }
+
+  Future<void> _refreshProfileDataFromFirestore({bool force = false}) async {
+    if (_isRefreshingProfile) {
+      return;
+    }
+    if (!force &&
+        _lastProfileRefreshAt != null &&
+        DateTime.now().difference(_lastProfileRefreshAt!) <
+            _profileRefreshCooldown) {
+      return;
+    }
+    _isRefreshingProfile = true;
+    try {
+      final sessionData = UserSession.currentUserData;
+      if (sessionData == null) {
         return;
       }
 
-      final mergedData = <String, dynamic>{
-        ...sessionData,
-        ...?userDoc.data(),
-        'docId': userDoc.id,
-        'contactNumber': contactNumber,
-      };
-
-      final fullName = _readProfileField(
-        mergedData,
-        'fullName',
-        fallbacks: const ['displayName'],
-      );
-      final email = _readProfileField(mergedData, 'email');
-      final address = _readProfileField(mergedData, 'address');
-
-      if (fullName.isNotEmpty) {
-        mergedData['fullName'] = fullName;
-      } else {
-        mergedData.remove('fullName');
-      }
-      if (email.isNotEmpty) {
-        mergedData['email'] = email;
-      } else {
-        mergedData.remove('email');
-      }
-      if (address.isNotEmpty) {
-        mergedData['address'] = address;
-      } else {
-        mergedData.remove('address');
+      final role = (sessionData['role'] ?? '').toString().toLowerCase();
+      if (role == 'semi-admin' || role == 'semi_admin' || role == 'responder') {
+        return;
       }
 
-      UserSession.setUserData(mergedData);
+      final contactNumber =
+          sessionData['contactNumber']?.toString().trim() ?? '';
+      if (contactNumber.isEmpty) {
+        return;
+      }
+      final contactCandidates = _buildContactCandidates(contactNumber);
+      final primaryContact = contactCandidates.isNotEmpty
+          ? contactCandidates.first
+          : contactNumber;
 
-      final latestPhotoUrl = mergedData['profilePhotoUrl']?.toString();
-      if (mounted && latestPhotoUrl != null && latestPhotoUrl.isNotEmpty) {
-        setState(() {
-          _profilePhotoUrl = latestPhotoUrl;
+      final docId = sessionData['docId']?.toString().trim() ?? '';
+
+      try {
+        await _ensureFirebaseAuthSession();
+
+        final callable = _functions.httpsCallable('getOwnDecryptedProfile');
+        final callableResult = await callable.call(<String, dynamic>{
+          'contactNumber': primaryContact,
+          if (docId.isNotEmpty) 'docId': docId,
         });
-      } else if (mounted) {
-        setState(() {});
+
+        final callablePayload = _toStringKeyedMap(callableResult.data);
+        final callableSuccess = callablePayload['success'] == true;
+        final decryptedData = _toStringKeyedMap(callablePayload['userData']);
+
+        if (callableSuccess && decryptedData.isNotEmpty) {
+          final resolvedDocId =
+              (decryptedData['id'] ?? decryptedData['docId'] ?? docId)
+                  .toString()
+                  .trim();
+          _cacheProfileData(
+            sessionData: sessionData,
+            latestData: decryptedData,
+            contactNumber: contactNumber,
+            resolvedDocId: resolvedDocId.isEmpty ? null : resolvedDocId,
+          );
+          return;
+        }
+      } on FirebaseFunctionsException catch (e) {
+        debugPrint(
+          'Profile decryption callable unavailable (${e.code}): ${e.message}',
+        );
+      } catch (e) {
+        debugPrint('Profile decryption callable failed: $e');
       }
-    } catch (e) {
-      debugPrint('Failed to refresh profile data: $e');
+
+      try {
+        final resolvedDocId = await _resolveApprovedUserDocId(
+          contactNumber: contactNumber,
+          preferredDocId: docId,
+        );
+        if (resolvedDocId == null || resolvedDocId.isEmpty) {
+          return;
+        }
+
+        final userDoc = await FirebaseFirestore.instance
+            .collection('approved_users')
+            .doc(resolvedDocId)
+            .get();
+
+        if (!userDoc.exists) {
+          return;
+        }
+
+        _cacheProfileData(
+          sessionData: sessionData,
+          latestData: userDoc.data() ?? <String, dynamic>{},
+          contactNumber: contactNumber,
+          resolvedDocId: resolvedDocId,
+        );
+      } catch (e) {
+        debugPrint('Failed to refresh profile data: $e');
+      }
+    } finally {
+      _isRefreshingProfile = false;
+      _lastProfileRefreshAt = DateTime.now();
     }
   }
 
@@ -255,7 +408,16 @@ class _ProfilePageState extends State<ProfilePage>
     return '';
   }
 
-  void _showModal(BuildContext context, IconData icon, String title) {
+  Future<void> _showModal(
+    BuildContext context,
+    IconData icon,
+    String title,
+  ) async {
+    if (title == 'Personal Information') {
+      await _refreshProfileDataFromFirestore();
+      if (!context.mounted) return;
+    }
+
     final content = _getModalContent(title);
     int feedbackRating = 4;
     String? selectedProblemType;
@@ -1010,13 +1172,13 @@ class _ProfilePageState extends State<ProfilePage>
 
   Widget _buildPersonalInfoContent() {
     final userData = UserSession.currentUserData ?? {};
-    final fullNameValue = _readProfileField(
+    String fullNameValue = _readProfileField(
       userData,
       'fullName',
       fallbacks: const ['displayName'],
     );
-    final emailValue = _readProfileField(userData, 'email');
-    final addressValue = _readProfileField(userData, 'address');
+    String emailValue = _readProfileField(userData, 'email');
+    String addressValue = _readProfileField(userData, 'address');
     final fullNameCtl = TextEditingController(text: fullNameValue);
     final emailCtl = TextEditingController(text: emailValue);
     final addressCtl = TextEditingController(text: addressValue);
@@ -1151,7 +1313,10 @@ class _ProfilePageState extends State<ProfilePage>
                             ? null
                             : () async {
                                 if (!isEditing) {
-                                  setModalState(() => isEditing = true);
+                                  setModalState(() {
+                                    isEditing = true;
+                                    errorMessage = null;
+                                  });
                                 } else {
                                   // Validate and save
                                   final newFullName = fullNameCtl.text.trim();
@@ -1177,49 +1342,99 @@ class _ProfilePageState extends State<ProfilePage>
                                     return;
                                   }
 
-                                  // Check if we have a valid document ID
-                                  if (docId.isEmpty) {
-                                    setModalState(() {
-                                      errorMessage =
-                                          'User session error. Please log out and log in again.';
-                                    });
-                                    return;
-                                  }
-
                                   setModalState(() {
                                     isSaving = true;
                                     errorMessage = null;
                                   });
 
                                   try {
-                                    // Use set with merge to handle both create and update
-                                    await FirebaseFirestore.instance
-                                        .collection('approved_users')
-                                        .doc(docId)
-                                        .set({
-                                          'fullName': newFullName,
-                                          'email': newEmail.isEmpty
-                                              ? null
-                                              : newEmail,
-                                          'address': newAddress,
-                                          'updatedAt':
-                                              FieldValue.serverTimestamp(),
-                                        }, SetOptions(merge: true));
+                                    final effectiveDocId =
+                                        await _resolveApprovedUserDocId(
+                                          contactNumber: phoneNumber,
+                                          preferredDocId:
+                                              UserSession
+                                                  .currentUserData?['docId']
+                                                  ?.toString() ??
+                                              docId,
+                                        );
+                                    if (effectiveDocId == null ||
+                                        effectiveDocId.isEmpty) {
+                                      throw FirebaseException(
+                                        plugin: 'cloud_firestore',
+                                        code: 'not-found',
+                                        message:
+                                            'Could not locate your profile record.',
+                                      );
+                                    }
 
-                                    // Update local session
+                                    final docRef = FirebaseFirestore.instance
+                                        .collection('approved_users')
+                                        .doc(effectiveDocId);
+                                    final payload = <String, dynamic>{
+                                      'fullName': newFullName,
+                                      'displayName': newFullName,
+                                      'updatedAt': FieldValue.serverTimestamp(),
+                                      if (newEmail.isEmpty)
+                                        'email': FieldValue.delete()
+                                      else
+                                        'email': newEmail,
+                                      if (newAddress.isEmpty)
+                                        'address': FieldValue.delete()
+                                      else
+                                        'address': newAddress,
+                                    };
+
+                                    await docRef.set(
+                                      payload,
+                                      SetOptions(merge: true),
+                                    );
+
+                                    // Ensure save reached backend before success message.
+                                    await docRef.get(
+                                      const GetOptions(source: Source.server),
+                                    );
+
+                                    UserSession.currentUserData?['docId'] =
+                                        effectiveDocId;
                                     UserSession.currentUserData?['fullName'] =
+                                        newFullName;
+                                    UserSession
+                                            .currentUserData?['displayName'] =
                                         newFullName;
                                     UserSession.currentUserData?['email'] =
                                         newEmail;
                                     UserSession.currentUserData?['address'] =
                                         newAddress;
 
+                                    await _refreshProfileDataFromFirestore(
+                                      force: true,
+                                    );
+                                    final refreshedData =
+                                        UserSession.currentUserData ?? {};
+                                    fullNameValue = _readProfileField(
+                                      refreshedData,
+                                      'fullName',
+                                      fallbacks: const ['displayName'],
+                                    );
+                                    emailValue = _readProfileField(
+                                      refreshedData,
+                                      'email',
+                                    );
+                                    addressValue = _readProfileField(
+                                      refreshedData,
+                                      'address',
+                                    );
+                                    fullNameCtl.text = fullNameValue;
+                                    emailCtl.text = emailValue;
+                                    addressCtl.text = addressValue;
+
                                     setModalState(() {
                                       isEditing = false;
                                       isSaving = false;
+                                      errorMessage = null;
                                     });
 
-                                    if (mounted) {
+                                    if (context.mounted) {
                                       AppSnackBar.show(
                                         context,
                                         'Profile updated successfully!',
@@ -1423,18 +1638,35 @@ class _ProfilePageState extends State<ProfilePage>
     final userData = UserSession.currentUserData ?? {};
     final docId = userData['docId']?.toString() ?? '';
     final contactNumber = userData['contactNumber']?.toString() ?? '';
+    final settingsFuture = Future.wait<dynamic>([
+      _checkBiometricsAvailable(),
+      _getBiometricsEnabled(),
+    ]);
 
-    return StatefulBuilder(
-      builder: (context, setModalState) {
-        return FutureBuilder<List<dynamic>>(
-          future: Future.wait([
-            _checkBiometricsAvailable(),
-            _getBiometricsEnabled(),
-          ]),
-          builder: (context, snapshot) {
-            final biometricsAvailable = snapshot.data?[0] as bool? ?? false;
-            final biometricsEnabled = snapshot.data?[1] as bool? ?? false;
+    return FutureBuilder<List<dynamic>>(
+      future: settingsFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 32),
+            child: Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+            ),
+          );
+        }
 
+        final initialBiometricsAvailable = snapshot.data?[0] as bool? ?? false;
+        final initialBiometricsEnabled = snapshot.data?[1] as bool? ?? false;
+        bool biometricsAvailable = initialBiometricsAvailable;
+        bool biometricsEnabled = initialBiometricsEnabled;
+        bool isUpdatingBiometrics = false;
+
+        return StatefulBuilder(
+          builder: (context, setModalState) {
             return SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1492,25 +1724,43 @@ class _ProfilePageState extends State<ProfilePage>
                             ),
                             Switch(
                               value: biometricsEnabled,
-                              onChanged: biometricsAvailable
-                                  ? (value) async {
-                                      await _setBiometricsEnabled(value);
-                                      setModalState(() {});
-                                      if (mounted) {
-                                        AppSnackBar.show(
-                                          context,
-                                          value
-                                              ? 'Biometric login enabled'
-                                              : 'Biometric login disabled',
-                                          type: value
-                                              ? AppSnackBarType.success
-                                              : AppSnackBarType.info,
-                                          useRootOverlay: true,
-                                        );
-                                      }
-                                    }
-                                  : null,
-                              activeColor: const Color(0xFFAC1B22),
+                              onChanged:
+                                  (!biometricsAvailable || isUpdatingBiometrics)
+                                  ? null
+                                  : (value) async {
+                                      setModalState(() {
+                                        biometricsEnabled = value;
+                                        isUpdatingBiometrics = true;
+                                      });
+
+                                      final saved = await _setBiometricsEnabled(
+                                        value,
+                                      );
+                                      if (!context.mounted) return;
+
+                                      setModalState(() {
+                                        isUpdatingBiometrics = false;
+                                        if (!saved) {
+                                          biometricsEnabled = !value;
+                                        }
+                                      });
+
+                                      AppSnackBar.show(
+                                        context,
+                                        saved
+                                            ? (value
+                                                  ? 'Biometric login enabled'
+                                                  : 'Biometric login disabled')
+                                            : 'Unable to update biometric setting.',
+                                        type: saved
+                                            ? (value
+                                                  ? AppSnackBarType.success
+                                                  : AppSnackBarType.info)
+                                            : AppSnackBarType.error,
+                                        useRootOverlay: true,
+                                      );
+                                    },
+                              activeThumbColor: const Color(0xFFAC1B22),
                             ),
                           ],
                         ),
@@ -1560,7 +1810,7 @@ class _ProfilePageState extends State<ProfilePage>
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    'Update your 6-digit security PIN',
+                                    'Update your 4-digit security PIN',
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: Colors.grey[600],
@@ -1642,9 +1892,9 @@ class _ProfilePageState extends State<ProfilePage>
     if (kIsWeb) return false;
     try {
       final localAuth = LocalAuthentication();
-      final canCheck = await localAuth.canCheckBiometrics;
       final isDeviceSupported = await localAuth.isDeviceSupported();
-      return canCheck && isDeviceSupported;
+      final availableBiometrics = await localAuth.getAvailableBiometrics();
+      return isDeviceSupported && availableBiometrics.isNotEmpty;
     } catch (e) {
       debugPrint('Error checking biometrics: $e');
       return false;
@@ -1652,12 +1902,18 @@ class _ProfilePageState extends State<ProfilePage>
   }
 
   Future<bool> _getBiometricsEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
     try {
       final contactNumber =
           UserSession.currentUserData?['contactNumber'] as String?;
       if (contactNumber == null) return false;
 
       final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+      final localEnabled = prefs.getBool('biometrics_enabled') ?? false;
+      final localPhone = prefs.getString('biometrics_phone');
+      final localEnabledForCurrentUser =
+          localEnabled && localPhone == cleanPhone;
+      await _ensureFirebaseAuthSession();
 
       // First check Firestore for persistent preference
       final doc = await FirebaseFirestore.instance
@@ -1668,29 +1924,30 @@ class _ProfilePageState extends State<ProfilePage>
       if (doc.exists) {
         final firestoreEnabled =
             doc.data()?['biometricsEnabled'] as bool? ?? false;
-        if (firestoreEnabled) {
-          // Sync to local SharedPreferences
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setBool('biometrics_enabled', true);
-          await prefs.setString('biometrics_phone', cleanPhone);
-          return true;
-        }
+        await prefs.setBool('biometrics_enabled', firestoreEnabled);
+        await prefs.setString('biometrics_phone', cleanPhone);
+        return firestoreEnabled;
       }
 
-      // Fall back to SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getBool('biometrics_enabled') ?? false;
+      // Fall back to local storage if Firestore doc does not exist.
+      return localEnabledForCurrentUser;
     } catch (e) {
-      debugPrint('Error getting biometrics setting: $e');
-      return false;
+      debugPrint('Error getting biometrics setting from Firestore: $e');
+      final contactNumber =
+          UserSession.currentUserData?['contactNumber'] as String?;
+      if (contactNumber == null) return false;
+      final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+      final localEnabled = prefs.getBool('biometrics_enabled') ?? false;
+      final localPhone = prefs.getString('biometrics_phone');
+      return localEnabled && localPhone == cleanPhone;
     }
   }
 
-  Future<void> _setBiometricsEnabled(bool enabled) async {
+  Future<bool> _setBiometricsEnabled(bool enabled) async {
     try {
       final contactNumber =
           UserSession.currentUserData?['contactNumber'] as String?;
-      if (contactNumber == null) return;
+      if (contactNumber == null) return false;
 
       final cleanPhone = contactNumber.replaceAll(RegExp(r'[^0-9+]'), '');
 
@@ -1698,35 +1955,49 @@ class _ProfilePageState extends State<ProfilePage>
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('biometrics_enabled', enabled);
       await prefs.setString('biometrics_phone', cleanPhone);
+      await _ensureFirebaseAuthSession();
 
-      // Save to Firestore for persistence across devices (like votes)
-      await FirebaseFirestore.instance
-          .collection('userPreferences')
-          .doc(cleanPhone)
-          .set({
-            'biometricsEnabled': enabled,
-            'biometricsUpdatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
+      // Save to Firestore for persistence across devices.
+      // Keep local state even if Firestore sync is temporarily unavailable.
+      try {
+        await FirebaseFirestore.instance
+            .collection('userPreferences')
+            .doc(cleanPhone)
+            .set({
+              'biometricsEnabled': enabled,
+              'biometricsUpdatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+      } catch (firestoreError) {
+        debugPrint(
+          'Biometrics preference stored locally, Firestore sync failed: $firestoreError',
+        );
+      }
 
-      debugPrint('✅ Biometrics preference saved: $enabled for $cleanPhone');
+      debugPrint('Biometrics preference saved: $enabled for $cleanPhone');
+      return true;
     } catch (e) {
       debugPrint('Error setting biometrics: $e');
+      return false;
     }
   }
 
   void _showChangePinDialog(String docId, String contactNumber) {
+    const pinLength = 4;
     final currentPinControllers = List.generate(
-      6,
+      pinLength,
       (_) => TextEditingController(),
     );
-    final newPinControllers = List.generate(6, (_) => TextEditingController());
+    final newPinControllers = List.generate(
+      pinLength,
+      (_) => TextEditingController(),
+    );
     final confirmPinControllers = List.generate(
-      6,
+      pinLength,
       (_) => TextEditingController(),
     );
-    final currentPinFocusNodes = List.generate(6, (_) => FocusNode());
-    final newPinFocusNodes = List.generate(6, (_) => FocusNode());
-    final confirmPinFocusNodes = List.generate(6, (_) => FocusNode());
+    final currentPinFocusNodes = List.generate(pinLength, (_) => FocusNode());
+    final newPinFocusNodes = List.generate(pinLength, (_) => FocusNode());
+    final confirmPinFocusNodes = List.generate(pinLength, (_) => FocusNode());
 
     int step = 1; // 1: current PIN, 2: new PIN, 3: confirm PIN
     String? errorMessage;
@@ -1756,9 +2027,9 @@ class _ProfilePageState extends State<ProfilePage>
             String getSubtitle() {
               switch (step) {
                 case 1:
-                  return 'Enter your current 6-digit PIN';
+                  return 'Enter your current 4-digit PIN';
                 case 2:
-                  return 'Create a new 6-digit PIN';
+                  return 'Create a new 4-digit PIN';
                 case 3:
                   return 'Re-enter your new PIN to confirm';
                 default:
@@ -1890,7 +2161,7 @@ class _ProfilePageState extends State<ProfilePage>
                     // PIN Input Fields
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(6, (index) {
+                      children: List.generate(pinLength, (index) {
                         return Container(
                           width: 40,
                           height: 48,
@@ -1931,7 +2202,7 @@ class _ProfilePageState extends State<ProfilePage>
                               ),
                             ),
                             onChanged: (value) {
-                              if (value.isNotEmpty && index < 5) {
+                              if (value.isNotEmpty && index < pinLength - 1) {
                                 getFocusNodes()[index + 1].requestFocus();
                               }
                               if (value.isEmpty && index > 0) {
@@ -1987,10 +2258,10 @@ class _ProfilePageState extends State<ProfilePage>
                                     .map((c) => c.text)
                                     .join();
 
-                                if (pin.length != 6) {
+                                if (pin.length != pinLength) {
                                   setDialogState(
                                     () => errorMessage =
-                                        'Please enter all 6 digits',
+                                        'Please enter all 4 digits',
                                   );
                                   return;
                                 }
@@ -2806,48 +3077,12 @@ class _ProfilePageState extends State<ProfilePage>
             child: Column(
               children: [
                 // ───────── TOP BAR ─────────
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16.0,
-                    vertical: 8,
-                  ),
-                  child: Row(
-                    children: [
-                      const SizedBox(width: 48),
-                      Expanded(
-                        child: Center(
-                          child: RichText(
-                            textAlign: TextAlign.center,
-                            text: TextSpan(
-                              style: TextStyle(
-                                fontSize: 45,
-                                fontWeight: FontWeight.w900,
-                                fontFamily: 'Roboto',
-                              ),
-                              children: const [
-                                TextSpan(
-                                  text: 'PR',
-                                  style: TextStyle(color: Color(0xFFAC1B22)),
-                                ),
-                                TextSpan(
-                                  text: 'O',
-                                  style: TextStyle(color: Color(0xFFFFC806)),
-                                ),
-                                TextSpan(
-                                  text: 'FILE',
-                                  style: TextStyle(color: Color(0xFFAC1B22)),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 48),
-                    ],
-                  ),
+                ResqLogoHeader(
+                  padding: const EdgeInsets.only(top: 12, left: 16, right: 16),
+                  sideSlotWidth: 0,
+                  titleSpacing: 6,
+                  bottomSpacing: 6,
                 ),
-
-                const SizedBox(height: 12),
 
                 // ───────── PROFILE AVATAR ─────────
                 Stack(

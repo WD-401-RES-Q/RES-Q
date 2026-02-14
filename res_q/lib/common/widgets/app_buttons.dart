@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../theme/app_text_styles.dart';
 import '../constants/app_dimensions.dart';
@@ -102,13 +102,13 @@ class ResqBackButton extends StatelessWidget {
   const ResqBackButton({
     super.key,
     this.onPressed,
-    this.size = 44,
+    this.size = 56,
     this.backgroundColor,
     this.iconColor,
-    this.iconSize = AppDimensions.iconMedium,
-    this.radius = AppDimensions.radiusMedium,
+    this.iconSize = 22,
+    this.radius = 14,
     this.boxShadow,
-    this.style = ResqBackButtonStyle.standard,
+    this.style = ResqBackButtonStyle.outline,
   });
 
   /// Creates a branded back button with red background
@@ -127,9 +127,9 @@ class ResqBackButton extends StatelessWidget {
   const ResqBackButton.outline({
     super.key,
     this.onPressed,
-    this.size = 44,
-    this.iconSize = AppDimensions.iconMedium,
-    this.radius = AppDimensions.radiusMedium,
+    this.size = 56,
+    this.iconSize = 22,
+    this.radius = 14,
   }) : style = ResqBackButtonStyle.outline,
        backgroundColor = null,
        iconColor = null,
@@ -201,7 +201,7 @@ class ResqBackButton extends StatelessWidget {
   Border? _getBorder() {
     switch (style) {
       case ResqBackButtonStyle.outline:
-        return Border.all(color: AppTheme.appRed.withOpacity(0.3), width: 1.5);
+        return Border.all(color: AppTheme.appRed.withOpacity(0.35), width: 1.5);
       default:
         return null;
     }

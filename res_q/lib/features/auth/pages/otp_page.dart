@@ -225,25 +225,17 @@ class _OTPPageState extends State<OTPPage> {
       body: SafeArea(
         child: Column(
           children: [
-            // Fixed header with back button and logo (matching registration page)
-            Padding(
+            ResqLogoHeader(
               padding: const EdgeInsets.only(
                 top: AppDimensions.paddingMedium,
                 left: AppDimensions.paddingXLarge,
                 right: AppDimensions.paddingXLarge,
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const ResqBackButton.outline(),
-                  const ResqLogo(fontSize: 53),
-                  const SizedBox(width: 44), // Balance the row
-                ],
-              ),
+              leading: const ResqBackButton.outline(),
+              title: Text('VERIFY OTP', style: AppTextStyles.authPageTitle),
+              titleSpacing: AppDimensions.paddingSmall,
+              bottomSpacing: AppDimensions.paddingSmall,
             ),
-            const SizedBox(height: AppDimensions.paddingSmall),
-            Text('VERIFY OTP', style: AppTextStyles.authPageTitle),
-            const SizedBox(height: AppDimensions.paddingSmall),
 
             // Scrollable content
             Expanded(

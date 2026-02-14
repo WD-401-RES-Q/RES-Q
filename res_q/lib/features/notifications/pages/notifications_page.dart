@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../../common/widgets/auth_widgets.dart';
+import '../../home/pages/home_page.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -21,39 +23,16 @@ class _NotificationsPageState extends State<NotificationsPage> {
     return Container(
       color: appWhite,
       child: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // TITLE
-            Center(
-              child: RichText(
-                textAlign: TextAlign.center,
-                text: const TextSpan(
-                  style: TextStyle(
-                    fontSize: 45,
-                    fontWeight: FontWeight.w900,
-                    fontFamily: 'Roboto',
-                  ),
-                  children: [
-                    TextSpan(
-                      text: 'N',
-                      style: TextStyle(color: appBlue),
-                    ),
-                    TextSpan(
-                      text: 'O',
-                      style: TextStyle(color: appRed),
-                    ),
-                    TextSpan(
-                      text: 'TIFICATION',
-                      style: TextStyle(color: appBlue),
-                    ),
-                  ],
-                ),
-              ),
+            ResqLogoHeader(
+              padding: const EdgeInsets.only(top: 12),
+              sideSlotWidth: 0,
+              titleSpacing: 12,
+              bottomSpacing: 6,
             ),
-
-            const SizedBox(height: 16),
 
             // Unified notification feed
             Expanded(child: _buildUnifiedNotificationFeed()),
@@ -133,13 +112,33 @@ class _NotificationsPageState extends State<NotificationsPage> {
           );
         }
 
-        return ListView.builder(
-          padding: const EdgeInsets.only(bottom: 16),
-          itemCount: notifications.length,
-          itemBuilder: (context, index) {
-            final notification = notifications[index];
-            return _buildNotificationCard(notification);
-          },
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: ListView.separated(
+            padding: EdgeInsets.zero,
+            itemCount: notifications.length,
+            separatorBuilder: (_, __) => Divider(
+              height: 1,
+              thickness: 1,
+              color: appBlack.withValues(alpha: 0.08),
+            ),
+            itemBuilder: (context, index) {
+              final notification = notifications[index];
+              return _buildNotificationCard(notification);
+            },
+          ),
         );
       },
     );
@@ -191,15 +190,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final timeAgo = _getTimeAgo(notification.timestamp);
 
     return GestureDetector(
-      onTap: () => _showNotificationDetail(notification),
+      onTap: () => _handleNotificationTap(notification),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 2),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
           color: notification.isNew ? appBlue.withOpacity(0.04) : Colors.white,
-          border: Border(
-            bottom: BorderSide(color: appBlack.withOpacity(0.08), width: 1),
-          ),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -379,6 +374,31 @@ class _NotificationsPageState extends State<NotificationsPage> {
     } catch (e) {
       debugPrint('Error marking notification as read: $e');
     }
+  }
+
+  Future<void> _handleNotificationTap(_NotificationItem notification) async {
+    await _markNotificationAsRead(notification);
+    if (!mounted) return;
+
+    if (notification.type == _NotificationType.incident) {
+      await _openIncidentReport(notification);
+      return;
+    }
+
+    _showNotificationDetail(notification);
+  }
+
+  Future<void> _openIncidentReport(_NotificationItem notification) async {
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MainPage(
+          initialIndex: 1,
+          initialCommunityReportId: notification.id,
+        ),
+      ),
+    );
   }
 
   void _showNotificationDetail(_NotificationItem notification) {
@@ -765,7 +785,6 @@ class _NotificationItem {
 
     final incidentType = data['incidentType'] as String? ?? 'Incident';
     final reporter = data['name'] as String?;
-    final details = data['details'] as String?;
     final barangay = data['barangay'] as String?;
     final status = data['status'] as String?;
 
@@ -781,7 +800,7 @@ class _NotificationItem {
       id: doc.id,
       type: _NotificationType.incident,
       title: '$incidentType incident reported',
-      subtitle: details,
+      subtitle: null,
       timestamp: timestamp,
       incidentType: incidentType,
       location: barangay ?? 'Location not specified',
