@@ -69,7 +69,6 @@ class _AdminMapPageState extends State<AdminMapPage>
   final List<Marker> _reporterMarkers = [];
   static const Duration _resolvedRetention = Duration(hours: 1);
   final Map<String, Timer> _resolvedRemovalTimers = {};
-  List<Map<String, dynamic>> _resolvedReports = [];
   QuerySnapshot<Map<String, dynamic>>? _latestReportSnapshot;
 
   bool _showEarthquake = true;
@@ -171,20 +170,43 @@ class _AdminMapPageState extends State<AdminMapPage>
     required double width,
     required double height,
   }) {
-    if (assetPath.toLowerCase().endsWith('.svg')) {
+    final resolvedPath = _resolveIconAssetPath(assetPath);
+
+    if (resolvedPath.toLowerCase().endsWith('.svg')) {
       return SvgPicture.asset(
-        assetPath,
+        resolvedPath,
         width: width,
         height: height,
         fit: BoxFit.contain,
+        placeholderBuilder: (_) =>
+            SizedBox(width: width, height: height, child: _missingIcon()),
       );
     }
 
     return Image.asset(
-      assetPath,
+      resolvedPath,
       width: width,
       height: height,
       fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => _missingIcon(),
+    );
+  }
+
+  String _resolveIconAssetPath(String assetPath) {
+    final lower = assetPath.toLowerCase();
+    if (lower.endsWith('.svg') &&
+        (lower.contains('/icons/buttons/') ||
+            lower.contains('/icons/locations/'))) {
+      return assetPath.substring(0, assetPath.length - 4) + '.png';
+    }
+    return assetPath;
+  }
+
+  Widget _missingIcon() {
+    return const Icon(
+      Icons.warning_amber_rounded,
+      color: Colors.white,
+      size: 24,
     );
   }
 
@@ -217,7 +239,6 @@ class _AdminMapPageState extends State<AdminMapPage>
     _latestReportSnapshot = snapshot;
     _incidentMarkers.clear();
     _reporterMarkers.clear();
-    final resolvedReports = <Map<String, dynamic>>[];
     for (final doc in snapshot.docs) {
       final data = doc.data();
       final incidentPoint =
@@ -230,20 +251,26 @@ class _AdminMapPageState extends State<AdminMapPage>
       final incidentType = data['incidentType'] as String? ?? 'Unknown';
       final shouldShowType = _shouldShowIncidentType(incidentType);
       final resolvedAt = _parseResolvedAt(data);
-      final flaggedAt = _parseFlaggedAt(data) ?? _parseReportedAt(data);
-      final isResolved = status == 'resolved' || status == 'incident resolved';
-      final isFlagged = status == 'flagged' || status == 'unverified';
-      final isInactive = isResolved || isFlagged;
-      if (isInactive) {
-        final inactiveAt = isResolved ? resolvedAt : flaggedAt;
+      final isResolved = _isResolvedStatus(status);
+      final isApproved = _isApprovedStatus(status);
+      final isFlagged = _isFlaggedStatus(status);
+
+      if (isFlagged) {
+        _cancelResolvedRemoval(reportId);
+        continue;
+      }
+
+      if (isResolved) {
+        final inactiveAt = resolvedAt ?? _parseReportedAt(data);
         final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
         if (!shouldKeep) {
           continue;
         }
-        if (isResolved && shouldShowType) {
-          resolvedReports.add({'id': reportId, 'data': data});
-        }
       } else {
+        _cancelResolvedRemoval(reportId);
+      }
+
+      if (isApproved) {
         _cancelResolvedRemoval(reportId);
       }
 
@@ -251,7 +278,8 @@ class _AdminMapPageState extends State<AdminMapPage>
         continue;
       }
 
-      final markerSize = isInactive ? 56.0 : 72.0;
+      final isCheckStatus = isResolved || isApproved;
+      final markerSize = isCheckStatus ? 56.0 : 72.0;
       _incidentMarkers.add(
         Marker(
           key: ValueKey('incident-$reportId'),
@@ -263,9 +291,9 @@ class _AdminMapPageState extends State<AdminMapPage>
             data: data,
             reportId: reportId,
             position: incidentPoint,
-            interactive: !isInactive,
+            interactive: true,
             size: markerSize,
-            opacity: isInactive ? 0.45 : 1,
+            opacity: isCheckStatus ? 0.82 : 1,
           ),
         ),
       );
@@ -291,11 +319,6 @@ class _AdminMapPageState extends State<AdminMapPage>
       }
     }
 
-    if (mounted) {
-      setState(() {
-        _resolvedReports = resolvedReports;
-      });
-    }
     _syncAutoAssignedReport(snapshot);
     print('Loaded ${snapshot.docs.length} reports from Firestore');
   }
@@ -304,12 +327,33 @@ class _AdminMapPageState extends State<AdminMapPage>
     return (raw?.toString() ?? '').replaceAll(RegExp(r'\D'), '');
   }
 
+  String _normalizeStatusKey(String status) {
+    return status
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', ' ')
+        .replaceAll('_', ' ');
+  }
+
+  bool _isFlaggedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'flagged' ||
+        normalized == 'unverified' ||
+        normalized == 'admin flagged';
+  }
+
+  bool _isResolvedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'resolved' || normalized == 'incident resolved';
+  }
+
+  bool _isApprovedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'approved';
+  }
+
   bool _isClosedIncidentStatus(String status) {
-    final normalized = status.trim().toLowerCase();
-    return normalized == 'resolved' ||
-        normalized == 'incident resolved' ||
-        normalized == 'flagged' ||
-        normalized == 'unverified';
+    return _isResolvedStatus(status) || _isFlaggedStatus(status);
   }
 
   DateTime _parseSortTimestamp(Object? raw) {
@@ -501,17 +545,6 @@ class _AdminMapPageState extends State<AdminMapPage>
     return null;
   }
 
-  DateTime? _parseFlaggedAt(Map<String, dynamic> data) {
-    final flaggedAtRaw = data['flaggedAt'];
-    if (flaggedAtRaw is Timestamp) {
-      return flaggedAtRaw.toDate();
-    }
-    if (flaggedAtRaw is DateTime) {
-      return flaggedAtRaw;
-    }
-    return null;
-  }
-
   DateTime? _parseReportedAt(Map<String, dynamic> data) {
     final reportedAtRaw = data['reportedAt'];
     if (reportedAtRaw is Timestamp) {
@@ -560,24 +593,25 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   Widget? _buildStatusBadge(String statusLower, double markerSize) {
-    final isResolved =
-        statusLower == 'resolved' || statusLower == 'incident resolved';
-    final isFlagged = statusLower == 'flagged' || statusLower == 'unverified';
+    final normalized = _normalizeStatusKey(statusLower);
+    final isResolved = _isResolvedStatus(statusLower);
+    final isApproved = _isApprovedStatus(statusLower);
+    final isFlagged = _isFlaggedStatus(statusLower);
     final isAttention =
-        statusLower == 'pending' ||
-        statusLower == 'on scene' ||
-        statusLower == 'responding';
+        normalized == 'pending' ||
+        normalized == 'on scene' ||
+        normalized == 'responding';
 
-    if (!isResolved && !isAttention && !isFlagged) return null;
+    if (!isResolved && !isApproved && !isAttention && !isFlagged) return null;
 
     final badgeSize = markerSize <= 60 ? 14.0 : 16.0;
     final iconSize = markerSize <= 60 ? 10.0 : 12.0;
-    final color = isResolved
+    final color = (isResolved || isApproved)
         ? const Color(0xFF00A458)
         : isFlagged
         ? const Color(0xFFDC2626)
         : const Color(0xFFAC1B22);
-    final icon = isResolved
+    final icon = (isResolved || isApproved)
         ? Icons.check
         : isFlagged
         ? Icons.close
@@ -592,105 +626,6 @@ class _AdminMapPageState extends State<AdminMapPage>
         border: Border.all(color: Colors.white, width: 1),
       ),
       child: Icon(icon, color: Colors.white, size: iconSize),
-    );
-  }
-
-  String _formatResolvedTimestamp(DateTime date) {
-    final month = date.month.toString().padLeft(2, '0');
-    final day = date.day.toString().padLeft(2, '0');
-    final hour = date.hour.toString().padLeft(2, '0');
-    final minute = date.minute.toString().padLeft(2, '0');
-    return '$month/$day/${date.year} $hour:$minute';
-  }
-
-  void _openResolvedReportsSheet() {
-    if (_resolvedReports.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No resolved reports available.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Resolved Reports (Last Hour)',
-                style: TextStyle(
-                  fontFamily: 'Roboto',
-                  fontWeight: FontWeight.w900,
-                  fontSize: 16,
-                  color: Color(0xFF111827),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: _resolvedReports.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final entry = _resolvedReports[index];
-                    final reportId = entry['id']?.toString() ?? '';
-                    final data = entry['data'] as Map<String, dynamic>? ?? {};
-                    final incidentType =
-                        data['incidentType'] as String? ?? 'Incident';
-                    final resolvedAt = _parseResolvedAt(data);
-                    final resolvedLabel = resolvedAt != null
-                        ? _formatResolvedTimestamp(resolvedAt)
-                        : 'Resolved recently';
-
-                    return ListTile(
-                      title: Text(
-                        incidentType,
-                        style: const TextStyle(
-                          fontFamily: 'Roboto',
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      subtitle: Text(
-                        'Resolved: $resolvedLabel',
-                        style: const TextStyle(fontFamily: 'RobotoCondensed'),
-                      ),
-                      trailing: const Icon(Icons.info_outline),
-                      onTap: () {
-                        Navigator.pop(context);
-                        final location = data['location'];
-                        if (location is GeoPoint) {
-                          _showIncidentInfo(
-                            data,
-                            reportId,
-                            LatLng(location.latitude, location.longitude),
-                          );
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Location not available.'),
-                            ),
-                          );
-                        }
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -2024,18 +1959,21 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   String _normalizeStatusLabel(String status) {
-    final normalized = status.trim().toLowerCase();
+    final normalized = _normalizeStatusKey(status);
     if (normalized.isEmpty) {
       return 'PENDING';
     }
-    if (normalized == 'flagged' || normalized == 'unverified') {
+    if (_isFlaggedStatus(normalized)) {
       return 'FLAGGED';
     }
     if (normalized == 'on scene' || normalized == 'on-scene') {
       return 'ON SCENE';
     }
-    if (normalized == 'incident resolved') {
+    if (_isResolvedStatus(normalized)) {
       return 'RESOLVED';
+    }
+    if (_isApprovedStatus(normalized)) {
+      return 'APPROVED';
     }
     return status.toUpperCase();
   }
@@ -2933,41 +2871,6 @@ class _AdminMapPageState extends State<AdminMapPage>
             child: Column(
               children: [
                 _buildWeatherButton(),
-                const SizedBox(height: 12),
-                FloatingActionButton.small(
-                  heroTag: 'admin_resolved_reports',
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFFAC1B22),
-                  onPressed: _resolvedReports.isEmpty
-                      ? null
-                      : _openResolvedReportsSheet,
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      const Icon(Icons.history),
-                      if (_resolvedReports.isNotEmpty)
-                        Positioned(
-                          right: -6,
-                          top: -6,
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFAC1B22),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Text(
-                              '${_resolvedReports.length}',
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
                 const SizedBox(height: 12),
                 FloatingActionButton.small(
                   backgroundColor: Colors.white,

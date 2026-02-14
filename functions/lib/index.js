@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupOldReports = exports.syncRejectedUsersEncryption = exports.syncApprovedUsersEncryption = exports.syncPendingUsersEncryption = exports.migratePendingUsersToPlaintext = exports.migrateToEncrypted = exports.getDecryptedUsers = exports.decryptUserData = exports.registerUserEncrypted = void 0;
+exports.cleanupOldReports = exports.syncRejectedUsersEncryption = exports.syncApprovedUsersEncryption = exports.syncPendingUsersEncryption = exports.migratePendingUsersToPlaintext = exports.migrateToEncrypted = exports.getDecryptedUsers = exports.getOwnDecryptedProfile = exports.decryptUserData = exports.registerUserEncrypted = void 0;
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
@@ -33,6 +33,14 @@ class EncryptionHelper {
     }
     static hashValue(value) {
         return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+    }
+    static looksLikeCiphertext(value) {
+        const trimmed = value.trim();
+        if (trimmed.length < 40) {
+            return false;
+        }
+        // AES-GCM payloads are stored as base64 (IV + authTag + ciphertext)
+        return /^[A-Za-z0-9+/=]+$/.test(trimmed) && !trimmed.includes(' ');
     }
     static hashForLookup(value) {
         return this.hashValue(value);
@@ -103,8 +111,18 @@ class EncryptionHelper {
         for (const field of PII_FIELDS) {
             const cipherField = this.cipherField(field);
             const encryptedFlagField = `${field}_encrypted`;
+            const hasTopLevelField = Object.prototype.hasOwnProperty.call(normalized, field);
+            const topLevelValue = normalized[field];
+            const hasTopLevelString = this.isNonEmptyString(topLevelValue);
+            const topLevelLooksCiphertext = hasTopLevelString
+                ? this.looksLikeCiphertext(topLevelValue)
+                : false;
             const mirroredCipherValue = normalized[cipherField];
-            if (this.isNonEmptyString(mirroredCipherValue)) {
+            // Keep modern plaintext fields intact. Only auto-decrypt mirrored values
+            // when top-level data looks like legacy ciphertext.
+            if (hasTopLevelField &&
+                topLevelLooksCiphertext &&
+                this.isNonEmptyString(mirroredCipherValue)) {
                 try {
                     normalized[field] = this.decrypt(mirroredCipherValue);
                     continue;
@@ -115,7 +133,9 @@ class EncryptionHelper {
             }
             // Backward compatibility for legacy v1 format where the top-level field
             // itself may contain ciphertext and <field>_encrypted is true.
-            if (normalized[encryptedFlagField] && this.isNonEmptyString(normalized[field])) {
+            if (normalized[encryptedFlagField] &&
+                hasTopLevelString &&
+                topLevelLooksCiphertext) {
                 try {
                     normalized[field] = this.decrypt(normalized[field]);
                 }
@@ -215,6 +235,12 @@ class EncryptionHelper {
         const decrypted = Object.assign({}, userData);
         for (const field of PII_FIELDS) {
             const cipherField = this.cipherField(field);
+            const topLevelValue = decrypted[field];
+            const hasTopLevelString = this.isNonEmptyString(topLevelValue);
+            // If top-level value is already readable plaintext, trust it.
+            if (hasTopLevelString && !this.looksLikeCiphertext(topLevelValue)) {
+                continue;
+            }
             if (this.isNonEmptyString(decrypted[cipherField])) {
                 try {
                     decrypted[field] = this.decrypt(decrypted[cipherField]);
@@ -380,6 +406,133 @@ exports.decryptUserData = functions
             throw error;
         }
         throw new functions.https.HttpsError('internal', 'Failed to decrypt user data');
+    }
+});
+/**
+ * Cloud Function for end-users to fetch their own decrypted profile data.
+ * Uses contact-number ownership checks to work with the app's phone-first auth flow.
+ */
+exports.getOwnDecryptedProfile = functions
+    .region('asia-east2')
+    .https.onCall(async (data, context) => {
+    try {
+        if (!context.auth) {
+            throw new functions.https.HttpsError('unauthenticated', 'Authentication is required');
+        }
+        const payload = (data !== null && data !== void 0 ? data : {});
+        const contactNumber = typeof payload.contactNumber === 'string'
+            ? payload.contactNumber.trim()
+            : '';
+        const docId = typeof payload.docId === 'string'
+            ? payload.docId.trim()
+            : '';
+        if (contactNumber.length === 0) {
+            throw new functions.https.HttpsError('invalid-argument', 'contactNumber is required');
+        }
+        const normalizePhone = (value) => value.replace(/[^0-9]/g, '');
+        const normalizedContactNumber = normalizePhone(contactNumber);
+        if (normalizedContactNumber.length === 0) {
+            throw new functions.https.HttpsError('invalid-argument', 'contactNumber is invalid');
+        }
+        const phoneCandidates = new Set();
+        phoneCandidates.add(contactNumber);
+        phoneCandidates.add(normalizedContactNumber);
+        if (normalizedContactNumber.startsWith('63')) {
+            phoneCandidates.add(`+${normalizedContactNumber}`);
+            if (normalizedContactNumber.length === 12) {
+                phoneCandidates.add(`0${normalizedContactNumber.substring(2)}`);
+            }
+        }
+        else if (normalizedContactNumber.length === 10) {
+            phoneCandidates.add(`+63${normalizedContactNumber}`);
+            phoneCandidates.add(`0${normalizedContactNumber}`);
+        }
+        else if (normalizedContactNumber.startsWith('0') &&
+            normalizedContactNumber.length === 11) {
+            const local = normalizedContactNumber.substring(1);
+            phoneCandidates.add(`+63${local}`);
+            phoneCandidates.add(`63${local}`);
+        }
+        const normalizedCandidateSet = new Set();
+        const phoneHashes = new Set();
+        for (const candidate of phoneCandidates) {
+            const trimmed = candidate.trim();
+            if (trimmed.length === 0) {
+                continue;
+            }
+            normalizedCandidateSet.add(normalizePhone(trimmed));
+            phoneHashes.add(EncryptionHelper.hashForLookup(trimmed));
+        }
+        let userDoc = null;
+        if (docId.length > 0) {
+            const docById = await db.collection('approved_users').doc(docId).get();
+            if (docById.exists) {
+                userDoc = docById;
+            }
+        }
+        if (!userDoc) {
+            for (const phoneHash of phoneHashes) {
+                const hashedQuery = await db.collection('approved_users')
+                    .where('contactNumber_hash', '==', phoneHash)
+                    .limit(1)
+                    .get();
+                if (!hashedQuery.empty) {
+                    userDoc = hashedQuery.docs[0];
+                    break;
+                }
+            }
+        }
+        if (!userDoc) {
+            for (const candidate of phoneCandidates) {
+                const trimmed = candidate.trim();
+                if (trimmed.length === 0) {
+                    continue;
+                }
+                const plaintextQuery = await db.collection('approved_users')
+                    .where('contactNumber', '==', trimmed)
+                    .limit(1)
+                    .get();
+                if (!plaintextQuery.empty) {
+                    userDoc = plaintextQuery.docs[0];
+                    break;
+                }
+            }
+        }
+        if (!userDoc || !userDoc.exists) {
+            throw new functions.https.HttpsError('not-found', 'User profile not found');
+        }
+        const userData = userDoc.data();
+        const decryptedData = EncryptionHelper.decryptUserData(userData);
+        const storedPhoneHash = typeof userData.contactNumber_hash === 'string'
+            ? userData.contactNumber_hash
+            : '';
+        const storedContact = typeof decryptedData.contactNumber === 'string'
+            ? decryptedData.contactNumber
+            : (typeof userData.contactNumber === 'string' ? userData.contactNumber : '');
+        const normalizedStoredContact = normalizePhone(storedContact);
+        const ownershipVerified = (storedPhoneHash.length > 0 && phoneHashes.has(storedPhoneHash)) || (normalizedStoredContact.length > 0 &&
+            normalizedCandidateSet.has(normalizedStoredContact));
+        if (!ownershipVerified) {
+            throw new functions.https.HttpsError('permission-denied', 'Profile ownership verification failed');
+        }
+        decryptedData['id'] = userDoc.id;
+        const displayName = typeof decryptedData.fullName === 'string'
+            ? decryptedData.fullName.trim()
+            : '';
+        if (displayName.length > 0) {
+            decryptedData[DISPLAY_NAME_FIELD] = displayName;
+        }
+        return {
+            success: true,
+            userData: decryptedData,
+        };
+    }
+    catch (error) {
+        console.error('Get own decrypted profile error:', error);
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        throw new functions.https.HttpsError('internal', 'Failed to load decrypted profile');
     }
 });
 /**

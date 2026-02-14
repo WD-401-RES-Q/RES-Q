@@ -1,13 +1,18 @@
 import 'dart:async';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/widgets/auth_widgets.dart';
+import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
 
 class CommunityPage extends StatefulWidget {
-  const CommunityPage({super.key});
+  final String? initialReportId;
+
+  const CommunityPage({super.key, this.initialReportId});
 
   @override
   State<CommunityPage> createState() => _CommunityPageState();
@@ -35,6 +40,8 @@ class _CommunityPageState extends State<CommunityPage>
   bool _checkedLegacyVotes = false;
   bool _canSyncVotesWithFirestore = true;
   bool _hasLoggedVotesPermissionIssue = false;
+  String? _pendingInitialReportId;
+  bool _initialReportDialogOpened = false;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _announcementsSubscription;
@@ -43,11 +50,24 @@ class _CommunityPageState extends State<CommunityPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _pendingInitialReportId = _normalizeInitialReportId(widget.initialReportId);
     _selectedFilter = _normalizeFilter(_selectedFilter);
     _subscribeToReports();
     _subscribeToAnnouncements();
     // Delay loading votes to ensure UserSession is initialized after login
     _initializeVotes();
+  }
+
+  @override
+  void didUpdateWidget(covariant CommunityPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialReportId != oldWidget.initialReportId) {
+      _pendingInitialReportId = _normalizeInitialReportId(
+        widget.initialReportId,
+      );
+      _initialReportDialogOpened = false;
+      _tryOpenPendingInitialReport();
+    }
   }
 
   Future<void> _initializeVotes() async {
@@ -107,6 +127,7 @@ class _CommunityPageState extends State<CommunityPage>
     _announcementsSubscription = FirebaseFirestore.instance
         .collection('announcements')
         .orderBy('createdAt', descending: true)
+        .limit(20)
         .snapshots()
         .listen(
           (snapshot) {
@@ -353,12 +374,46 @@ class _CommunityPageState extends State<CommunityPage>
             setState(() {
               _reports = reports;
             });
+            _tryOpenPendingInitialReport();
             debugPrint('âœ… Loaded ${reports.length} reports from Firestore');
           },
           onError: (e) {
             debugPrint('âŒ Failed to load reports: $e');
           },
         );
+  }
+
+  String? _normalizeInitialReportId(String? reportId) {
+    final normalized = (reportId ?? '').trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
+  }
+
+  void _tryOpenPendingInitialReport() {
+    if (!mounted ||
+        _initialReportDialogOpened ||
+        _pendingInitialReportId == null) {
+      return;
+    }
+
+    final targetId = _pendingInitialReportId!;
+    final reportIndex = _reports.indexWhere(
+      (report) => report['id']?.toString() == targetId,
+    );
+    if (reportIndex < 0) {
+      return;
+    }
+
+    final report = Map<String, dynamic>.from(_reports[reportIndex]);
+    _initialReportDialogOpened = true;
+    _pendingInitialReportId = null;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _showReportDetailsDialog(report);
+    });
   }
 
   Map<String, dynamic> _mapReportFromDoc(
@@ -1947,38 +2002,15 @@ class _CommunityPageState extends State<CommunityPage>
     return Container(
       color: appOffWhite,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // TITLE
-            Center(
-              child: RichText(
-                text: TextSpan(
-                  style: TextStyle(
-                    fontSize: 45,
-                    fontWeight: FontWeight.w900,
-                    fontFamily: 'Roboto',
-                  ),
-                  children: const [
-                    TextSpan(
-                      text: 'C',
-                      style: TextStyle(color: appBlue),
-                    ),
-                    TextSpan(
-                      text: 'O',
-                      style: TextStyle(color: const Color(0xFFFFC806)),
-                    ),
-                    TextSpan(
-                      text: 'MMUNITY',
-                      style: TextStyle(color: appBlue),
-                    ),
-                  ],
-                ),
-              ),
+            ResqLogoHeader(
+              padding: const EdgeInsets.only(top: 12),
+              sideSlotWidth: 0,
+              bottomSpacing: 6,
             ),
-
-            const SizedBox(height: 12),
 
             // ANNOUNCEMENTS SECTION (horizontal scroll)
             if (_announcements.isNotEmpty) ...[
@@ -1993,17 +2025,20 @@ class _CommunityPageState extends State<CommunityPage>
               ),
               const SizedBox(height: 8),
               SizedBox(
-                height: 100,
+                height: 112,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: _announcements.length,
                   separatorBuilder: (_, __) => const SizedBox(width: 12),
                   itemBuilder: (context, index) {
                     final announcement = _announcements[index];
+                    final imageUrl = (announcement['imageUrl'] as String? ?? '')
+                        .trim();
+                    final hasImage = imageUrl.isNotEmpty;
                     return GestureDetector(
                       onTap: () => _showAnnouncementDetail(announcement),
                       child: Container(
-                        width: 200,
+                        width: 220,
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
@@ -2048,17 +2083,77 @@ class _CommunityPageState extends State<CommunityPage>
                             ),
                             const SizedBox(height: 6),
                             Expanded(
-                              child: Text(
-                                announcement['content'] ?? '',
-                                style: TextStyle(
-                                  fontFamily: 'RobotoCondensed',
-                                  fontSize: 11,
-                                  color: Colors.white.withOpacity(0.9),
-                                ),
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      announcement['content'] ?? '',
+                                      style: TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontSize: 11,
+                                        color: Colors.white.withOpacity(0.9),
+                                      ),
+                                      maxLines: hasImage ? 3 : 4,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (hasImage) ...[
+                                    const SizedBox(width: 10),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: SizedBox(
+                                        width: 56,
+                                        height: 56,
+                                        child: CachedNetworkImage(
+                                          imageUrl: imageUrl,
+                                          fit: BoxFit.cover,
+                                          fadeInDuration: const Duration(
+                                            milliseconds: 120,
+                                          ),
+                                          memCacheWidth: 220,
+                                          memCacheHeight: 220,
+                                          placeholder: (context, url) =>
+                                              Container(
+                                                color: Colors.white24,
+                                                alignment: Alignment.center,
+                                                child: const SizedBox(
+                                                  width: 14,
+                                                  height: 14,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 1.8,
+                                                        color: Colors.white,
+                                                      ),
+                                                ),
+                                              ),
+                                          errorWidget: (context, url, error) =>
+                                              Container(
+                                                color: Colors.white24,
+                                                alignment: Alignment.center,
+                                                child: const Icon(
+                                                  Icons.broken_image_outlined,
+                                                  size: 18,
+                                                  color: Colors.white70,
+                                                ),
+                                              ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ),
+                            if (hasImage) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'Tap to preview',
+                                style: TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontSize: 9.5,
+                                  color: Colors.white.withOpacity(0.85),
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -2265,7 +2360,7 @@ class _CommunityPageState extends State<CommunityPage>
                                                   'Not provided') !=
                                               'Not provided') ...[
                                             Text(
-                                              ' â€¢ ',
+                                              ' \u2022 ',
                                               style: TextStyle(
                                                 fontSize: 12,
                                                 color: Colors.grey[600],
@@ -3626,7 +3721,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                   children: [
                     Expanded(
                       child: Text(
-                        '${widget.report['title']} â€¢ ${widget.report['status']}',
+                        "${widget.report['title']} \u2022 ${widget.report['status']}",
                         style: TextStyle(
                           fontFamily: 'RobotoCondensed',
                           fontSize: 12,
@@ -4320,8 +4415,9 @@ class _CommentsPageState extends State<_CommentsPage> {
       appBar: AppBar(
         backgroundColor: appBlue,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+        leading: ResqBackButton(
+          style: ResqBackButtonStyle.ghost,
+          iconColor: Colors.white,
           onPressed: () => Navigator.pop(context),
         ),
         title: Text(

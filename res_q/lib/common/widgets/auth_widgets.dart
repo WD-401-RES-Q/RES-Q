@@ -50,6 +50,73 @@ class ResqLogo extends StatelessWidget {
   }
 }
 
+/// Shared top header layout for pages that display the RESQ logo.
+/// Keeps logo alignment and vertical spacing consistent across screens.
+class ResqLogoHeader extends StatelessWidget {
+  final Widget? leading;
+  final Widget? trailing;
+  final Widget? title;
+  final EdgeInsetsGeometry padding;
+  final double logoSize;
+  final double sideSlotWidth;
+  final double titleSpacing;
+  final double bottomSpacing;
+  final double logoRowHeight;
+
+  const ResqLogoHeader({
+    super.key,
+    this.leading,
+    this.trailing,
+    this.title,
+    this.padding = const EdgeInsets.only(top: 12, left: 24, right: 24),
+    this.logoSize = 40,
+    this.sideSlotWidth = 56,
+    this.titleSpacing = 8,
+    this.bottomSpacing = 12,
+    this.logoRowHeight = 56,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: padding,
+      child: Column(
+        children: [
+          SizedBox(
+            height: logoRowHeight,
+            child: Row(
+              children: [
+                SizedBox(
+                  width: sideSlotWidth,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: leading ?? const SizedBox.shrink(),
+                  ),
+                ),
+                Expanded(
+                  child: Center(child: ResqLogo(fontSize: logoSize)),
+                ),
+                SizedBox(
+                  width: sideSlotWidth,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: trailing ?? const SizedBox.shrink(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (title != null) ...[
+            SizedBox(height: titleSpacing),
+            Center(child: title!),
+          ],
+          if (bottomSpacing > 0) SizedBox(height: bottomSpacing),
+        ],
+      ),
+    );
+  }
+}
+
 /// Custom Text Field for auth pages
 class AuthTextField extends StatelessWidget {
   final TextEditingController controller;

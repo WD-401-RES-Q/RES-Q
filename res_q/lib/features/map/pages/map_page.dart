@@ -47,7 +47,6 @@ class _MapPageState extends State<MapPage> {
   final List<Marker> _incidentMarkers = [];
   static const Duration _resolvedRetention = Duration(hours: 1);
   final Map<String, Timer> _resolvedRemovalTimers = {};
-  List<Map<String, dynamic>> _resolvedReports = [];
   QuerySnapshot<Map<String, dynamic>>? _latestReportSnapshot;
   static const int _reportFetchLimit = 100;
   bool _hasShownReportLimitNotice = false;
@@ -318,13 +317,38 @@ class _MapPageState extends State<MapPage> {
 
   String _normalizeStatusLabel(String status) {
     final normalized = status.trim().toLowerCase();
-    if (normalized == 'flagged' || normalized == 'unverified') {
+    if (_isFlaggedStatus(normalized)) {
       return 'FLAGGED';
     }
     if (normalized == 'on-scene') {
       return 'ON SCENE';
     }
     return status.toUpperCase();
+  }
+
+  String _normalizeStatusKey(String status) {
+    return status
+        .trim()
+        .toLowerCase()
+        .replaceAll('-', ' ')
+        .replaceAll('_', ' ');
+  }
+
+  bool _isFlaggedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'flagged' ||
+        normalized == 'unverified' ||
+        normalized == 'admin flagged';
+  }
+
+  bool _isResolvedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'resolved' || normalized == 'incident resolved';
+  }
+
+  bool _isApprovedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'approved';
   }
 
   Future<void> _calculateRoute() async {
@@ -701,12 +725,13 @@ class _MapPageState extends State<MapPage> {
       return null;
     }
     final statusLower = (data['status'] as String? ?? '').toLowerCase();
-    final isResolved =
-        statusLower == 'resolved' || statusLower == 'incident resolved';
-    final isFlagged = statusLower == 'flagged' || statusLower == 'unverified';
-    final isInactive = isResolved || isFlagged;
-
-    final markerSize = isInactive ? 56.0 : 72.0;
+    final isFlagged = _isFlaggedStatus(statusLower);
+    if (isFlagged) {
+      return null;
+    }
+    final isCheckStatus =
+        _isResolvedStatus(statusLower) || _isApprovedStatus(statusLower);
+    final markerSize = isCheckStatus ? 56.0 : 72.0;
     final badge = _buildStatusBadge(statusLower, markerSize);
     final baseContent = GestureDetector(
       onTap: () => _showIncidentInfo(data),
@@ -727,11 +752,8 @@ class _MapPageState extends State<MapPage> {
       point: LatLng(location.latitude, location.longitude),
       width: markerSize,
       height: markerSize,
-      child: isInactive
-          ? Opacity(
-              opacity: 0.45,
-              child: IgnorePointer(ignoring: true, child: baseContent),
-            )
+      child: isCheckStatus
+          ? Opacity(opacity: 0.82, child: baseContent)
           : baseContent,
     );
   }
@@ -739,31 +761,34 @@ class _MapPageState extends State<MapPage> {
   void _applyReportSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
     _latestReportSnapshot = snapshot;
     _incidentMarkers.clear();
-    final resolvedReports = <Map<String, dynamic>>[];
     for (var doc in snapshot.docs) {
       final data = doc.data();
       final location = data['location'] as GeoPoint?;
       if (location != null) {
         final reportId = doc.id;
         final status = (data['status'] as String? ?? '').toLowerCase();
-        final incidentType = data['incidentType'] as String? ?? 'Unknown';
-        final shouldShowType = _shouldShowIncidentType(incidentType);
         final resolvedAt = _parseResolvedAt(data);
-        final flaggedAt = _parseFlaggedAt(data) ?? _parseReportedAt(data);
-        final isResolved =
-            status == 'resolved' || status == 'incident resolved';
-        final isFlagged = status == 'flagged' || status == 'unverified';
-        final isInactive = isResolved || isFlagged;
-        if (isInactive) {
-          final inactiveAt = isResolved ? resolvedAt : flaggedAt;
+        final isResolved = _isResolvedStatus(status);
+        final isApproved = _isApprovedStatus(status);
+        final isFlagged = _isFlaggedStatus(status);
+
+        if (isFlagged) {
+          _cancelResolvedRemoval(reportId);
+          continue;
+        }
+
+        if (isResolved) {
+          final inactiveAt = resolvedAt ?? _parseReportedAt(data);
           final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
           if (!shouldKeep) {
             continue;
           }
-          if (isResolved && shouldShowType) {
-            resolvedReports.add({'id': reportId, 'data': data});
-          }
         } else {
+          _cancelResolvedRemoval(reportId);
+        }
+
+        // Approved reports stay visible but lower priority via small marker+check.
+        if (isApproved) {
           _cancelResolvedRemoval(reportId);
         }
         final marker = _createIncidentMarker(reportId: reportId, data: data);
@@ -773,11 +798,6 @@ class _MapPageState extends State<MapPage> {
       }
     }
 
-    if (mounted) {
-      setState(() {
-        _resolvedReports = resolvedReports;
-      });
-    }
     debugPrint('✅ Loaded ${snapshot.docs.length} reports from Firestore');
     if (!_hasShownReportLimitNotice &&
         snapshot.docs.length >= _reportFetchLimit) {
@@ -822,17 +842,6 @@ class _MapPageState extends State<MapPage> {
     }
     if (resolvedAtRaw is DateTime) {
       return resolvedAtRaw;
-    }
-    return null;
-  }
-
-  DateTime? _parseFlaggedAt(Map<String, dynamic> data) {
-    final flaggedAtRaw = data['flaggedAt'];
-    if (flaggedAtRaw is Timestamp) {
-      return flaggedAtRaw.toDate();
-    }
-    if (flaggedAtRaw is DateTime) {
-      return flaggedAtRaw;
     }
     return null;
   }
@@ -895,24 +904,25 @@ class _MapPageState extends State<MapPage> {
   }
 
   Widget? _buildStatusBadge(String statusLower, double markerSize) {
-    final isResolved =
-        statusLower == 'resolved' || statusLower == 'incident resolved';
-    final isFlagged = statusLower == 'flagged' || statusLower == 'unverified';
+    final normalized = _normalizeStatusKey(statusLower);
+    final isResolved = _isResolvedStatus(statusLower);
+    final isApproved = _isApprovedStatus(statusLower);
+    final isFlagged = _isFlaggedStatus(statusLower);
     final isAttention =
-        statusLower == 'pending' ||
-        statusLower == 'on scene' ||
-        statusLower == 'responding';
+        normalized == 'pending' ||
+        normalized == 'on scene' ||
+        normalized == 'responding';
 
-    if (!isResolved && !isAttention && !isFlagged) return null;
+    if (!isResolved && !isApproved && !isAttention && !isFlagged) return null;
 
     final badgeSize = markerSize <= 60 ? 14.0 : 16.0;
     final iconSize = markerSize <= 60 ? 10.0 : 12.0;
-    final color = isResolved
+    final color = (isResolved || isApproved)
         ? const Color(0xFF00A458)
         : isFlagged
         ? const Color(0xFFDC2626)
         : const Color(0xFFAC1B22);
-    final icon = isResolved
+    final icon = (isResolved || isApproved)
         ? Icons.check
         : isFlagged
         ? Icons.close
@@ -927,91 +937,6 @@ class _MapPageState extends State<MapPage> {
         border: Border.all(color: Colors.white, width: 1),
       ),
       child: Icon(icon, color: Colors.white, size: iconSize),
-    );
-  }
-
-  String _formatResolvedTimestamp(DateTime date) {
-    final month = date.month.toString().padLeft(2, '0');
-    final day = date.day.toString().padLeft(2, '0');
-    final hour = date.hour.toString().padLeft(2, '0');
-    final minute = date.minute.toString().padLeft(2, '0');
-    return '$month/$day/${date.year} $hour:$minute';
-  }
-
-  void _openResolvedReportsSheet() {
-    if (_resolvedReports.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No resolved reports available.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
-    }
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Resolved Reports (Last Hour)',
-                style: TextStyle(
-                  fontFamily: 'Roboto',
-                  fontWeight: FontWeight.w900,
-                  fontSize: 16,
-                  color: Color(0xFF111827),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: _resolvedReports.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final entry = _resolvedReports[index];
-                    final data = entry['data'] as Map<String, dynamic>? ?? {};
-                    final incidentType =
-                        data['incidentType'] as String? ?? 'Incident';
-                    final resolvedAt = _parseResolvedAt(data);
-                    final resolvedLabel = resolvedAt != null
-                        ? _formatResolvedTimestamp(resolvedAt)
-                        : 'Resolved recently';
-
-                    return ListTile(
-                      title: Text(
-                        incidentType,
-                        style: const TextStyle(
-                          fontFamily: 'Roboto',
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      subtitle: Text(
-                        'Resolved: $resolvedLabel',
-                        style: const TextStyle(fontFamily: 'RobotoCondensed'),
-                      ),
-                      trailing: const Icon(Icons.info_outline),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _showIncidentInfo(data);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -1385,20 +1310,43 @@ class _MapPageState extends State<MapPage> {
     required double width,
     required double height,
   }) {
-    if (assetPath.toLowerCase().endsWith('.svg')) {
+    final resolvedPath = _resolveIconAssetPath(assetPath);
+
+    if (resolvedPath.toLowerCase().endsWith('.svg')) {
       return SvgPicture.asset(
-        assetPath,
+        resolvedPath,
         width: width,
         height: height,
         fit: BoxFit.contain,
+        placeholderBuilder: (_) =>
+            SizedBox(width: width, height: height, child: _missingIcon()),
       );
     }
 
     return Image.asset(
-      assetPath,
+      resolvedPath,
       width: width,
       height: height,
       fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => _missingIcon(),
+    );
+  }
+
+  String _resolveIconAssetPath(String assetPath) {
+    final lower = assetPath.toLowerCase();
+    if (lower.endsWith('.svg') &&
+        (lower.contains('/icons/buttons/') ||
+            lower.contains('/icons/locations/'))) {
+      return assetPath.substring(0, assetPath.length - 4) + '.png';
+    }
+    return assetPath;
+  }
+
+  Widget _missingIcon() {
+    return const Icon(
+      Icons.warning_amber_rounded,
+      color: Colors.white,
+      size: 24,
     );
   }
 
@@ -1545,7 +1493,7 @@ class _MapPageState extends State<MapPage> {
                     alignment: Alignment.center,
                     children: [
                       SizedBox(
-                        height: 34,
+                        height: 40,
                         child: SvgPicture.asset(
                           'assets/icons/logo/RES-Q_LOGO.svg',
                           fit: BoxFit.contain,
@@ -1758,41 +1706,6 @@ class _MapPageState extends State<MapPage> {
             child: Column(
               children: [
                 _buildWeatherButton(),
-                const SizedBox(height: 12),
-                FloatingActionButton.small(
-                  heroTag: 'resolved_reports',
-                  backgroundColor: Colors.white,
-                  foregroundColor: const Color(0xFFAC1B22),
-                  onPressed: _resolvedReports.isEmpty
-                      ? null
-                      : _openResolvedReportsSheet,
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      const Icon(Icons.history),
-                      if (_resolvedReports.isNotEmpty)
-                        Positioned(
-                          right: -6,
-                          top: -6,
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFAC1B22),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Text(
-                              '${_resolvedReports.length}',
-                              style: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
                 const SizedBox(height: 12),
                 FloatingActionButton.small(
                   backgroundColor: const Color(0xFFAC1B22),

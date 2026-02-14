@@ -361,30 +361,23 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
+            ResqLogoHeader(
               padding: const EdgeInsets.only(
                 top: AppDimensions.paddingMedium,
                 left: AppDimensions.paddingXLarge,
                 right: AppDimensions.paddingXLarge,
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  ResqBackButton.outline(
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                  const ResqLogo(fontSize: 53),
-                  const SizedBox(width: 44),
-                ],
+              leading: ResqBackButton.outline(
+                onPressed: () => Navigator.pop(context),
               ),
+              title: Text(
+                _phoneVerified ? 'RESET PIN' : 'FORGOT PIN',
+                style: AppTextStyles.authPageTitle,
+                textAlign: TextAlign.center,
+              ),
+              titleSpacing: AppDimensions.paddingSmall,
+              bottomSpacing: AppDimensions.paddingXSmall,
             ),
-            const SizedBox(height: AppDimensions.paddingSmall),
-            Text(
-              _phoneVerified ? 'RESET PIN' : 'FORGOT PIN',
-              style: AppTextStyles.authPageTitle,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: AppDimensions.paddingXSmall),
             Expanded(
               child: LayoutBuilder(
                 builder: (context, constraints) {

@@ -916,7 +916,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                         child: GestureDetector(
                           onTap: () => Navigator.pop(context),
                           child: SizedBox(
-                            height: 50,
+                            height: 40,
                             child: Align(
                               alignment: Alignment.center,
                               child: SvgPicture.asset(

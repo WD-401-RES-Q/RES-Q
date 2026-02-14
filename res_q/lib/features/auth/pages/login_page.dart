@@ -1173,7 +1173,7 @@ class _LoginPageState extends State<LoginPage>
   }
 
   Widget _logo() {
-    return SvgPicture.asset('assets/icons/logo/RES-Q_LOGO.svg', height: 53);
+    return SvgPicture.asset('assets/icons/logo/RES-Q_LOGO.svg', height: 40);
   }
 
   void _handlePinKey(String value) {

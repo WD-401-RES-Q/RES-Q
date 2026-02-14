@@ -105,6 +105,11 @@ service cloud.firestore {
       allow delete: if true; // Allow admin to permanently ban (delete) users
     }
 
+    // User preferences (biometrics and per-user app settings)
+    match /userPreferences/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
     // Announcements - readable by all, writable by all
     match /announcements/{docId} {
       allow read: if true;
