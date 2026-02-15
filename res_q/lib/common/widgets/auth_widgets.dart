@@ -1382,11 +1382,16 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     }
   }
 
-  /// Pick and validate image for selfie with ID (capture only)
+  /// Pick and validate image for selfie with ID (camera or gallery)
   Future<void> _pickAndValidateSelfieWithIdImage() async {
+    final source = await _showImageSourceDialog();
+    if (source == null) return;
+
     try {
       final pickedFile = await _imagePicker.pickImage(
-        source: ImageSource.camera,
+        source: source == _IdImageSource.camera
+            ? ImageSource.camera
+            : ImageSource.gallery,
         maxWidth: 1920,
         maxHeight: 1920,
         imageQuality: 85,
@@ -1728,7 +1733,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         ),
         const SizedBox(height: 14),
 
-        // Selfie with ID (capture only)
+        // Selfie with ID (camera or gallery)
         _buildIdSection(
           title: 'SELFIE WITH ID',
           uploadedUrl: _selfieWithIdUrl,
