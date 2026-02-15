@@ -193,7 +193,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
       } else if (!hasFrontId) {
         _idPhotoError = 'Please upload the front of your government ID';
       } else {
-        _idPhotoError = 'Please capture your selfie with ID';
+        _idPhotoError = 'Please upload your selfie with ID';
       }
     });
 

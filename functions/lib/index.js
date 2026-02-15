@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupOldReports = exports.syncRejectedUsersEncryption = exports.syncApprovedUsersEncryption = exports.syncPendingUsersEncryption = exports.migratePendingUsersToPlaintext = exports.migrateToEncrypted = exports.getDecryptedUsers = exports.getOwnDecryptedProfile = exports.decryptUserData = exports.registerUserEncrypted = void 0;
+exports.cleanupOldReports = exports.syncApprovedUsersEncryption = exports.getDecryptedUsers = exports.getOwnDecryptedProfile = exports.decryptUserData = exports.registerUserEncrypted = void 0;
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
@@ -18,6 +18,10 @@ const PII_FIELDS = [
 ];
 const ENCRYPTION_VERSION = 'aes-256-gcm-v2-compat';
 const DISPLAY_NAME_FIELD = 'displayName';
+const LOOKUP_HASH_FIELDS = new Set([
+    'contactNumber',
+    'pin',
+]);
 /**
  * AES-256-GCM Encryption using Node.js crypto
  */
@@ -33,6 +37,9 @@ class EncryptionHelper {
     }
     static hashValue(value) {
         return crypto.createHash('sha256').update(value, 'utf8').digest('hex');
+    }
+    static shouldPersistHash(field) {
+        return LOOKUP_HASH_FIELDS.has(field);
     }
     static looksLikeCiphertext(value) {
         const trimmed = value.trim();
@@ -93,8 +100,13 @@ class EncryptionHelper {
                 // Keep plaintext fields for existing mobile/web query flows,
                 // while storing AES-256-GCM encrypted mirrors for defense/security proof.
                 encrypted[cipherField] = this.encrypt(value);
-                encrypted[hashField] = this.hashValue(value);
-                encrypted[encryptedFlagField] = true;
+                if (this.shouldPersistHash(field)) {
+                    encrypted[hashField] = this.hashValue(value);
+                }
+                else {
+                    delete encrypted[hashField];
+                }
+                delete encrypted[encryptedFlagField];
             }
             else {
                 delete encrypted[cipherField];
@@ -164,20 +176,38 @@ class EncryptionHelper {
                 }
             }
             if (this.isNonEmptyString(value)) {
-                const plaintextHash = this.hashValue(value);
+                const shouldPersistHash = this.shouldPersistHash(field);
+                const plaintextHash = shouldPersistHash ? this.hashValue(value) : '';
                 const storedHash = typeof afterData[hashField] === 'string'
                     ? afterData[hashField]
                     : '';
                 const hasCipher = this.isNonEmptyString(afterData[cipherField]);
-                const hasEncryptedFlag = afterData[encryptedFlagField] === true;
+                const hasEncryptedFlag = afterData[encryptedFlagField] != null;
                 const plaintextChanged = beforeData
                     ? value !== beforeValue
                     : false;
-                if (plaintextChanged || !hasCipher || storedHash !== plaintextHash || !hasEncryptedFlag) {
+                if (plaintextChanged || !hasCipher || (shouldPersistHash && storedHash !== plaintextHash)) {
                     updates[cipherField] = this.encrypt(value);
-                    updates[hashField] = plaintextHash;
-                    updates[encryptedFlagField] = true;
+                    if (shouldPersistHash) {
+                        updates[hashField] = plaintextHash;
+                    }
+                    else if (afterData[hashField] != null) {
+                        updates[hashField] = admin.firestore.FieldValue.delete();
+                    }
+                    if (hasEncryptedFlag) {
+                        updates[encryptedFlagField] = admin.firestore.FieldValue.delete();
+                    }
                     hasChanges = true;
+                }
+                else {
+                    if (!shouldPersistHash && afterData[hashField] != null) {
+                        updates[hashField] = admin.firestore.FieldValue.delete();
+                        hasChanges = true;
+                    }
+                    if (hasEncryptedFlag) {
+                        updates[encryptedFlagField] = admin.firestore.FieldValue.delete();
+                        hasChanges = true;
+                    }
                 }
             }
             else {
@@ -219,17 +249,6 @@ class EncryptionHelper {
         updates['_encryptedAt'] = admin.firestore.FieldValue.delete();
         updates['_encryptionVersion'] = admin.firestore.FieldValue.delete();
         return updates;
-    }
-    static stripEncryptionArtifacts(userData) {
-        const cleaned = Object.assign({}, userData);
-        for (const field of PII_FIELDS) {
-            delete cleaned[this.cipherField(field)];
-            delete cleaned[this.hashField(field)];
-            delete cleaned[`${field}_encrypted`];
-        }
-        delete cleaned['_encryptedAt'];
-        delete cleaned['_encryptionVersion'];
-        return cleaned;
     }
     static decryptUserData(userData) {
         const decrypted = Object.assign({}, userData);
@@ -569,113 +588,6 @@ exports.getDecryptedUsers = functions
         throw new functions.https.HttpsError('internal', 'Failed to get users');
     }
 });
-/**
- * Cloud Function to migrate existing unencrypted user data to encrypted format
- * Run this once to encrypt existing data
- */
-exports.migrateToEncrypted = functions
-    .region('asia-east2')
-    .https.onCall(async (data, context) => {
-    try {
-        const { adminId } = data;
-        // Verify admin
-        const adminDoc = await db.collection('admins').doc(adminId).get();
-        if (!adminDoc.exists) {
-            throw new functions.https.HttpsError('permission-denied', 'Admin not found');
-        }
-        const collections = ['approved_users', 'rejected_users'];
-        let totalMigrated = 0;
-        for (const collectionName of collections) {
-            const snapshot = await db.collection(collectionName).get();
-            for (const doc of snapshot.docs) {
-                const userData = doc.data();
-                const normalizedData = EncryptionHelper.normalizeLegacyUserData(userData);
-                // Build only the missing/stale mirror encryption updates.
-                const encryptionUpdates = EncryptionHelper.buildEncryptionFieldUpdates(normalizedData, userData);
-                const plaintextRestoreUpdates = EncryptionHelper.buildPlaintextFieldRestoreUpdates(normalizedData, userData);
-                const updates = Object.assign(Object.assign({}, encryptionUpdates), plaintextRestoreUpdates);
-                const displayName = typeof normalizedData.fullName === 'string'
-                    ? normalizedData.fullName.trim()
-                    : '';
-                if (displayName.length > 0) {
-                    updates[DISPLAY_NAME_FIELD] = displayName;
-                }
-                else if (Object.prototype.hasOwnProperty.call(userData, DISPLAY_NAME_FIELD)) {
-                    updates[DISPLAY_NAME_FIELD] = admin.firestore.FieldValue.delete();
-                }
-                if (Object.keys(updates).length === 0) {
-                    continue;
-                }
-                await doc.ref.set(updates, { merge: true });
-                totalMigrated++;
-            }
-        }
-        return {
-            success: true,
-            message: `Migrated ${totalMigrated} user records to encrypted format`
-        };
-    }
-    catch (error) {
-        console.error('Migration error:', error);
-        throw new functions.https.HttpsError('internal', 'Migration failed');
-    }
-});
-/**
- * One-time callable to convert existing pending_users docs to plaintext.
- * Keeps PII readable in pending queue and removes encryption mirror artifacts.
- */
-exports.migratePendingUsersToPlaintext = functions
-    .region('asia-east2')
-    .https.onCall(async (data, context) => {
-    try {
-        const { adminId } = data;
-        const adminDoc = await db.collection('admins').doc(adminId).get();
-        if (!adminDoc.exists) {
-            throw new functions.https.HttpsError('permission-denied', 'Admin not found');
-        }
-        const snapshot = await db.collection('pending_users').get();
-        let totalUpdated = 0;
-        for (const docSnap of snapshot.docs) {
-            const currentData = docSnap.data();
-            const normalizedData = EncryptionHelper.normalizeLegacyUserData(currentData);
-            const plaintextData = EncryptionHelper.stripEncryptionArtifacts(normalizedData);
-            const normalizedPhone = typeof plaintextData.contactNumber === 'string'
-                ? plaintextData.contactNumber.trim()
-                : '';
-            if (normalizedPhone.length > 0) {
-                plaintextData.contactNumber = normalizedPhone;
-                plaintextData.contactNumber_hash = EncryptionHelper.hashForLookup(normalizedPhone);
-            }
-            else {
-                delete plaintextData.contactNumber_hash;
-            }
-            const displayName = typeof plaintextData.fullName === 'string'
-                ? plaintextData.fullName.trim()
-                : '';
-            if (displayName.length > 0) {
-                plaintextData[DISPLAY_NAME_FIELD] = displayName;
-            }
-            else {
-                delete plaintextData[DISPLAY_NAME_FIELD];
-            }
-            plaintextData.status = 'pending';
-            plaintextData.accountStatus = 'pending';
-            await docSnap.ref.set(plaintextData, { merge: false });
-            totalUpdated++;
-        }
-        return {
-            success: true,
-            message: `Converted ${totalUpdated} pending user records to plaintext format`,
-        };
-    }
-    catch (error) {
-        console.error('Pending plaintext migration error:', error);
-        if (error instanceof functions.https.HttpsError) {
-            throw error;
-        }
-        throw new functions.https.HttpsError('internal', 'Pending plaintext migration failed');
-    }
-});
 async function syncEncryptedMirrorsOnWrite(change) {
     var _a, _b;
     if (!change.after.exists) {
@@ -707,17 +619,9 @@ async function syncEncryptedMirrorsOnWrite(change) {
     await change.after.ref.set(updates, { merge: true });
     return null;
 }
-exports.syncPendingUsersEncryption = functions
-    .region('asia-east2')
-    .firestore.document('pending_users/{userId}')
-    .onWrite(() => null);
 exports.syncApprovedUsersEncryption = functions
     .region('asia-east2')
     .firestore.document('approved_users/{userId}')
-    .onWrite((change) => syncEncryptedMirrorsOnWrite(change));
-exports.syncRejectedUsersEncryption = functions
-    .region('asia-east2')
-    .firestore.document('rejected_users/{userId}')
     .onWrite((change) => syncEncryptedMirrorsOnWrite(change));
 /**
  * Scheduled function that runs daily at midnight (Asia/Manila time)
