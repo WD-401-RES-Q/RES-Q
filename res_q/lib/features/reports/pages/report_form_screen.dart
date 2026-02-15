@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -10,14 +11,21 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:async';
+import 'dart:io';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/location_service.dart';
+import '../../../common/services/shell_navigation_service.dart';
 import '../../../common/utils/phone_utils.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
-import '../../home/pages/home_page.dart';
 import '../../emergency/pages/emergency_call_screen.dart';
+
+void _debugLog(Object? message) {
+  if (kDebugMode) {
+    debugPrint('$message');
+  }
+}
 
 enum LocationSelectionMode { current, pin }
 
@@ -361,7 +369,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     setState(() => _submitting = true);
 
     try {
-      debugPrint('Starting report submission...');
+      _debugLog('Starting report submission...');
       final now = DateTime.now();
 
       String? mediaUrl;
@@ -390,15 +398,18 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             : 'image/jpeg';
         final metadata = SettableMetadata(contentType: contentType);
 
-        debugPrint(
+        _debugLog(
           'Uploading ${isVideo ? 'video' : 'photo'} to Firebase Storage...',
         );
-        final data = await _capturedMedia!.readAsBytes();
         final uploadTimeout = isVideo
             ? const Duration(seconds: 120)
             : const Duration(seconds: 60);
+        final mediaPath = _capturedMedia!.path;
+        if (mediaPath.isEmpty) {
+          throw Exception('Captured media path is empty.');
+        }
         final uploadSnapshot = await storageRef
-            .putData(data, metadata)
+            .putFile(File(mediaPath), metadata)
             .timeout(uploadTimeout);
 
         mediaUrl = await uploadSnapshot.ref.getDownloadURL().timeout(
@@ -410,16 +421,16 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         await uploadSnapshot.ref.getMetadata().timeout(
           const Duration(seconds: 10),
         );
-        debugPrint('Media uploaded successfully: $mediaUrl');
+        _debugLog('Media uploaded successfully: $mediaUrl');
       } else {
-        debugPrint('Skipping media upload (no media captured)');
+        _debugLog('Skipping media upload (no media captured)');
       }
 
-      debugPrint('Saving report to Firestore...');
+      _debugLog('Saving report to Firestore...');
 
       // Generate a unique report ID for easier tracking
       final reportId = _generateReportId();
-      debugPrint('Generated Report ID: $reportId');
+      _debugLog('Generated Report ID: $reportId');
       final incidentTypeValue = _incidentTypeForStorage();
       final vehiclesPayload = _isVehicularIncident()
           ? _buildVehiclesPayload()
@@ -442,7 +453,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         throw Exception('Contact number is required to submit a report.');
       }
       if (userId != sanitizedContactNumber) {
-        debugPrint(
+        _debugLog(
           '❌ Contact number mismatch: profile=$userId, form=$sanitizedContactNumber',
         );
 
@@ -510,7 +521,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           })
           .timeout(const Duration(seconds: 15));
 
-      debugPrint('Report saved with ID: ${docRef.id}');
+      _debugLog('Report saved with ID: ${docRef.id}');
 
       if (!mounted) return;
 
@@ -589,11 +600,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   reportId: docRef.id,
                   reportData: reportData,
                 );
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(
-                    builder: (context) => const MainPage(initialIndex: 2),
-                  ),
-                );
+                MainShellNavigationService.popToRootAndOpenTab(context, 2);
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFAC1B22),
@@ -668,7 +675,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         query = query.where('name', isEqualTo: fallbackName);
       } else {
         // No valid identifier - return no results
-        debugPrint(
+        _debugLog(
           '⚠️ Warning: No valid identifier (contactNumber or name) for duplicate check',
         );
         // Use document ID query with impossible value (empty string is always invalid)
@@ -691,7 +698,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
       return activeCount >= 2;
     } catch (e) {
-      debugPrint('⚠️ Could not check report limit: $e');
+      _debugLog('⚠️ Could not check report limit: $e');
       return UserSession.activeReportCount >= 2;
     }
   }
@@ -1343,10 +1350,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           setState(() {
             _navIndex = index;
           });
-          // Navigate back to MainPage with selected tab
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => MainPage(initialIndex: index)),
-          );
+          MainShellNavigationService.popToRootAndOpenTab(context, index);
         },
       ),
     );
@@ -2189,11 +2193,11 @@ class _PinPickerPageState extends State<_PinPickerPage> {
           }
         },
         onError: (e) {
-          debugPrint('Location stream error: $e');
+          _debugLog('Location stream error: $e');
         },
       );
     } catch (e) {
-      debugPrint('Error starting location tracking: $e');
+      _debugLog('Error starting location tracking: $e');
     }
   }
 

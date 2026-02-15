@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import '../../../common/services/notification_service.dart';
+import '../../../common/services/shell_navigation_service.dart';
+import '../../../common/services/user_session.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../../common/widgets/auth_widgets.dart';
@@ -12,7 +16,6 @@ import '../../emergency/pages/emergency_call_screen.dart';
 import '../../reports/pages/report_form_screen.dart';
 import '../../map/pages/map_page.dart';
 import '../../reports/pages/report_map_page.dart';
-import '../../../common/services/user_session.dart';
 
 class MainPage extends StatefulWidget {
   final int initialIndex;
@@ -29,47 +32,170 @@ class MainPage extends StatefulWidget {
 }
 
 class _MainPageState extends State<MainPage> {
-  late int _currentIndex = widget.initialIndex;
+  static const int _tabCount = 5;
+  static const Duration _tabTransitionDuration = Duration(milliseconds: 220);
+  late int _currentIndex;
+  late final Set<int> _loadedTabs;
+  String? _currentCommunityReportId;
+  final Map<int, Widget> _tabCache = <int, Widget>{};
+  String? _communityTabToken;
+  String? _mapTabToken;
 
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.initialIndex.clamp(0, _tabCount - 1);
+    _loadedTabs = {_currentIndex};
+    _currentCommunityReportId = widget.initialCommunityReportId;
+    MainShellNavigationService.commands.addListener(_handleShellNavigation);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_initializePostLoginServices());
+    });
   }
 
-  Widget _buildMapPage() {
-    final activeReport = UserSession.latestActiveReport;
+  @override
+  void didUpdateWidget(covariant MainPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialCommunityReportId != oldWidget.initialCommunityReportId) {
+      _currentCommunityReportId = widget.initialCommunityReportId;
+      _loadedTabs.add(1);
+    }
+  }
 
-    if (activeReport != null) {
-      return ReportMapPage(
-        key: ValueKey('report-map-${activeReport.reportId}'),
-        reportId: activeReport.reportId,
-        reportData: activeReport.reportData,
-        showBottomNav: false,
-      );
+  @override
+  void dispose() {
+    MainShellNavigationService.commands.removeListener(_handleShellNavigation);
+    super.dispose();
+  }
+
+  Future<void> _initializePostLoginServices() async {
+    String? userId;
+    try {
+      userId = UserSession.getUserId();
+    } catch (_) {
+      userId = null;
     }
 
-    return const MapPage();
+    if (userId == null || userId.isEmpty) {
+      debugPrint('Skipping notification init: missing post-login user ID');
+      return;
+    }
+
+    try {
+      await NotificationService().initialize(userId: userId);
+    } catch (e) {
+      debugPrint('Notification init failed post-login: $e');
+    }
+  }
+
+  void _handleShellNavigation() {
+    final command = MainShellNavigationService.commands.value;
+    if (command == null || !mounted) return;
+
+    final nextIndex = command.tabIndex.clamp(0, _tabCount - 1);
+    final communityReportId = command.communityReportId?.trim();
+
+    setState(() {
+      _currentIndex = nextIndex;
+      _loadedTabs.add(nextIndex);
+      if (communityReportId != null && communityReportId.isNotEmpty) {
+        _currentCommunityReportId = communityReportId;
+        _loadedTabs.add(1);
+      }
+    });
+  }
+
+  void _onTabSelected(int index) {
+    if (index == _currentIndex) return;
+    setState(() {
+      _currentIndex = index;
+      _loadedTabs.add(index);
+    });
+  }
+
+  Widget _getCachedTabPage(int index) {
+    switch (index) {
+      case 0:
+        return _tabCache.putIfAbsent(index, () => const _HomePageContent());
+      case 1:
+        final normalizedReportId = _currentCommunityReportId?.trim();
+        final token = normalizedReportId == null || normalizedReportId.isEmpty
+            ? 'none'
+            : normalizedReportId;
+        if (!_tabCache.containsKey(index) || _communityTabToken != token) {
+          _communityTabToken = token;
+          _tabCache[index] = CommunityPage(
+            key: ValueKey('community-tab-$token'),
+            initialReportId: token == 'none' ? null : token,
+          );
+        }
+        return _tabCache[index]!;
+      case 2:
+        final activeReport = UserSession.latestActiveReport;
+        final token = activeReport == null
+            ? 'map'
+            : 'report-${activeReport.reportId}';
+        if (!_tabCache.containsKey(index) || _mapTabToken != token) {
+          _mapTabToken = token;
+          _tabCache[index] = activeReport != null
+              ? ReportMapPage(
+                  key: ValueKey('report-map-${activeReport.reportId}'),
+                  reportId: activeReport.reportId,
+                  reportData: activeReport.reportData,
+                  showBottomNav: false,
+                )
+              : const MapPage();
+        }
+        return _tabCache[index]!;
+      case 3:
+        return _tabCache.putIfAbsent(index, () => const NotificationsPage());
+      case 4:
+        return _tabCache.putIfAbsent(index, () => const ProfilePage());
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+
+  Widget _buildAnimatedTabBody() {
+    return Stack(
+      fit: StackFit.expand,
+      children: List<Widget>.generate(_tabCount, (index) {
+        if (!_loadedTabs.contains(index)) {
+          return const SizedBox.shrink();
+        }
+
+        final isActive = index == _currentIndex;
+        return Positioned.fill(
+          child: ExcludeSemantics(
+            excluding: !isActive,
+            child: IgnorePointer(
+              ignoring: !isActive,
+              child: TickerMode(
+                enabled: isActive,
+                child: AnimatedOpacity(
+                  opacity: isActive ? 1 : 0,
+                  duration: _tabTransitionDuration,
+                  curve: isActive ? Curves.easeOutCubic : Curves.easeInCubic,
+                  child: _getCachedTabPage(index),
+                ),
+              ),
+            ),
+          ),
+        );
+      }),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      const _HomePageContent(),
-      CommunityPage(initialReportId: widget.initialCommunityReportId),
-      _buildMapPage(),
-      const NotificationsPage(),
-      const ProfilePage(),
-    ];
     return Scaffold(
-      backgroundColor: Color(0xFFF7F8F3),
+      backgroundColor: const Color(0xFFF7F8F3),
       bottomNavigationBar: BottomNavBar(
         currentIndex: _currentIndex,
-        onTap: (i) => setState(() => _currentIndex = i),
+        onTap: _onTabSelected,
       ),
-      body: SafeArea(
-        bottom: false,
-        child: IndexedStack(index: _currentIndex, children: pages),
-      ),
+      body: SafeArea(bottom: false, child: _buildAnimatedTabBody()),
     );
   }
 }

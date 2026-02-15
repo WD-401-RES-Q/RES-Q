@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../auth/pages/login_page.dart';
-import '../../../common/services/location_service.dart';
-import '../../../common/services/notification_service.dart';
 
 class LoadingScreen extends StatefulWidget {
   const LoadingScreen({super.key});
@@ -18,19 +16,8 @@ class _LoadingScreenState extends State<LoadingScreen> {
     _initializeApp();
   }
 
-  void _initializeApp() async {
-    // Request location permission
-    await LocationService.requestLocationPermission();
-
-    // Initialize notifications (permission + FCM handlers).
-    try {
-      await NotificationService().initialize();
-    } catch (e) {
-      debugPrint('Notification init failed: $e');
-    }
-
-    // Wait 3 seconds then navigate
-    Future.delayed(const Duration(seconds: 3), () {
+  void _initializeApp() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
@@ -42,8 +29,8 @@ class _LoadingScreenState extends State<LoadingScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Color(0xFFF7F8F3),
-      body: Center(child: _LoadingContent()),
+      backgroundColor: const Color(0xFFF7F8F3),
+      body: const Center(child: _LoadingContent()),
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -8,6 +9,12 @@ import '../../../common/services/user_session.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
+
+void _debugLog(Object? message) {
+  if (kDebugMode) {
+    debugPrint('$message');
+  }
+}
 
 class CommunityPage extends StatefulWidget {
   final String? initialReportId;
@@ -30,6 +37,7 @@ class _CommunityPageState extends State<CommunityPage>
   static const statusGreen = Color(0xFF00A458); // Approved
   static const statusYellow = Color(0xFFFFC806); // Under Review
   static const statusRed = Color(0xFFAC1B22); // Flagged
+  static const int _reportFeedLimit = 150;
 
   String _selectedFilter = 'All';
   String _selectedCategory = 'All';
@@ -45,6 +53,9 @@ class _CommunityPageState extends State<CommunityPage>
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _announcementsSubscription;
+  Map<String, int> _reportIndexById = const {};
+  final ValueNotifier<List<Map<String, dynamic>>> _visibleReportsNotifier =
+      ValueNotifier<List<Map<String, dynamic>>>(const []);
 
   @override
   void initState() {
@@ -52,6 +63,7 @@ class _CommunityPageState extends State<CommunityPage>
     WidgetsBinding.instance.addObserver(this);
     _pendingInitialReportId = _normalizeInitialReportId(widget.initialReportId);
     _selectedFilter = _normalizeFilter(_selectedFilter);
+    _recomputeDerivedReportState();
     _subscribeToReports();
     _subscribeToAnnouncements();
     // Delay loading votes to ensure UserSession is initialized after login
@@ -80,7 +92,7 @@ class _CommunityPageState extends State<CommunityPage>
   String? _getLoggedInUserPhone() {
     final userData = UserSession.currentUserData;
     if (userData == null) {
-      debugPrint('âš ï¸ No user data available');
+      _debugLog('âš ï¸ No user data available');
       return null;
     }
 
@@ -97,7 +109,7 @@ class _CommunityPageState extends State<CommunityPage>
       phone = phone.replaceAll(RegExp(r'[^0-9]'), '');
     }
 
-    debugPrint('ðŸ“± Found logged-in user phone: $phone');
+    _debugLog('ðŸ“± Found logged-in user phone: $phone');
     return phone;
   }
 
@@ -106,6 +118,7 @@ class _CommunityPageState extends State<CommunityPage>
     WidgetsBinding.instance.removeObserver(this);
     _reportsSubscription?.cancel();
     _announcementsSubscription?.cancel();
+    _visibleReportsNotifier.dispose();
     super.dispose();
   }
 
@@ -146,7 +159,7 @@ class _CommunityPageState extends State<CommunityPage>
             });
           },
           onError: (e) {
-            debugPrint('âŒ Failed to load announcements: $e');
+            _debugLog('âŒ Failed to load announcements: $e');
           },
         );
   }
@@ -157,11 +170,11 @@ class _CommunityPageState extends State<CommunityPage>
     }
     final userPhone = _getLoggedInUserPhone();
     if (userPhone == null || userPhone.isEmpty) {
-      debugPrint('No phone number available for loading votes');
+      _debugLog('No phone number available for loading votes');
       return;
     }
     try {
-      debugPrint('Loading votes for phone: $userPhone');
+      _debugLog('Loading votes for phone: $userPhone');
       await _migrateLegacyVotesIfNeeded(userPhone);
       // Load votes from userVotes collection using phone number as document ID
       final doc = await FirebaseFirestore.instance
@@ -172,16 +185,12 @@ class _CommunityPageState extends State<CommunityPage>
         if (doc.exists) {
           final data = doc.data() ?? {};
           final loadedVotes = Map<String, String>.from(data['votes'] ?? {});
-          debugPrint('Loaded ${loadedVotes.length} votes from Firestore');
-          debugPrint('Votes: $loadedVotes');
-          setState(() {
-            _userVotes = loadedVotes;
-          });
+          _debugLog('Loaded ${loadedVotes.length} votes from Firestore');
+          _debugLog('Votes: $loadedVotes');
+          _userVotes = loadedVotes;
         } else {
-          debugPrint('No votes document found for phone: $userPhone');
-          setState(() {
-            _userVotes = {};
-          });
+          _debugLog('No votes document found for phone: $userPhone');
+          _userVotes = {};
         }
         // Update reports with user votes
         _applyUserVotesToReports();
@@ -190,37 +199,34 @@ class _CommunityPageState extends State<CommunityPage>
       if (e.code == 'permission-denied') {
         if (!_hasLoggedVotesPermissionIssue) {
           _hasLoggedVotesPermissionIssue = true;
-          debugPrint(
+          _debugLog(
             'Vote sync disabled: missing Firestore permission for userVotes.',
           );
         }
         _canSyncVotesWithFirestore = false;
         if (mounted) {
-          setState(() {
-            _userVotes = {};
-          });
+          _userVotes = {};
           _applyUserVotesToReports();
         }
         return;
       }
-      debugPrint('Failed to load user votes: $e');
+      _debugLog('Failed to load user votes: $e');
     } catch (e) {
-      debugPrint('Failed to load user votes: $e');
+      _debugLog('Failed to load user votes: $e');
     }
   }
 
   void _applyUserVotesToReports() {
     if (_reports.isEmpty) return;
-    setState(() {
-      for (int i = 0; i < _reports.length; i++) {
-        final reportId = _reports[i]['id'] as String?;
-        if (reportId != null) {
-          // Apply vote from _userVotes, default to 'none' if not found
-          _reports[i]['userVote'] = _userVotes[reportId] ?? 'none';
-        }
+    for (int i = 0; i < _reports.length; i++) {
+      final reportId = _reports[i]['id'] as String?;
+      if (reportId != null) {
+        // Apply vote from _userVotes, default to 'none' if not found
+        _reports[i]['userVote'] = _userVotes[reportId] ?? 'none';
       }
-    });
-    debugPrint(
+    }
+    _recomputeDerivedReportState();
+    _debugLog(
       'Applied ${_userVotes.length} user votes to ${_reports.length} reports',
     );
   }
@@ -231,7 +237,7 @@ class _CommunityPageState extends State<CommunityPage>
     }
     final userPhone = _getLoggedInUserPhone();
     if (userPhone == null || userPhone.isEmpty) {
-      debugPrint('Cannot save vote: no phone number found');
+      _debugLog('Cannot save vote: no phone number found');
       return;
     }
     final previousVote = _userVotes[reportId];
@@ -253,13 +259,13 @@ class _CommunityPageState extends State<CommunityPage>
       if (e.code == 'permission-denied') {
         if (!_hasLoggedVotesPermissionIssue) {
           _hasLoggedVotesPermissionIssue = true;
-          debugPrint(
+          _debugLog(
             'Vote sync disabled: missing Firestore permission for userVotes.',
           );
         }
         _canSyncVotesWithFirestore = false;
       } else {
-        debugPrint('Failed to save user vote: $e');
+        _debugLog('Failed to save user vote: $e');
       }
       if (previousVote == null || previousVote == 'none') {
         _userVotes.remove(reportId);
@@ -268,7 +274,7 @@ class _CommunityPageState extends State<CommunityPage>
       }
       _applyUserVotesToReports();
     } catch (e) {
-      debugPrint('Failed to save user vote: $e');
+      _debugLog('Failed to save user vote: $e');
       if (previousVote == null || previousVote == 'none') {
         _userVotes.remove(reportId);
       } else {
@@ -304,9 +310,9 @@ class _CommunityPageState extends State<CommunityPage>
             vote, // 'green' (verify) or 'red' (report) or 'none' (removed)
         'timestamp': FieldValue.serverTimestamp(),
       });
-      debugPrint('ðŸ“ Vote record saved to voteRecords collection');
+      _debugLog('ðŸ“ Vote record saved to voteRecords collection');
     } catch (e) {
-      debugPrint('âš ï¸ Could not save vote record: $e');
+      _debugLog('âš ï¸ Could not save vote record: $e');
       // Don't fail the main operation if this fails
     }
   }
@@ -339,16 +345,16 @@ class _CommunityPageState extends State<CommunityPage>
       if (e.code == 'permission-denied') {
         if (!_hasLoggedVotesPermissionIssue) {
           _hasLoggedVotesPermissionIssue = true;
-          debugPrint(
+          _debugLog(
             'Vote migration skipped: missing Firestore permission for userVotes.',
           );
         }
         _canSyncVotesWithFirestore = false;
         return;
       }
-      debugPrint('Failed to migrate legacy votes: $e');
+      _debugLog('Failed to migrate legacy votes: $e');
     } catch (e) {
-      debugPrint('Failed to migrate legacy votes: $e');
+      _debugLog('Failed to migrate legacy votes: $e');
     }
   }
 
@@ -357,6 +363,7 @@ class _CommunityPageState extends State<CommunityPage>
     _reportsSubscription = FirebaseFirestore.instance
         .collection('reports')
         .orderBy('reportedAt', descending: true)
+        .limit(_reportFeedLimit)
         .snapshots()
         .listen(
           (snapshot) {
@@ -371,14 +378,13 @@ class _CommunityPageState extends State<CommunityPage>
                   _userVotes[reportId] ?? previousVotes[reportId] ?? 'none';
             }
             if (!mounted) return;
-            setState(() {
-              _reports = reports;
-            });
+            _reports = reports;
+            _recomputeDerivedReportState();
             _tryOpenPendingInitialReport();
-            debugPrint('âœ… Loaded ${reports.length} reports from Firestore');
+            _debugLog('âœ… Loaded ${reports.length} reports from Firestore');
           },
           onError: (e) {
-            debugPrint('âŒ Failed to load reports: $e');
+            _debugLog('âŒ Failed to load reports: $e');
           },
         );
   }
@@ -399,9 +405,7 @@ class _CommunityPageState extends State<CommunityPage>
     }
 
     final targetId = _pendingInitialReportId!;
-    final reportIndex = _reports.indexWhere(
-      (report) => report['id']?.toString() == targetId,
-    );
+    final reportIndex = _reportIndexById[targetId] ?? -1;
     if (reportIndex < 0) {
       return;
     }
@@ -497,7 +501,7 @@ class _CommunityPageState extends State<CommunityPage>
     }
   }
 
-  List<Map<String, dynamic>> _getVisibleReports() {
+  List<Map<String, dynamic>> _computeVisibleReports() {
     final filtered = _reports.where((report) {
       final status = (report['status'] as String? ?? '').toLowerCase();
       final category = (report['title'] as String? ?? '').toLowerCase();
@@ -547,6 +551,17 @@ class _CommunityPageState extends State<CommunityPage>
     });
 
     return filtered;
+  }
+
+  void _recomputeDerivedReportState() {
+    _reportIndexById = {
+      for (int i = 0; i < _reports.length; i++)
+        if ((_reports[i]['id']?.toString() ?? '').isNotEmpty)
+          _reports[i]['id'].toString(): i,
+    };
+    _visibleReportsNotifier.value = List<Map<String, dynamic>>.unmodifiable(
+      _computeVisibleReports(),
+    );
   }
 
   String _normalizeFilter(String value) {
@@ -1145,12 +1160,15 @@ class _CommunityPageState extends State<CommunityPage>
 
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ MEDIA BUILDER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  Widget _buildMediaWidget(Map<String, dynamic> report) {
+  Widget _buildMediaWidget(
+    Map<String, dynamic> report, {
+    double targetHeight = 200,
+  }) {
     final mediaUrl = (report['image'] as String? ?? '').trim();
     final mediaType = (report['mediaType'] as String? ?? 'photo').toLowerCase();
 
     // Debug: log what we're trying to load
-    debugPrint(
+    _debugLog(
       'ðŸ–¼ï¸ Media load -> type: ' + mediaType + ', url: ' + mediaUrl,
     );
 
@@ -1169,11 +1187,20 @@ class _CommunityPageState extends State<CommunityPage>
       final bucket = 'res-q-93ca6.firebasestorage.app';
       downloadUrl =
           'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(mediaUrl)}?alt=media';
-      debugPrint('ðŸ”— Converted storage path to download URL: $downloadUrl');
+      _debugLog('ðŸ”— Converted storage path to download URL: $downloadUrl');
     }
 
+    final dpr = MediaQuery.of(context).devicePixelRatio.clamp(1.0, 3.0);
+    final mediaWidth = MediaQuery.of(context).size.width - 32;
+    final cacheWidth = (mediaWidth * dpr).round();
+    final cacheHeight = (targetHeight * dpr).round();
+
     // Firebase Storage URLs are network images
-    return _NetworkImageLoader(url: downloadUrl);
+    return _NetworkImageLoader(
+      url: downloadUrl,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
+    );
   }
 
   String _resolveMediaUrl(String mediaUrl) {
@@ -1215,10 +1242,8 @@ class _CommunityPageState extends State<CommunityPage>
                 '')
             .toString()
             .trim();
-    final sourceIndex = _reports.indexWhere(
-      (item) => item['id'] == report['id'],
-    );
-    final int reportIndex = sourceIndex == -1 ? 0 : sourceIndex;
+    final reportId = report['id']?.toString() ?? '';
+    final int reportIndex = _reportIndexById[reportId] ?? 0;
     final vote = report['userVote'] as String? ?? 'none';
     final bool greenSelected = vote == 'green';
     final bool redSelected = vote == 'red';
@@ -1260,7 +1285,10 @@ class _CommunityPageState extends State<CommunityPage>
                             child: SizedBox(
                               height: 180,
                               width: double.infinity,
-                              child: _buildMediaWidget(report),
+                              child: _buildMediaWidget(
+                                report,
+                                targetHeight: 180,
+                              ),
                             ),
                           ),
                         ),
@@ -1509,10 +1537,9 @@ class _CommunityPageState extends State<CommunityPage>
       // Update _userVotes immediately so Firestore listener uses correct value
       _userVotes.remove(reportId);
 
-      setState(() {
-        if (report['greenFlags'] > 0) report['greenFlags']--;
-        report['userVote'] = 'none';
-      });
+      if (report['greenFlags'] > 0) report['greenFlags']--;
+      report['userVote'] = 'none';
+      _recomputeDerivedReportState();
       await _updateReportFlags(reportId, greenDelta: -1);
       await _saveUserVote(reportId, 'none');
       return;
@@ -1545,13 +1572,12 @@ class _CommunityPageState extends State<CommunityPage>
     // Update _userVotes immediately so Firestore listener uses correct value
     _userVotes[reportId] = 'green';
 
-    setState(() {
-      if (vote == 'red' && report['redFlags'] > 0) {
-        report['redFlags']--;
-      }
-      report['greenFlags']++;
-      report['userVote'] = 'green';
-    });
+    if (vote == 'red' && report['redFlags'] > 0) {
+      report['redFlags']--;
+    }
+    report['greenFlags']++;
+    report['userVote'] = 'green';
+    _recomputeDerivedReportState();
     await _updateReportFlags(
       reportId,
       greenDelta: 1,
@@ -1578,10 +1604,9 @@ class _CommunityPageState extends State<CommunityPage>
       // Update _userVotes immediately so Firestore listener uses correct value
       _userVotes.remove(reportId);
 
-      setState(() {
-        if (report['redFlags'] > 0) report['redFlags']--;
-        report['userVote'] = 'none';
-      });
+      if (report['redFlags'] > 0) report['redFlags']--;
+      report['userVote'] = 'none';
+      _recomputeDerivedReportState();
       await _updateReportFlags(reportId, redDelta: -1);
       await _saveUserVote(reportId, 'none');
       return;
@@ -1615,13 +1640,12 @@ class _CommunityPageState extends State<CommunityPage>
     // Update _userVotes immediately so Firestore listener uses correct value
     _userVotes[reportId] = 'red';
 
-    setState(() {
-      if (vote == 'green' && report['greenFlags'] > 0) {
-        report['greenFlags']--;
-      }
-      report['redFlags']++;
-      report['userVote'] = 'red';
-    });
+    if (vote == 'green' && report['greenFlags'] > 0) {
+      report['greenFlags']--;
+    }
+    report['redFlags']++;
+    report['userVote'] = 'red';
+    _recomputeDerivedReportState();
     await _updateReportFlags(
       reportId,
       greenDelta: vote == 'green' ? -1 : 0,
@@ -1650,7 +1674,7 @@ class _CommunityPageState extends State<CommunityPage>
           .doc(reportId)
           .update(updates);
     } catch (e) {
-      debugPrint('âš ï¸ Failed to update report flags: $e');
+      _debugLog('âš ï¸ Failed to update report flags: $e');
     }
   }
 
@@ -1665,10 +1689,9 @@ class _CommunityPageState extends State<CommunityPage>
       builder: (context) => _CommentsBottomSheet(
         report: report,
         onCommentAdded: () {
-          setState(() {
-            final currentCount = report['comments'] as int? ?? 0;
-            report['comments'] = currentCount + 1;
-          });
+          final currentCount = report['comments'] as int? ?? 0;
+          report['comments'] = currentCount + 1;
+          _recomputeDerivedReportState();
         },
       ),
     );
@@ -1752,7 +1775,9 @@ class _CommunityPageState extends State<CommunityPage>
                           _selectedCategory = 'All';
                           _selectedTimeFilter = 'All Time';
                         });
-                        setState(() {});
+                        setState(() {
+                          _recomputeDerivedReportState();
+                        });
                       },
                       child: const Text(
                         'Reset',
@@ -1787,7 +1812,9 @@ class _CommunityPageState extends State<CommunityPage>
                           selected: _selectedFilter == status,
                           onSelected: (selected) {
                             setStateSheet(() => _selectedFilter = status);
-                            setState(() {});
+                            setState(() {
+                              _recomputeDerivedReportState();
+                            });
                           },
                           selectedColor: appBlue,
                           labelStyle: TextStyle(
@@ -1823,7 +1850,9 @@ class _CommunityPageState extends State<CommunityPage>
                           selected: _selectedCategory == category,
                           onSelected: (selected) {
                             setStateSheet(() => _selectedCategory = category);
-                            setState(() {});
+                            setState(() {
+                              _recomputeDerivedReportState();
+                            });
                           },
                           selectedColor: appBlue,
                           labelStyle: TextStyle(
@@ -1859,7 +1888,9 @@ class _CommunityPageState extends State<CommunityPage>
                           selected: _selectedTimeFilter == time,
                           onSelected: (selected) {
                             setStateSheet(() => _selectedTimeFilter = time);
-                            setState(() {});
+                            setState(() {
+                              _recomputeDerivedReportState();
+                            });
                           },
                           selectedColor: appBlue,
                           labelStyle: TextStyle(
@@ -1962,12 +1993,14 @@ class _CommunityPageState extends State<CommunityPage>
                           true)
                         ClipRRect(
                           borderRadius: BorderRadius.circular(8),
-                          child: Image.network(
-                            announcement['imageUrl'],
+                          child: CachedNetworkImage(
+                            imageUrl: announcement['imageUrl'],
                             height: 150,
                             width: double.infinity,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
+                            memCacheHeight: 300,
+                            maxHeightDiskCache: 300,
+                            errorWidget: (_, __, ___) =>
                                 const SizedBox.shrink(),
                           ),
                         ),
@@ -1997,8 +2030,6 @@ class _CommunityPageState extends State<CommunityPage>
 
   @override
   Widget build(BuildContext context) {
-    final visibleReports = _getVisibleReports();
-
     return Container(
       color: appOffWhite,
       child: Padding(
@@ -2219,172 +2250,371 @@ class _CommunityPageState extends State<CommunityPage>
 
             // REPORT LIST
             Expanded(
-              child: ListView.separated(
-                itemCount: visibleReports.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 14),
-                itemBuilder: (context, index) {
-                  final report = visibleReports[index];
-                  final statusLower = (report['status'] as String? ?? '')
-                      .toLowerCase();
-                  final sourceIndex = _reports.indexWhere(
-                    (item) => item['id'] == report['id'],
-                  );
-                  final int reportIndex = sourceIndex == -1
-                      ? index
-                      : sourceIndex;
-                  final vote = report['userVote'] as String;
-                  final bool greenSelected = vote == 'green';
-                  final bool redSelected = vote == 'red';
+              child: ValueListenableBuilder<List<Map<String, dynamic>>>(
+                valueListenable: _visibleReportsNotifier,
+                builder: (context, visibleReports, _) {
+                  final reportIndexById = _reportIndexById;
+                  return ListView.separated(
+                    itemCount: visibleReports.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 14),
+                    itemBuilder: (context, index) {
+                      final report = visibleReports[index];
+                      final reportId = report['id']?.toString() ?? '';
+                      final statusLower = (report['status'] as String? ?? '')
+                          .toLowerCase();
+                      final reportIndex = reportIndexById[reportId] ?? index;
+                      final vote = report['userVote'] as String;
+                      final bool greenSelected = vote == 'green';
+                      final bool redSelected = vote == 'red';
 
-                  final Color greenIconColor = greenSelected
-                      ? appGreen
-                      : appGreen.withOpacity(0.6);
-                  final Color redIconColor = redSelected
-                      ? appRed
-                      : appRed.withOpacity(0.6);
+                      final Color greenIconColor = greenSelected
+                          ? appGreen
+                          : appGreen.withOpacity(0.6);
+                      final Color redIconColor = redSelected
+                          ? appRed
+                          : appRed.withOpacity(0.6);
 
-                  // Get reporter info
-                  final reporterName = report['name'] ?? 'Unknown';
-                  final reporterInitial = reporterName.isNotEmpty
-                      ? reporterName[0].toUpperCase()
-                      : '?';
-                  final reportedAt = report['reportedAt'] as DateTime?;
-                  final timeAgo = reportedAt != null
-                      ? _formatTimeAgo(reportedAt)
-                      : report['date'];
-                  final mediaUrl = (report['image'] as String? ?? '').trim();
+                      // Get reporter info
+                      final reporterName = report['name'] ?? 'Unknown';
+                      final reporterInitial = reporterName.isNotEmpty
+                          ? reporterName[0].toUpperCase()
+                          : '?';
+                      final reportedAt = report['reportedAt'] as DateTime?;
+                      final timeAgo = reportedAt != null
+                          ? _formatTimeAgo(reportedAt)
+                          : report['date'];
+                      final mediaUrl = (report['image'] as String? ?? '')
+                          .trim();
 
-                  return GestureDetector(
-                    onTap: () => _showReportDetailsDialog(report),
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // PROFILE HEADER (Facebook-style)
-                          Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Row(
+                      return RepaintBoundary(
+                        child: GestureDetector(
+                          onTap: () => _showReportDetailsDialog(report),
+                          child: Container(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // Profile Avatar
-                                CircleAvatar(
-                                  radius: 20,
-                                  backgroundColor: appBlue,
-                                  child: Text(
-                                    reporterInitial,
-                                    style: const TextStyle(
-                                      fontFamily: 'Roboto',
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                    ),
+                                // PROFILE HEADER (Facebook-style)
+                                Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Row(
+                                    children: [
+                                      // Profile Avatar
+                                      CircleAvatar(
+                                        radius: 20,
+                                        backgroundColor: appBlue,
+                                        child: Text(
+                                          reporterInitial,
+                                          style: const TextStyle(
+                                            fontFamily: 'Roboto',
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      // Name + Time + Status
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                Flexible(
+                                                  child: Text(
+                                                    reporterName,
+                                                    style: const TextStyle(
+                                                      fontFamily: 'Roboto',
+                                                      fontSize: 15,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      color: appBlack,
+                                                    ),
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 6),
+                                                // Status badge
+                                                Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 6,
+                                                        vertical: 2,
+                                                      ),
+                                                  decoration: BoxDecoration(
+                                                    color:
+                                                        statusLower ==
+                                                                'resolved' ||
+                                                            statusLower ==
+                                                                'incident resolved'
+                                                        ? const Color(
+                                                            0xFF4CAF50,
+                                                          )
+                                                        : statusLower ==
+                                                              'approved'
+                                                        ? statusGreen
+                                                        : statusLower ==
+                                                              'flagged'
+                                                        ? statusRed
+                                                        : statusYellow,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          10,
+                                                        ),
+                                                  ),
+                                                  child: Text(
+                                                    statusLower == 'resolved' ||
+                                                            statusLower ==
+                                                                'incident resolved'
+                                                        ? 'RESOLVED'
+                                                        : report['status']
+                                                              .toString()
+                                                              .toUpperCase(),
+                                                    style: const TextStyle(
+                                                      fontFamily:
+                                                          'RobotoCondensed',
+                                                      fontSize: 9,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Row(
+                                              children: [
+                                                Text(
+                                                  timeAgo,
+                                                  style: TextStyle(
+                                                    fontFamily:
+                                                        'RobotoCondensed',
+                                                    fontSize: 12,
+                                                    color: Colors.grey[600],
+                                                  ),
+                                                ),
+                                                // Only show location if it's provided
+                                                if ((report['location'] ??
+                                                        'Not provided') !=
+                                                    'Not provided') ...[
+                                                  Text(
+                                                    ' \u2022 ',
+                                                    style: TextStyle(
+                                                      fontSize: 12,
+                                                      color: Colors.grey[600],
+                                                    ),
+                                                  ),
+                                                  Icon(
+                                                    Icons.location_on,
+                                                    size: 12,
+                                                    color: Colors.grey[600],
+                                                  ),
+                                                  const SizedBox(width: 2),
+                                                  Flexible(
+                                                    child: Text(
+                                                      report['location'] ?? '',
+                                                      style: TextStyle(
+                                                        fontFamily:
+                                                            'RobotoCondensed',
+                                                        fontSize: 12,
+                                                        color: Colors.grey[600],
+                                                      ),
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                const SizedBox(width: 10),
-                                // Name + Time + Status
-                                Expanded(
+
+                                // INCIDENT TYPE + DESCRIPTION
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
                                   child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Row(
-                                        children: [
-                                          Flexible(
-                                            child: Text(
-                                              reporterName,
-                                              style: const TextStyle(
-                                                fontFamily: 'Roboto',
-                                                fontSize: 15,
-                                                fontWeight: FontWeight.w700,
-                                                color: appBlack,
-                                              ),
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 6),
-                                          // Status badge
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 6,
-                                              vertical: 2,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color:
-                                                  statusLower == 'resolved' ||
-                                                      statusLower ==
-                                                          'incident resolved'
-                                                  ? const Color(0xFF4CAF50)
-                                                  : statusLower == 'approved'
-                                                  ? statusGreen
-                                                  : statusLower == 'flagged'
-                                                  ? statusRed
-                                                  : statusYellow,
-                                              borderRadius:
-                                                  BorderRadius.circular(10),
-                                            ),
-                                            child: Text(
-                                              statusLower == 'resolved' ||
-                                                      statusLower ==
-                                                          'incident resolved'
-                                                  ? 'RESOLVED'
-                                                  : report['status']
-                                                        .toString()
-                                                        .toUpperCase(),
-                                              style: const TextStyle(
-                                                fontFamily: 'RobotoCondensed',
-                                                fontSize: 9,
-                                                fontWeight: FontWeight.w700,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
+                                      Text(
+                                        report['title'],
+                                        style: const TextStyle(
+                                          fontFamily: 'Roboto',
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900,
+                                          color: appBlue,
+                                        ),
                                       ),
-                                      const SizedBox(height: 2),
-                                      Row(
-                                        children: [
-                                          Text(
-                                            timeAgo,
-                                            style: TextStyle(
-                                              fontFamily: 'RobotoCondensed',
-                                              fontSize: 12,
-                                              color: Colors.grey[600],
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        report['desc'],
+                                        style: const TextStyle(
+                                          fontFamily: 'RobotoCondensed',
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w400,
+                                          color: appBlack,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+
+                                const SizedBox(height: 8),
+
+                                // IMAGE (if exists)
+                                if (mediaUrl.isNotEmpty)
+                                  SizedBox(
+                                    height: 200,
+                                    width: double.infinity,
+                                    child: _buildMediaWidget(
+                                      report,
+                                      targetHeight: 200,
+                                    ),
+                                  ),
+
+                                // DIVIDER
+                                Divider(height: 1, color: Colors.grey[300]),
+
+                                // ACTION BAR (FLAGS + COMMENTS)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceAround,
+                                    children: [
+                                      // GREEN FLAG (Verify)
+                                      Expanded(
+                                        child: InkWell(
+                                          onTap: () =>
+                                              _onGreenFlagPressed(reportIndex),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 8,
+                                            ),
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Icon(
+                                                  Icons.check_circle_outline,
+                                                  size: 20,
+                                                  color: greenIconColor,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  'Verify ${report['greenFlags']}',
+                                                  style: TextStyle(
+                                                    fontFamily:
+                                                        'RobotoCondensed',
+                                                    fontSize: 12,
+                                                    fontWeight: greenSelected
+                                                        ? FontWeight.w700
+                                                        : FontWeight.w400,
+                                                    color: greenIconColor,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                           ),
-                                          // Only show location if it's provided
-                                          if ((report['location'] ??
-                                                  'Not provided') !=
-                                              'Not provided') ...[
-                                            Text(
-                                              ' \u2022 ',
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                color: Colors.grey[600],
-                                              ),
+                                        ),
+                                      ),
+
+                                      // RED FLAG (Report)
+                                      Expanded(
+                                        child: InkWell(
+                                          onTap: () =>
+                                              _onRedFlagPressed(reportIndex),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 8,
                                             ),
-                                            Icon(
-                                              Icons.location_on,
-                                              size: 12,
-                                              color: Colors.grey[600],
-                                            ),
-                                            const SizedBox(width: 2),
-                                            Flexible(
-                                              child: Text(
-                                                report['location'] ?? '',
-                                                style: TextStyle(
-                                                  fontFamily: 'RobotoCondensed',
-                                                  fontSize: 12,
-                                                  color: Colors.grey[600],
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                Icon(
+                                                  Icons.flag_outlined,
+                                                  size: 20,
+                                                  color: redIconColor,
                                                 ),
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  'Report ${report['redFlags']}',
+                                                  style: TextStyle(
+                                                    fontFamily:
+                                                        'RobotoCondensed',
+                                                    fontSize: 12,
+                                                    fontWeight: redSelected
+                                                        ? FontWeight.w700
+                                                        : FontWeight.w400,
+                                                    color: redIconColor,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
-                                          ],
-                                        ],
+                                          ),
+                                        ),
+                                      ),
+
+                                      // COMMENTS
+                                      Expanded(
+                                        child: InkWell(
+                                          onTap: () =>
+                                              _openComments(reportIndex),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 8,
+                                            ),
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment.center,
+                                              children: [
+                                                const Icon(
+                                                  Icons.chat_bubble_outline,
+                                                  size: 20,
+                                                  color: commentBlue,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  'Comment ${report['comments']}',
+                                                  style: const TextStyle(
+                                                    fontFamily:
+                                                        'RobotoCondensed',
+                                                    fontSize: 12,
+                                                    fontWeight: FontWeight.w400,
+                                                    color: commentBlue,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -2392,170 +2622,9 @@ class _CommunityPageState extends State<CommunityPage>
                               ],
                             ),
                           ),
-
-                          // INCIDENT TYPE + DESCRIPTION
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  report['title'],
-                                  style: const TextStyle(
-                                    fontFamily: 'Roboto',
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w900,
-                                    color: appBlue,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  report['desc'],
-                                  style: const TextStyle(
-                                    fontFamily: 'RobotoCondensed',
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w400,
-                                    color: appBlack,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 8),
-
-                          // IMAGE (if exists)
-                          if (mediaUrl.isNotEmpty)
-                            SizedBox(
-                              height: 200,
-                              width: double.infinity,
-                              child: _buildMediaWidget(report),
-                            ),
-
-                          // DIVIDER
-                          Divider(height: 1, color: Colors.grey[300]),
-
-                          // ACTION BAR (FLAGS + COMMENTS)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceAround,
-                              children: [
-                                // GREEN FLAG (Verify)
-                                Expanded(
-                                  child: InkWell(
-                                    onTap: () =>
-                                        _onGreenFlagPressed(reportIndex),
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 8,
-                                      ),
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Icon(
-                                            Icons.check_circle_outline,
-                                            size: 20,
-                                            color: greenIconColor,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Verify ${report['greenFlags']}',
-                                            style: TextStyle(
-                                              fontFamily: 'RobotoCondensed',
-                                              fontSize: 12,
-                                              fontWeight: greenSelected
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w400,
-                                              color: greenIconColor,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-
-                                // RED FLAG (Report)
-                                Expanded(
-                                  child: InkWell(
-                                    onTap: () => _onRedFlagPressed(reportIndex),
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 8,
-                                      ),
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          Icon(
-                                            Icons.flag_outlined,
-                                            size: 20,
-                                            color: redIconColor,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Report ${report['redFlags']}',
-                                            style: TextStyle(
-                                              fontFamily: 'RobotoCondensed',
-                                              fontSize: 12,
-                                              fontWeight: redSelected
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w400,
-                                              color: redIconColor,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-
-                                // COMMENTS
-                                Expanded(
-                                  child: InkWell(
-                                    onTap: () => _openComments(reportIndex),
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 8,
-                                      ),
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: [
-                                          const Icon(
-                                            Icons.chat_bubble_outline,
-                                            size: 20,
-                                            color: commentBlue,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Comment ${report['comments']}',
-                                            style: const TextStyle(
-                                              fontFamily: 'RobotoCondensed',
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w400,
-                                              color: commentBlue,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                        ),
+                      );
+                    },
                   );
                 },
               ),
@@ -2655,7 +2724,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
         _loading = false;
       });
     } catch (e) {
-      debugPrint('âŒ Failed to load comments: $e');
+      _debugLog('âŒ Failed to load comments: $e');
       setState(() => _loading = false);
     }
   }
@@ -2834,7 +2903,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
         );
       }
     } catch (e) {
-      debugPrint('âŒ Failed to post comment: $e');
+      _debugLog('âŒ Failed to post comment: $e');
       if (mounted) {
         AppSnackBar.show(
           context,
@@ -3005,7 +3074,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       });
       await _saveReplyVote(commentId, replyId, newVote);
     } catch (e) {
-      debugPrint('âŒ Failed to update reply verify vote: $e');
+      _debugLog('âŒ Failed to update reply verify vote: $e');
       if (!mounted) return;
       AppSnackBar.show(
         context,
@@ -3054,7 +3123,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       });
       await _saveReplyVote(commentId, replyId, newVote);
     } catch (e) {
-      debugPrint('âŒ Failed to update reply report vote: $e');
+      _debugLog('âŒ Failed to update reply report vote: $e');
       if (!mounted) return;
       AppSnackBar.show(
         context,
@@ -3129,13 +3198,11 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               .doc(commentId)
               .update({'replyCount': actualReplyCount});
         } catch (e) {
-          debugPrint(
-            'âŒ Failed to sync replyCount for comment $commentId: $e',
-          );
+          _debugLog('âŒ Failed to sync replyCount for comment $commentId: $e');
         }
       }
     } catch (e) {
-      debugPrint('âŒ Failed to load replies for comment $commentId: $e');
+      _debugLog('âŒ Failed to load replies for comment $commentId: $e');
       if (!mounted) return;
       AppSnackBar.show(
         context,
@@ -3295,7 +3362,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
         duration: const Duration(seconds: 1),
       );
     } catch (e) {
-      debugPrint('âŒ Failed to post reply for comment $commentId: $e');
+      _debugLog('âŒ Failed to post reply for comment $commentId: $e');
       if (!mounted) return;
       AppSnackBar.show(
         context,
@@ -4102,7 +4169,7 @@ class _CommentsPageState extends State<_CommentsPage> {
     try {
       final reportId = widget.report['id']?.toString() ?? '';
 
-      debugPrint(
+      _debugLog(
         'ðŸ“¥ Loading comments from nested collection for reportId: $reportId',
       );
 
@@ -4114,7 +4181,7 @@ class _CommentsPageState extends State<_CommentsPage> {
           .orderBy('timestamp', descending: true)
           .get();
 
-      debugPrint(
+      _debugLog(
         'âœ… Loaded ${snapshot.docs.length} comments from nested collection',
       );
 
@@ -4153,9 +4220,9 @@ class _CommentsPageState extends State<_CommentsPage> {
         _loading = false;
       });
 
-      debugPrint('âœ… Loaded ${comments.length} comments from Firestore');
+      _debugLog('âœ… Loaded ${comments.length} comments from Firestore');
     } catch (e) {
-      debugPrint('âŒ Failed to load comments: $e');
+      _debugLog('âŒ Failed to load comments: $e');
       setState(() => _loading = false);
     }
   }
@@ -4176,8 +4243,8 @@ class _CommentsPageState extends State<_CommentsPage> {
     setState(() => _isPostingComment = true);
 
     try {
-      debugPrint('=== POSTING COMMENT ===');
-      debugPrint('Report data: ${widget.report}');
+      _debugLog('=== POSTING COMMENT ===');
+      _debugLog('Report data: ${widget.report}');
 
       // Safely extract report data
       final reportId = widget.report['id']?.toString() ?? '';
@@ -4189,7 +4256,7 @@ class _CommentsPageState extends State<_CommentsPage> {
       final reportedBy = widget.report['name']?.toString() ?? '';
 
       if (reportId.isEmpty) {
-        debugPrint('âŒ ERROR: reportId is empty! Cannot post comment.');
+        _debugLog('âŒ ERROR: reportId is empty! Cannot post comment.');
         if (mounted) {
           AppSnackBar.show(
             context,
@@ -4200,11 +4267,11 @@ class _CommentsPageState extends State<_CommentsPage> {
         return;
       }
 
-      debugPrint('ðŸ“ Posting comment with report credentials:');
-      debugPrint('  - reportId: $reportId');
-      debugPrint('  - reportTitle: $reportTitle');
-      debugPrint('  - reportStatus: $reportStatus');
-      debugPrint('  - reportedBy: $reportedBy');
+      _debugLog('ðŸ“ Posting comment with report credentials:');
+      _debugLog('  - reportId: $reportId');
+      _debugLog('  - reportTitle: $reportTitle');
+      _debugLog('  - reportStatus: $reportStatus');
+      _debugLog('  - reportedBy: $reportedBy');
 
       // Get the current user's name from UserSession
       final userName =
@@ -4228,8 +4295,8 @@ class _CommentsPageState extends State<_CommentsPage> {
         'reportedBy': reportedBy,
       };
 
-      debugPrint('ðŸ“¤ Comment data structure: $newComment');
-      debugPrint('ðŸ” Saving to nested comments collection...');
+      _debugLog('ðŸ“¤ Comment data structure: $newComment');
+      _debugLog('ðŸ” Saving to nested comments collection...');
 
       // Save to nested comments collection (for display in UI)
       final savedDocRef = await FirebaseFirestore.instance
@@ -4238,7 +4305,7 @@ class _CommentsPageState extends State<_CommentsPage> {
           .collection('comments')
           .add(newComment);
 
-      debugPrint(
+      _debugLog(
         'âœ… Comment saved to nested collection with ID: ${savedDocRef.id}',
       );
 
@@ -4249,7 +4316,7 @@ class _CommentsPageState extends State<_CommentsPage> {
             .collection('reports')
             .doc(reportId)
             .update({'comments': FieldValue.increment(1)});
-        debugPrint('âœ… Report comment count incremented');
+        _debugLog('âœ… Report comment count incremented');
         if (mounted) {
           setState(() {
             final currentCount = widget.report['comments'] as int? ?? 0;
@@ -4257,7 +4324,7 @@ class _CommentsPageState extends State<_CommentsPage> {
           });
         }
       } catch (updateError) {
-        debugPrint(
+        _debugLog(
           'âš ï¸ Warning: Could not update comment count: $updateError',
         );
         // Don't fail the entire operation if count update fails
@@ -4277,9 +4344,9 @@ class _CommentsPageState extends State<_CommentsPage> {
         );
       }
     } catch (e) {
-      debugPrint('âŒ Failed to post comment: $e');
-      debugPrint('Stack trace: ${StackTrace.current}');
-      debugPrint('Error type: ${e.runtimeType}');
+      _debugLog('âŒ Failed to post comment: $e');
+      _debugLog('Stack trace: ${StackTrace.current}');
+      _debugLog('Error type: ${e.runtimeType}');
       if (mounted) {
         // Show detailed error in dialog
         showDialog(
@@ -4340,7 +4407,7 @@ class _CommentsPageState extends State<_CommentsPage> {
         comment['userVote'] = newVote;
       });
     } catch (e) {
-      debugPrint('âŒ Failed to update comment vote: $e');
+      _debugLog('âŒ Failed to update comment vote: $e');
     }
   }
 
@@ -4379,7 +4446,7 @@ class _CommentsPageState extends State<_CommentsPage> {
         comment['userVote'] = newVote;
       });
     } catch (e) {
-      debugPrint('âŒ Failed to update comment vote: $e');
+      _debugLog('âŒ Failed to update comment vote: $e');
     }
   }
 
@@ -4865,7 +4932,6 @@ class _ImageZoomDialog extends StatelessWidget {
                 child: Image.network(
                   imageUrl,
                   fit: BoxFit.contain,
-                  filterQuality: FilterQuality.high,
                   loadingBuilder: (context, child, loadingProgress) {
                     if (loadingProgress == null) {
                       return child;
@@ -4926,144 +4992,40 @@ class _ImageZoomDialog extends StatelessWidget {
 /// Loads images directly from Firebase Storage using the download URL
 /// Uses Image.memory for better control and error handling
 
-class _NetworkImageLoader extends StatefulWidget {
+class _NetworkImageLoader extends StatelessWidget {
   final String url;
+  final int? cacheWidth;
+  final int? cacheHeight;
 
-  const _NetworkImageLoader({required this.url});
-
-  @override
-  State<_NetworkImageLoader> createState() => _NetworkImageLoaderState();
-}
-
-class _NetworkImageLoaderState extends State<_NetworkImageLoader> {
-  int _retryCount = 0;
-  static const int _maxRetries = 2;
-
-  @override
-  void initState() {
-    super.initState();
-    debugPrint('ðŸ–¼ï¸ [NetworkImageLoader] Init - URL: ${widget.url}');
-  }
-
-  void _retry() {
-    if (_retryCount < _maxRetries) {
-      setState(() => _retryCount++);
-      debugPrint('ðŸ”„ Retry attempt ${_retryCount + 1}/$_maxRetries');
-    }
-  }
+  const _NetworkImageLoader({
+    required this.url,
+    this.cacheWidth,
+    this.cacheHeight,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final key = ValueKey('${widget.url}_retry$_retryCount');
-
-    return Image.network(
-      widget.url,
-      key: key,
+    return CachedNetworkImage(
+      imageUrl: url,
       fit: BoxFit.cover,
-      filterQuality: FilterQuality.high,
-      loadingBuilder: (context, child, loadingProgress) {
-        if (loadingProgress == null) {
-          debugPrint('âœ… Image loaded successfully');
-          return child;
-        }
-        final percent = loadingProgress.expectedTotalBytes != null
-            ? (loadingProgress.cumulativeBytesLoaded /
-                      loadingProgress.expectedTotalBytes!) *
-                  100
-            : 0;
-        debugPrint('â³ Loading... ${percent.toStringAsFixed(0)}%');
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(
-                value: percent > 0 ? percent / 100 : null,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '${percent.toStringAsFixed(0)}%',
-                style: const TextStyle(fontSize: 12, color: Colors.black54),
-              ),
-            ],
-          ),
-        );
-      },
-      errorBuilder: (context, error, stackTrace) {
-        String errorString = 'Unknown error';
-        try {
-          errorString = error.toString();
-        } catch (e) {
-          errorString = 'Error object inaccessible: $e';
-        }
-
-        debugPrint(
-          'âŒ [ImageLoader] Load failed:\n'
-          '   URL: ${widget.url}\n'
-          '   Error: $errorString\n'
-          '   Type: ${error.runtimeType}',
-        );
-
-        String diagnosis = 'Failed to load image';
-
-        if (errorString.contains('statusCode: 0')) {
-          diagnosis =
-              'ðŸ“¡ No Internet\n(Check connection or emulator network)';
-        } else if (errorString.contains('401') ||
-            errorString.contains('403') ||
-            errorString.contains('Permission') ||
-            errorString.contains('denied')) {
-          diagnosis = 'ðŸ”’ Access Denied\n(Check Storage Rules)';
-        } else if (errorString.contains('404') ||
-            errorString.contains('not found')) {
-          diagnosis = 'âŒ File Not Found';
-        } else if (errorString.contains('timeout') ||
-            errorString.contains('Time out')) {
-          diagnosis = 'â±ï¸ Network Timeout';
-        } else if (errorString.contains('Network') ||
-            errorString.contains('Connection') ||
-            errorString.contains('SocketException')) {
-          diagnosis = 'ðŸŒ Network Error\n(Check internet connection)';
-        } else if (errorString.contains('Certificate') ||
-            errorString.contains('SSL')) {
-          diagnosis = 'ðŸ” SSL Error';
-        }
-
-        return Container(
-          color: Colors.grey[300],
-          child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                const SizedBox(height: 8),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    diagnosis,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 12, color: Colors.black54),
-                  ),
-                ),
-                if (_retryCount < _maxRetries) ...[
-                  const SizedBox(height: 12),
-                  ElevatedButton.icon(
-                    onPressed: _retry,
-                    icon: const Icon(Icons.refresh, size: 16),
-                    label: const Text('Retry'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        );
-      },
+      fadeInDuration: const Duration(milliseconds: 120),
+      memCacheWidth: cacheWidth,
+      memCacheHeight: cacheHeight,
+      maxWidthDiskCache: cacheWidth,
+      maxHeightDiskCache: cacheHeight,
+      placeholder: (_, __) => const Center(
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+      errorWidget: (_, __, ___) => Container(
+        color: Colors.grey[300],
+        child: const Center(
+          child: Icon(Icons.error_outline, size: 36, color: Colors.red),
+        ),
+      ),
     );
   }
 }

@@ -1,8 +1,11 @@
+import 'dart:async';
+
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../../common/services/shell_navigation_service.dart';
 import '../../../common/widgets/auth_widgets.dart';
-import '../../home/pages/home_page.dart';
 
 class NotificationsPage extends StatefulWidget {
   const NotificationsPage({super.key});
@@ -17,6 +20,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
   static const appRed = Color(0xFFFFC806);
   static const appBlack = Color(0xFF212121);
   static const appWhite = Color(0xFFF7F8F3);
+  final Set<String> _optimisticallyReadIds = <String>{};
 
   @override
   Widget build(BuildContext context) {
@@ -43,150 +47,163 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Widget _buildUnifiedNotificationFeed() {
-    return StreamBuilder<List<_NotificationItem>>(
-      stream: _getCombinedNotificationsStream(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(appBlue),
-            ),
-          );
-        }
+    final announcementsStream = FirebaseFirestore.instance
+        .collection('announcements')
+        .orderBy('createdAt', descending: true)
+        .limit(20)
+        .snapshots();
+    final reportsStream = FirebaseFirestore.instance
+        .collection('reports')
+        .orderBy('reportedAt', descending: true)
+        .limit(30)
+        .snapshots();
 
-        if (snapshot.hasError) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.error_outline,
-                  size: 48,
-                  color: appBlack.withOpacity(0.3),
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: announcementsStream,
+      builder: (context, announcementsSnapshot) {
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: reportsStream,
+          builder: (context, reportsSnapshot) {
+            final announcementsWaiting =
+                announcementsSnapshot.connectionState ==
+                ConnectionState.waiting;
+            final reportsWaiting =
+                reportsSnapshot.connectionState == ConnectionState.waiting;
+            if (announcementsWaiting &&
+                reportsWaiting &&
+                announcementsSnapshot.data == null &&
+                reportsSnapshot.data == null) {
+              return const Center(
+                child: CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(appBlue),
                 ),
-                const SizedBox(height: 12),
-                Text(
-                  'Failed to load notifications.',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: appBlack.withOpacity(0.7),
+              );
+            }
+
+            if (announcementsSnapshot.hasError || reportsSnapshot.hasError) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      size: 48,
+                      color: appBlack.withOpacity(0.3),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Failed to load notifications.',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: appBlack.withOpacity(0.7),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            final notifications = _combineNotifications(
+              announcementsSnapshot.data,
+              reportsSnapshot.data,
+            );
+
+            if (notifications.isEmpty) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.notifications_none,
+                      size: 64,
+                      color: appBlack.withOpacity(0.25),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No notifications yet',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        color: appBlack.withOpacity(0.7),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'You\'ll see announcements and\nincident alerts here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: appBlack.withOpacity(0.5),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.08),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
                   ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        final notifications = snapshot.data ?? [];
-
-        if (notifications.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.notifications_none,
-                  size: 64,
-                  color: appBlack.withOpacity(0.25),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'No notifications yet',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: appBlack.withOpacity(0.7),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'You\'ll see announcements and\nincident alerts here.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: appBlack.withOpacity(0.5),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }
-
-        return Container(
-          margin: const EdgeInsets.only(bottom: 8),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.08),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
+                ],
               ),
-            ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: ListView.separated(
-            padding: EdgeInsets.zero,
-            itemCount: notifications.length,
-            separatorBuilder: (_, __) => Divider(
-              height: 1,
-              thickness: 1,
-              color: appBlack.withValues(alpha: 0.08),
-            ),
-            itemBuilder: (context, index) {
-              final notification = notifications[index];
-              return _buildNotificationCard(notification);
-            },
-          ),
+              clipBehavior: Clip.antiAlias,
+              child: ListView.separated(
+                padding: EdgeInsets.zero,
+                itemCount: notifications.length,
+                separatorBuilder: (_, __) => Divider(
+                  height: 1,
+                  thickness: 1,
+                  color: appBlack.withValues(alpha: 0.08),
+                ),
+                itemBuilder: (context, index) {
+                  final notification = notifications[index];
+                  return _buildNotificationCard(notification);
+                },
+              ),
+            );
+          },
         );
       },
     );
   }
 
-  Stream<List<_NotificationItem>> _getCombinedNotificationsStream() {
-    // Stream for announcements - we'll combine with reports
-    final announcementsStream = FirebaseFirestore.instance
-        .collection('announcements')
-        .orderBy('createdAt', descending: true)
-        .limit(20)
-        .snapshots()
-        .map((snapshot) {
-          return snapshot.docs
-              .where((doc) {
-                final data = doc.data();
-                return data['isPlaceholder'] != true;
-              })
-              .map((doc) => _NotificationItem.fromAnnouncement(doc))
-              .toList();
-        });
+  List<_NotificationItem> _combineNotifications(
+    QuerySnapshot<Map<String, dynamic>>? announcementsSnapshot,
+    QuerySnapshot<Map<String, dynamic>>? reportsSnapshot,
+  ) {
+    final announcements = (announcementsSnapshot?.docs ?? const [])
+        .where((doc) {
+          final data = doc.data();
+          return data['isPlaceholder'] != true;
+        })
+        .map((doc) => _NotificationItem.fromAnnouncement(doc))
+        .toList();
 
-    // Combine announcements with reports
-    return announcementsStream.asyncMap((announcements) async {
-      final reportsSnapshot = await FirebaseFirestore.instance
-          .collection('reports')
-          .orderBy('reportedAt', descending: true)
-          .limit(30)
-          .get();
+    final reports = (reportsSnapshot?.docs ?? const [])
+        .where((doc) {
+          final data = doc.data();
+          return data['location'] != null;
+        })
+        .map((doc) => _NotificationItem.fromReport(doc))
+        .toList();
 
-      final reports = reportsSnapshot.docs
-          .where((doc) {
-            final data = doc.data();
-            return data['location'] != null;
-          })
-          .map((doc) => _NotificationItem.fromReport(doc))
-          .toList();
-
-      // Combine and sort by timestamp
-      final combined = [...announcements, ...reports];
-      combined.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-
-      return combined;
-    });
+    final combined = [...announcements, ...reports];
+    combined.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return combined;
   }
 
   Widget _buildNotificationCard(_NotificationItem notification) {
     final isAnnouncement = notification.type == _NotificationType.announcement;
+    final isNew =
+        notification.isNew && !_optimisticallyReadIds.contains(notification.id);
     final timeAgo = _getTimeAgo(notification.timestamp);
 
     return GestureDetector(
@@ -194,7 +211,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
         decoration: BoxDecoration(
-          color: notification.isNew ? appBlue.withOpacity(0.04) : Colors.white,
+          color: isNew ? appBlue.withOpacity(0.04) : Colors.white,
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -254,7 +271,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                         ),
                       ),
                       const Spacer(),
-                      if (notification.isNew)
+                      if (isNew)
                         Container(
                           width: 8,
                           height: 8,
@@ -271,9 +288,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                     notification.title,
                     style: TextStyle(
                       fontSize: 14,
-                      fontWeight: notification.isNew
-                          ? FontWeight.w600
-                          : FontWeight.w500,
+                      fontWeight: isNew ? FontWeight.w600 : FontWeight.w500,
                       color: appBlack,
                       height: 1.3,
                     ),
@@ -343,12 +358,16 @@ class _NotificationsPageState extends State<NotificationsPage> {
               const SizedBox(width: 12),
               ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                  notification.imageUrl!,
+                child: CachedNetworkImage(
+                  imageUrl: notification.imageUrl!,
                   width: 60,
                   height: 60,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  memCacheWidth: 180,
+                  memCacheHeight: 180,
+                  maxWidthDiskCache: 180,
+                  maxHeightDiskCache: 180,
+                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
                 ),
               ),
             ],
@@ -356,6 +375,15 @@ class _NotificationsPageState extends State<NotificationsPage> {
         ),
       ),
     );
+  }
+
+  void _markNotificationAsReadOptimistically(_NotificationItem notification) {
+    if (!notification.isNew) return;
+    if (_optimisticallyReadIds.contains(notification.id)) return;
+    if (!mounted) return;
+    setState(() {
+      _optimisticallyReadIds.add(notification.id);
+    });
   }
 
   Future<void> _markNotificationAsRead(_NotificationItem notification) async {
@@ -377,35 +405,28 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<void> _handleNotificationTap(_NotificationItem notification) async {
-    await _markNotificationAsRead(notification);
+    _markNotificationAsReadOptimistically(notification);
+    unawaited(_markNotificationAsRead(notification));
     if (!mounted) return;
 
     if (notification.type == _NotificationType.incident) {
-      await _openIncidentReport(notification);
+      _openIncidentReport(notification);
       return;
     }
 
     _showNotificationDetail(notification);
   }
 
-  Future<void> _openIncidentReport(_NotificationItem notification) async {
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => MainPage(
-          initialIndex: 1,
-          initialCommunityReportId: notification.id,
-        ),
-      ),
-    );
+  void _openIncidentReport(_NotificationItem notification) {
+    MainShellNavigationService.openTab(1, communityReportId: notification.id);
   }
 
   void _showNotificationDetail(_NotificationItem notification) {
     final isAnnouncement = notification.type == _NotificationType.announcement;
 
     // Mark as read when opened
-    _markNotificationAsRead(notification);
+    _markNotificationAsReadOptimistically(notification);
+    unawaited(_markNotificationAsRead(notification));
 
     showDialog(
       context: context,
@@ -474,12 +495,14 @@ class _NotificationsPageState extends State<NotificationsPage> {
                       notification.imageUrl!.isNotEmpty)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: Image.network(
-                        notification.imageUrl!,
+                      child: CachedNetworkImage(
+                        imageUrl: notification.imageUrl!,
                         width: double.infinity,
                         height: 180,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                        memCacheHeight: 360,
+                        maxHeightDiskCache: 360,
+                        errorWidget: (_, __, ___) => const SizedBox.shrink(),
                       ),
                     ),
                   if (isAnnouncement &&

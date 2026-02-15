@@ -6,6 +6,7 @@ import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
@@ -14,10 +15,16 @@ import 'package:latlong2/latlong.dart';
 import '../../../common/theme/app_theme.dart';
 
 import '../../../common/services/location_service.dart';
+import '../../../common/services/shell_navigation_service.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
-import '../../home/pages/home_page.dart';
+
+void _debugLog(Object? message) {
+  if (kDebugMode) {
+    debugPrint('$message');
+  }
+}
 
 enum WeatherState { none, sunny, cloudy, rainy }
 
@@ -75,6 +82,9 @@ class _ReportMapPageState extends State<ReportMapPage>
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _commentsSubscription;
   bool _commentsInitialized = false;
+  bool _isResponderCommentsLoading = true;
+  String? _responderCommentsError;
+  List<Map<String, dynamic>> _responderComments = [];
   List<Map<String, dynamic>> _responderCommentsFallback = [];
   Map<String, dynamic>? _liveReportData;
   LatLng? _responderLocation;
@@ -111,6 +121,7 @@ class _ReportMapPageState extends State<ReportMapPage>
     _subscribeToReportUpdates();
     _subscribeToResponderComments();
     _liveReportData = Map<String, dynamic>.from(widget.reportData);
+    _responderCommentsFallback = _parseResponderComments(widget.reportData);
 
     final source = widget.reportData['locationSource'] as String?;
     final latValue = widget.reportData['locationLat'];
@@ -252,7 +263,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         // Center map on user location
         _mapController.move(userLatLng, 16.0);
 
-        debugPrint(
+        _debugLog(
           '✅ Location shared: ${position.latitude}, ${position.longitude}',
         );
 
@@ -266,7 +277,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         });
       }
     } catch (e) {
-      debugPrint('❌ Failed to share location: $e');
+      _debugLog('❌ Failed to share location: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -623,6 +634,36 @@ class _ReportMapPageState extends State<ReportMapPage>
     return '${hours} hr ${remaining} min';
   }
 
+  DateTime _commentTimestamp(Object? value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+    if (value is DateTime) {
+      return value;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  List<Map<String, dynamic>> _parseResponderComments(
+    Map<String, dynamic> source,
+  ) {
+    final commentsRaw = source['responderComments'];
+    if (commentsRaw is! List) {
+      return const <Map<String, dynamic>>[];
+    }
+    final parsed = commentsRaw
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .where(_isResponderComment)
+        .toList();
+    parsed.sort((a, b) {
+      final aDate = _commentTimestamp(a['timestamp']);
+      final bDate = _commentTimestamp(b['timestamp']);
+      return bDate.compareTo(aDate);
+    });
+    return parsed;
+  }
+
   void _subscribeToReportUpdates() {
     _reportSubscription?.cancel();
     _reportSubscription = FirebaseFirestore.instance
@@ -663,33 +704,6 @@ class _ReportMapPageState extends State<ReportMapPage>
               }
             });
           }
-          final commentsRaw = data['responderComments'];
-          if (commentsRaw is List) {
-            final parsed = commentsRaw
-                .whereType<Map>()
-                .map((entry) => Map<String, dynamic>.from(entry))
-                .toList();
-            parsed.sort((a, b) {
-              final aTime = a['timestamp'];
-              final bTime = b['timestamp'];
-              final aDate = aTime is Timestamp
-                  ? aTime.toDate()
-                  : (aTime is DateTime
-                        ? aTime
-                        : DateTime.fromMillisecondsSinceEpoch(0));
-              final bDate = bTime is Timestamp
-                  ? bTime.toDate()
-                  : (bTime is DateTime
-                        ? bTime
-                        : DateTime.fromMillisecondsSinceEpoch(0));
-              return bDate.compareTo(aDate);
-            });
-            if (mounted) {
-              setState(() {
-                _responderCommentsFallback = parsed;
-              });
-            }
-          }
           final status = (data['status'] as String? ?? '').toLowerCase();
           if ((status == 'resolved' || status == 'incident resolved') &&
               !_resolvedDialogShown) {
@@ -715,69 +729,111 @@ class _ReportMapPageState extends State<ReportMapPage>
 
   void _subscribeToResponderComments() {
     _commentsSubscription?.cancel();
+    _isResponderCommentsLoading = true;
+    _responderCommentsError = null;
+    _commentsInitialized = false;
     _commentsSubscription = FirebaseFirestore.instance
         .collection('reports')
         .doc(widget.reportId)
         .collection('comments')
         .orderBy('timestamp', descending: true)
         .snapshots()
-        .listen((snapshot) {
-          if (!_commentsInitialized) {
-            _commentsInitialized = true;
-            return;
-          }
-          if (snapshot.docChanges.isEmpty) return;
-          final hasNew = snapshot.docChanges.any((change) {
-            if (change.type != DocumentChangeType.added) return false;
-            final data = change.doc.data();
-            if (data == null) return false;
-            final type = (data['type'] as String?)?.toLowerCase();
-            final role = (data['role'] as String?)?.toLowerCase();
-            return type == 'admin' ||
-                role == 'responder' ||
-                (type != 'user' && type != null);
-          });
-          if (!hasNew || !mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              behavior: SnackBarBehavior.floating,
-              backgroundColor: Colors.transparent,
-              elevation: 0,
-              duration: const Duration(seconds: 2),
-              content: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFAC1B22),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.2),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.notifications, color: Colors.white, size: 18),
-                    SizedBox(width: 8),
-                    Text(
-                      'Responder posted an update',
-                      style: TextStyle(
-                        fontFamily: 'RobotoCondensed',
-                        fontWeight: FontWeight.w400,
-                        color: Colors.white,
+        .listen(
+          (snapshot) {
+            final responderDocs = snapshot.docs.where((doc) {
+              final data = doc.data();
+              return _isResponderComment(data);
+            }).toList();
+
+            final responderComments = responderDocs.map((doc) {
+              final data = Map<String, dynamic>.from(doc.data());
+              data['id'] = doc.id;
+              return data;
+            }).toList();
+
+            if (_commentsInitialized) {
+              final hasNew = snapshot.docChanges.any((change) {
+                if (change.type != DocumentChangeType.added) return false;
+                final data = change.doc.data();
+                if (data == null) return false;
+                return _isResponderComment(data);
+              });
+              if (hasNew && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    behavior: SnackBarBehavior.floating,
+                    backgroundColor: Colors.transparent,
+                    elevation: 0,
+                    duration: const Duration(seconds: 2),
+                    content: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFAC1B22),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.2),
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(
+                            Icons.notifications,
+                            color: Colors.white,
+                            size: 18,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Responder posted an update',
+                            style: TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontWeight: FontWeight.w400,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        });
+                  ),
+                );
+              }
+            } else {
+              _commentsInitialized = true;
+            }
+
+            if (!mounted) return;
+            setState(() {
+              _responderComments = responderComments;
+              _isResponderCommentsLoading = false;
+              _responderCommentsError = null;
+            });
+          },
+          onError: (error) {
+            if (!mounted) return;
+            setState(() {
+              _isResponderCommentsLoading = false;
+              _responderCommentsError = 'Unable to load responder updates.';
+            });
+          },
+        );
+  }
+
+  bool _isResponderComment(Map<String, dynamic> data) {
+    final type = (data['type'] as String?)?.toLowerCase();
+    final role = (data['role'] as String?)?.toLowerCase();
+    if (type == 'admin' || role == 'responder') {
+      return true;
+    }
+    if (type == null) {
+      return true;
+    }
+    return type != 'user';
   }
 
   void _showResolvedDialog() {
@@ -884,23 +940,19 @@ class _ReportMapPageState extends State<ReportMapPage>
     UserSession.removeActiveReport(widget.reportId);
     final nextReport = UserSession.latestActiveReport;
     if (nextReport != null) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ReportMapPage(
-            reportId: nextReport.reportId,
-            reportData: nextReport.reportData,
-            showBottomNav: false,
-          ),
-        ),
-      );
+      if (widget.showBottomNav) {
+        MainShellNavigationService.popToRootAndOpenTab(context, 2);
+      } else {
+        MainShellNavigationService.openTab(2);
+      }
       return;
     }
 
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const MainPage(initialIndex: 0)),
-    );
+    if (widget.showBottomNav) {
+      MainShellNavigationService.popToRootAndOpenTab(context, 0);
+    } else {
+      MainShellNavigationService.openTab(0);
+    }
   }
 
   void _showReportSwitcher() {
@@ -913,7 +965,7 @@ class _ReportMapPageState extends State<ReportMapPage>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => SafeArea(
+      builder: (modalContext) => SafeArea(
         child: ListView.separated(
           shrinkWrap: true,
           itemCount: activeReports.length,
@@ -942,18 +994,20 @@ class _ReportMapPageState extends State<ReportMapPage>
                   ? const Icon(Icons.check_circle, color: Color(0xFF00A458))
                   : const Icon(Icons.chevron_right),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(modalContext);
                 if (isCurrent) return;
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ReportMapPage(
-                      reportId: report.reportId,
-                      reportData: report.reportData,
-                      showBottomNav: false,
-                    ),
-                  ),
+                UserSession.addActiveReport(
+                  reportId: report.reportId,
+                  reportData: report.reportData,
                 );
+                if (widget.showBottomNav) {
+                  MainShellNavigationService.popToRootAndOpenTab(
+                    this.context,
+                    2,
+                  );
+                } else {
+                  MainShellNavigationService.openTab(2);
+                }
               },
             );
           },
@@ -1049,168 +1103,147 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   Widget _buildResponderCommentsSection() {
-    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: FirebaseFirestore.instance
-          .collection('reports')
-          .doc(widget.reportId)
-          .collection('comments')
-          .orderBy('timestamp', descending: true)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return const Padding(
-            padding: EdgeInsets.only(bottom: 16),
-            child: Text(
-              'Unable to load responder updates.',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-                fontSize: 13,
-                color: Color(0xFF6B7280),
-              ),
+    if (_isResponderCommentsLoading) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Text(
+          'Loading responder updates...',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 13,
+            color: Color(0xFF6B7280),
+          ),
+        ),
+      );
+    }
+    if (_responderCommentsError != null) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Text(
+          _responderCommentsError!,
+          style: const TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 13,
+            color: Color(0xFF6B7280),
+          ),
+        ),
+      );
+    }
+
+    final fallback = _responderComments.isEmpty
+        ? _responderCommentsFallback
+        : [];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Responder Updates',
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontWeight: FontWeight.w400,
+            fontSize: 14,
+            color: Color(0xFF111827),
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (_responderComments.isEmpty && fallback.isEmpty)
+          const Text(
+            'No responder updates yet.',
+            style: TextStyle(
+              fontFamily: 'RobotoCondensed',
+              fontWeight: FontWeight.w400,
+              fontSize: 13,
+              color: Color(0xFF6B7280),
             ),
-          );
-        }
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Padding(
-            padding: EdgeInsets.only(bottom: 16),
-            child: Text(
-              'Loading responder updates...',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-                fontSize: 13,
-                color: Color(0xFF6B7280),
+          )
+        else if (_responderComments.isNotEmpty)
+          ..._responderComments.take(5).map((data) {
+            final text = data['text'] as String? ?? '';
+            final timestamp = data['timestamp'];
+            final date = timestamp is Timestamp
+                ? timestamp.toDate()
+                : (timestamp is DateTime ? timestamp : DateTime.now());
+            final timeLabel = DateFormat('h:mm a').format(date);
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F8F8),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
               ),
-            ),
-          );
-        }
-        final docs = (snapshot.data?.docs ?? []).where((doc) {
-          final data = doc.data();
-          final type = (data['type'] as String?)?.toLowerCase();
-          final role = (data['role'] as String?)?.toLowerCase();
-          if (type == 'admin' || role == 'responder') {
-            return true;
-          }
-          if (type == null) {
-            return true;
-          }
-          return type != 'user';
-        }).toList();
-        final fallback = docs.isEmpty ? _responderCommentsFallback : [];
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Responder Updates',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-                fontSize: 14,
-                color: Color(0xFF111827),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    text,
+                    style: const TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontWeight: FontWeight.w400,
+                      fontSize: 13,
+                      color: Color(0xFF374151),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    timeLabel,
+                    style: const TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontWeight: FontWeight.w400,
+                      fontSize: 11,
+                      color: Color(0xFF6B7280),
+                    ),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 8),
-            if (docs.isEmpty && fallback.isEmpty)
-              const Text(
-                'No responder updates yet.',
-                style: TextStyle(
-                  fontFamily: 'RobotoCondensed',
-                  fontWeight: FontWeight.w400,
-                  fontSize: 13,
-                  color: Color(0xFF6B7280),
-                ),
-              )
-            else if (docs.isNotEmpty)
-              ...docs.take(5).map((doc) {
-                final data = doc.data();
-                final text = data['text'] as String? ?? '';
-                final timestamp = data['timestamp'] as Timestamp?;
-                final timeLabel = timestamp == null
-                    ? ''
-                    : DateFormat('h:mm a').format(timestamp.toDate());
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8F8F8),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
+            );
+          })
+        else
+          ...fallback.take(5).map((data) {
+            final text = data['text'] as String? ?? '';
+            final timestamp = data['timestamp'];
+            final date = timestamp is Timestamp
+                ? timestamp.toDate()
+                : (timestamp is DateTime ? timestamp : DateTime.now());
+            final timeLabel = DateFormat('h:mm a').format(date);
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF8F8F8),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFE5E7EB)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    text,
+                    style: const TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontWeight: FontWeight.w400,
+                      fontSize: 13,
+                      color: Color(0xFF374151),
+                    ),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        text,
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontWeight: FontWeight.w400,
-                          fontSize: 13,
-                          color: Color(0xFF374151),
-                        ),
-                      ),
-                      if (timeLabel.isNotEmpty) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          timeLabel,
-                          style: const TextStyle(
-                            fontFamily: 'RobotoCondensed',
-                            fontWeight: FontWeight.w400,
-                            fontSize: 11,
-                            color: Color(0xFF6B7280),
-                          ),
-                        ),
-                      ],
-                    ],
+                  const SizedBox(height: 6),
+                  Text(
+                    timeLabel,
+                    style: const TextStyle(
+                      fontFamily: 'RobotoCondensed',
+                      fontWeight: FontWeight.w400,
+                      fontSize: 11,
+                      color: Color(0xFF6B7280),
+                    ),
                   ),
-                );
-              })
-            else
-              ...fallback.take(5).map((data) {
-                final text = data['text'] as String? ?? '';
-                final timestamp = data['timestamp'];
-                final date = timestamp is Timestamp
-                    ? timestamp.toDate()
-                    : (timestamp is DateTime ? timestamp : DateTime.now());
-                final timeLabel = DateFormat('h:mm a').format(date);
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8F8F8),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        text,
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontWeight: FontWeight.w400,
-                          fontSize: 13,
-                          color: Color(0xFF374151),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        timeLabel,
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontWeight: FontWeight.w400,
-                          fontSize: 11,
-                          color: Color(0xFF6B7280),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-            const SizedBox(height: 20),
-          ],
-        );
-      },
+                ],
+              ),
+            );
+          }),
+        const SizedBox(height: 20),
+      ],
     );
   }
 
@@ -1606,7 +1639,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                           ),
                         ),
                         errorWidget: (context, url, error) {
-                          debugPrint(
+                          _debugLog(
                             'Failed to load image: $url, error: $error',
                           );
                           return Container(
@@ -2080,131 +2113,133 @@ class _ReportMapPageState extends State<ReportMapPage>
       body: Stack(
         children: [
           // OpenStreetMap
-          FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: _initialCenter,
-              initialZoom: _initialZoom,
-              minZoom: 5,
-              maxZoom: 18,
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.resq.emergency_app',
-                maxZoom: 19,
-                tileBuilder: (context, tileWidget, tile) {
-                  return ColorFiltered(
-                    colorFilter: const ColorFilter.matrix([
-                      1.05,
-                      0.03,
-                      0.02,
-                      0,
-                      10,
-                      0.03,
-                      1.05,
-                      0.02,
-                      0,
-                      10,
-                      0.03,
-                      0.05,
-                      1.02,
-                      0,
-                      10,
-                      0,
-                      0,
-                      0,
-                      1,
-                      0,
-                    ]),
-                    child: tileWidget,
-                  );
-                },
+          RepaintBoundary(
+            child: FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _initialCenter,
+                initialZoom: _initialZoom,
+                minZoom: 5,
+                maxZoom: 18,
               ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.resq.emergency_app',
+                  maxZoom: 19,
+                  tileBuilder: (context, tileWidget, tile) {
+                    return ColorFiltered(
+                      colorFilter: const ColorFilter.matrix([
+                        1.05,
+                        0.03,
+                        0.02,
+                        0,
+                        10,
+                        0.03,
+                        1.05,
+                        0.02,
+                        0,
+                        10,
+                        0.03,
+                        0.05,
+                        1.02,
+                        0,
+                        10,
+                        0,
+                        0,
+                        0,
+                        1,
+                        0,
+                      ]),
+                      child: tileWidget,
+                    );
+                  },
+                ),
 
-              CircleLayer(
-                circles: [
-                  CircleMarker(
-                    point: _angelesCityCenter,
-                    radius: _angelesCityRadiusMeters,
-                    useRadiusInMeter: true,
-                    color: AppColors.appGreen.withOpacity(0.07),
-                    borderColor: AppColors.appGreen.withOpacity(0.45),
-                    borderStrokeWidth: 2.0,
-                  ),
-                ],
-              ),
+                CircleLayer(
+                  circles: [
+                    CircleMarker(
+                      point: _angelesCityCenter,
+                      radius: _angelesCityRadiusMeters,
+                      useRadiusInMeter: true,
+                      color: AppColors.appGreen.withOpacity(0.07),
+                      borderColor: AppColors.appGreen.withOpacity(0.45),
+                      borderStrokeWidth: 2.0,
+                    ),
+                  ],
+                ),
 
-              // Responder route polyline
-              if (_responderRoutePolylines.isNotEmpty)
-                PolylineLayer(polylines: _responderRoutePolylines),
+                // Responder route polyline
+                if (_responderRoutePolylines.isNotEmpty)
+                  PolylineLayer(polylines: _responderRoutePolylines),
 
-              // Incident location marker (report pin)
-              if (_incidentLocation != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _incidentLocation!,
-                      width: 72,
-                      height: 72,
-                      child: _buildBouncyPin(
-                        child: GestureDetector(
-                          onTap: () => _showIncidentInfo(
-                            _liveReportData ?? widget.reportData,
-                          ),
-                          child: _buildIncidentAsset(
-                            _getMarkerAssetForIncidentType(
-                              (_liveReportData?['incidentType'] ??
-                                      widget.reportData['incidentType'] ??
-                                      'OTHERS')
-                                  .toString(),
+                // Incident location marker (report pin)
+                if (_incidentLocation != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _incidentLocation!,
+                        width: 72,
+                        height: 72,
+                        child: _buildBouncyPin(
+                          child: GestureDetector(
+                            onTap: () => _showIncidentInfo(
+                              _liveReportData ?? widget.reportData,
                             ),
-                            width: 64,
-                            height: 64,
+                            child: _buildIncidentAsset(
+                              _getMarkerAssetForIncidentType(
+                                (_liveReportData?['incidentType'] ??
+                                        widget.reportData['incidentType'] ??
+                                        'OTHERS')
+                                    .toString(),
+                              ),
+                              width: 64,
+                              height: 64,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
 
-              // Reporter live location marker
-              if (_userLocation != null && _locationShared)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _userLocation!,
-                      width: 54,
-                      height: 54,
-                      child: _buildBouncyPin(
-                        child: const Icon(
-                          Icons.person_pin_circle,
-                          color: Color(0xFF2563EB),
-                          size: 36,
+                // Reporter live location marker
+                if (_userLocation != null && _locationShared)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _userLocation!,
+                        width: 54,
+                        height: 54,
+                        child: _buildBouncyPin(
+                          child: const Icon(
+                            Icons.person_pin_circle,
+                            color: Color(0xFF2563EB),
+                            size: 36,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
 
-              if (_responderLocation != null)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _responderLocation!,
-                      width: 48,
-                      height: 48,
-                      child: _buildBouncyPin(
-                        child: const Icon(
-                          Icons.directions_car,
-                          color: Color(0xFF00A458),
-                          size: 34,
+                if (_responderLocation != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _responderLocation!,
+                        width: 48,
+                        height: 48,
+                        child: _buildBouncyPin(
+                          child: const Icon(
+                            Icons.directions_car,
+                            color: Color(0xFF00A458),
+                            size: 34,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-            ],
+                    ],
+                  ),
+              ],
+            ),
           ),
 
           Positioned.fill(
@@ -2463,11 +2498,9 @@ class _ReportMapPageState extends State<ReportMapPage>
               currentIndex: _navIndex,
               onTap: (index) {
                 if (index != _navIndex) {
-                  Navigator.pushReplacement(
+                  MainShellNavigationService.popToRootAndOpenTab(
                     context,
-                    MaterialPageRoute(
-                      builder: (_) => MainPage(initialIndex: index),
-                    ),
+                    index,
                   );
                 }
               },

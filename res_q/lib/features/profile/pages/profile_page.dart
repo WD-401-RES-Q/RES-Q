@@ -177,24 +177,36 @@ class _ProfilePageState extends State<ProfilePage>
     }
 
     final contactCandidates = _buildContactCandidates(contactNumber);
-    for (final candidate in contactCandidates) {
-      final contactHash = SecurityHash.sha256Hex(candidate);
-      final hashedQuery = await usersRef
-          .where('contactNumber_hash', isEqualTo: contactHash)
-          .limit(1)
-          .get();
-      if (hashedQuery.docs.isNotEmpty) {
-        return hashedQuery.docs.first.id;
+    final hashedMatches = await Future.wait(
+      contactCandidates.map((candidate) async {
+        final contactHash = SecurityHash.sha256Hex(candidate);
+        final hashedQuery = await usersRef
+            .where('contactNumber_hash', isEqualTo: contactHash)
+            .limit(1)
+            .get();
+        return hashedQuery.docs.isNotEmpty ? hashedQuery.docs.first.id : null;
+      }),
+    );
+    for (final docId in hashedMatches) {
+      if (docId != null && docId.isNotEmpty) {
+        return docId;
       }
     }
 
-    for (final candidate in contactCandidates) {
-      final plaintextQuery = await usersRef
-          .where('contactNumber', isEqualTo: candidate)
-          .limit(1)
-          .get();
-      if (plaintextQuery.docs.isNotEmpty) {
-        return plaintextQuery.docs.first.id;
+    final plaintextMatches = await Future.wait(
+      contactCandidates.map((candidate) async {
+        final plaintextQuery = await usersRef
+            .where('contactNumber', isEqualTo: candidate)
+            .limit(1)
+            .get();
+        return plaintextQuery.docs.isNotEmpty
+            ? plaintextQuery.docs.first.id
+            : null;
+      }),
+    );
+    for (final docId in plaintextMatches) {
+      if (docId != null && docId.isNotEmpty) {
+        return docId;
       }
     }
 
@@ -414,8 +426,7 @@ class _ProfilePageState extends State<ProfilePage>
     String title,
   ) async {
     if (title == 'Personal Information') {
-      await _refreshProfileDataFromFirestore();
-      if (!context.mounted) return;
+      _refreshProfileDataFromFirestore();
     }
 
     final content = _getModalContent(title);

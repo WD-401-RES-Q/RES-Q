@@ -13,6 +13,12 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import '../../../common/theme/app_theme.dart';
 
+void _debugLog(Object? message) {
+  if (kDebugMode) {
+    debugPrint('$message');
+  }
+}
+
 enum WeatherState { none, sunny, cloudy, rainy }
 
 class MapPage extends StatefulWidget {
@@ -45,9 +51,10 @@ class _MapPageState extends State<MapPage> {
 
   // Sample incident markers
   final List<Marker> _incidentMarkers = [];
+  final Map<String, Map<String, dynamic>> _reportsById = {};
+  final Map<String, Marker> _incidentMarkerCache = {};
   static const Duration _resolvedRetention = Duration(hours: 1);
   final Map<String, Timer> _resolvedRemovalTimers = {};
-  QuerySnapshot<Map<String, dynamic>>? _latestReportSnapshot;
   static const int _reportFetchLimit = 100;
   bool _hasShownReportLimitNotice = false;
   bool _hasShownIndexWarning = false;
@@ -73,6 +80,7 @@ class _MapPageState extends State<MapPage> {
 
   // Simulate moving along route
   Timer? _trackingTimer;
+  Timer? _viewportRefreshDebounce;
 
   @override
   void initState() {
@@ -86,6 +94,7 @@ class _MapPageState extends State<MapPage> {
   void dispose() {
     _reportsSubscription?.cancel();
     _trackingTimer?.cancel();
+    _viewportRefreshDebounce?.cancel();
     for (final timer in _resolvedRemovalTimers.values) {
       timer.cancel();
     }
@@ -252,7 +261,7 @@ class _MapPageState extends State<MapPage> {
                                 ),
                               ),
                               errorWidget: (context, url, error) {
-                                debugPrint(
+                                _debugLog(
                                   'Failed to load image: $url, error: $error',
                                 );
                                 return Container(
@@ -418,7 +427,7 @@ class _MapPageState extends State<MapPage> {
       // Zoom to fit route
       _zoomToRoute();
     } catch (e) {
-      debugPrint('Error calculating route: $e');
+      _debugLog('Error calculating route: $e');
       _routeInstructions = 'Failed to calculate route';
     } finally {
       setState(() {
@@ -697,13 +706,13 @@ class _MapPageState extends State<MapPage> {
             _applyReportSnapshot(snapshot);
           },
           onError: (error) {
-            debugPrint('❌ Failed to subscribe to reports: $error');
+            _debugLog('❌ Failed to subscribe to reports: $error');
             if (!_hasShownIndexWarning &&
                 error is FirebaseException &&
                 error.code == 'failed-precondition') {
               _hasShownIndexWarning = true;
               if (kDebugMode) {
-                debugPrint(
+                _debugLog(
                   'Firestore reports query failed due to missing index. Falling back to simpler query configuration.',
                 );
               }
@@ -759,60 +768,124 @@ class _MapPageState extends State<MapPage> {
   }
 
   void _applyReportSnapshot(QuerySnapshot<Map<String, dynamic>> snapshot) {
-    _latestReportSnapshot = snapshot;
-    _incidentMarkers.clear();
-    for (var doc in snapshot.docs) {
-      final data = doc.data();
-      final location = data['location'] as GeoPoint?;
-      if (location != null) {
-        final reportId = doc.id;
-        final status = (data['status'] as String? ?? '').toLowerCase();
-        final resolvedAt = _parseResolvedAt(data);
-        final isResolved = _isResolvedStatus(status);
-        final isApproved = _isApprovedStatus(status);
-        final isFlagged = _isFlaggedStatus(status);
-
-        if (isFlagged) {
+    if (snapshot.docChanges.isEmpty && _reportsById.isEmpty) {
+      for (final doc in snapshot.docs) {
+        final data = doc.data();
+        _reportsById[doc.id] = data;
+        _updateIncidentMarkerForReport(reportId: doc.id, data: data);
+      }
+    } else {
+      for (final change in snapshot.docChanges) {
+        final reportId = change.doc.id;
+        final data = change.doc.data();
+        if (change.type == DocumentChangeType.removed || data == null) {
+          _reportsById.remove(reportId);
+          _incidentMarkerCache.remove(reportId);
           _cancelResolvedRemoval(reportId);
           continue;
         }
-
-        if (isResolved) {
-          final inactiveAt = resolvedAt ?? _parseReportedAt(data);
-          final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
-          if (!shouldKeep) {
-            continue;
-          }
-        } else {
-          _cancelResolvedRemoval(reportId);
-        }
-
-        // Approved reports stay visible but lower priority via small marker+check.
-        if (isApproved) {
-          _cancelResolvedRemoval(reportId);
-        }
-        final marker = _createIncidentMarker(reportId: reportId, data: data);
-        if (marker != null) {
-          _incidentMarkers.add(marker);
-        }
+        _reportsById[reportId] = data;
+        _updateIncidentMarkerForReport(reportId: reportId, data: data);
       }
     }
 
-    debugPrint('✅ Loaded ${snapshot.docs.length} reports from Firestore');
+    if (!mounted) return;
+    setState(_refreshIncidentMarkerList);
+
+    _debugLog('Loaded ${_reportsById.length} reports from Firestore');
     if (!_hasShownReportLimitNotice &&
         snapshot.docs.length >= _reportFetchLimit) {
       _hasShownReportLimitNotice = true;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Showing latest $_reportFetchLimit reports. Older reports are not displayed.',
-            ),
-            duration: const Duration(seconds: 3),
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Showing latest $_reportFetchLimit reports. Older reports are not displayed.',
           ),
-        );
-      }
+          duration: const Duration(seconds: 3),
+        ),
+      );
     }
+  }
+
+  void _updateIncidentMarkerForReport({
+    required String reportId,
+    required Map<String, dynamic> data,
+  }) {
+    final status = (data['status'] as String? ?? '').toLowerCase();
+    final resolvedAt = _parseResolvedAt(data);
+    final isResolved = _isResolvedStatus(status);
+    final isApproved = _isApprovedStatus(status);
+    final isFlagged = _isFlaggedStatus(status);
+
+    if (isFlagged) {
+      _cancelResolvedRemoval(reportId);
+      _incidentMarkerCache.remove(reportId);
+      return;
+    }
+
+    if (isResolved) {
+      final inactiveAt = resolvedAt ?? _parseReportedAt(data);
+      final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
+      if (!shouldKeep) {
+        _incidentMarkerCache.remove(reportId);
+        return;
+      }
+    } else {
+      _cancelResolvedRemoval(reportId);
+    }
+
+    if (isApproved) {
+      _cancelResolvedRemoval(reportId);
+    }
+
+    final marker = _createIncidentMarker(reportId: reportId, data: data);
+    if (marker == null) {
+      _incidentMarkerCache.remove(reportId);
+      return;
+    }
+    _incidentMarkerCache[reportId] = marker;
+  }
+
+  void _rebuildIncidentMarkersFromCache() {
+    _incidentMarkerCache.clear();
+    for (final entry in _reportsById.entries) {
+      _updateIncidentMarkerForReport(reportId: entry.key, data: entry.value);
+    }
+    _refreshIncidentMarkerList();
+  }
+
+  void _refreshIncidentMarkerList() {
+    final visibleBounds = _safeVisibleBounds();
+    _incidentMarkers
+      ..clear()
+      ..addAll(
+        _incidentMarkerCache.values.where(
+          (marker) => _isMarkerVisible(marker, visibleBounds),
+        ),
+      );
+  }
+
+  LatLngBounds? _safeVisibleBounds() {
+    try {
+      return _mapController.camera.visibleBounds;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _isMarkerVisible(Marker marker, LatLngBounds? bounds) {
+    if (bounds == null) {
+      return true;
+    }
+    return bounds.contains(marker.point);
+  }
+
+  void _scheduleViewportMarkerRefresh() {
+    _viewportRefreshDebounce?.cancel();
+    _viewportRefreshDebounce = Timer(const Duration(milliseconds: 120), () {
+      if (!mounted) return;
+      setState(_refreshIncidentMarkerList);
+    });
   }
 
   bool _shouldShowIncidentType(String incidentType) {
@@ -896,9 +969,8 @@ class _MapPageState extends State<MapPage> {
   void _removeIncidentMarker(String reportId) {
     if (!mounted) return;
     setState(() {
-      _incidentMarkers.removeWhere(
-        (marker) => marker.key == ValueKey('incident-$reportId'),
-      );
+      _incidentMarkerCache.remove(reportId);
+      _refreshIncidentMarkerList();
     });
     _cancelResolvedRemoval(reportId);
   }
@@ -1284,7 +1356,7 @@ class _MapPageState extends State<MapPage> {
           .get();
       _applyReportSnapshot(snapshot);
     } catch (e) {
-      debugPrint('❌ Failed to load reports: $e');
+      _debugLog('❌ Failed to load reports: $e');
     }
   }
 
@@ -1356,80 +1428,86 @@ class _MapPageState extends State<MapPage> {
       body: Stack(
         children: [
           // OpenStreetMap (full screen)
-          FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: _initialCenter,
-              initialZoom: _initialZoom,
-              minZoom: 5,
-              maxZoom: 18,
-              onTap: _allowDestinationSelection
-                  ? (position, latlng) {
-                      if (!_isRouting) {
-                        _destination = latlng;
-                        _calculateRoute();
+          RepaintBoundary(
+            child: FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _initialCenter,
+                initialZoom: _initialZoom,
+                minZoom: 5,
+                maxZoom: 18,
+                onPositionChanged: (_, __) {
+                  _scheduleViewportMarkerRefresh();
+                },
+                onTap: _allowDestinationSelection
+                    ? (position, latlng) {
+                        if (!_isRouting) {
+                          _destination = latlng;
+                          _calculateRoute();
+                        }
                       }
-                    }
-                  : null,
-            ),
-            children: [
-              // Map tiles from OpenStreetMap
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.resq.emergency_app',
-                maxZoom: 19,
+                    : null,
               ),
+              children: [
+                // Map tiles from OpenStreetMap
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.resq.emergency_app',
+                  maxZoom: 19,
+                ),
 
-              CircleLayer(
-                circles: [
-                  CircleMarker(
-                    point: _angelesCityCenter,
-                    radius: _angelesCityRadiusMeters,
-                    useRadiusInMeter: true,
-                    color: AppColors.appGreen.withOpacity(0.07),
-                    borderColor: AppColors.appGreen.withOpacity(0.45),
-                    borderStrokeWidth: 2.0,
-                  ),
-                ],
-              ),
-
-              // Route polyline
-              if (_routePolylines.isNotEmpty)
-                PolylineLayer(polylines: _routePolylines),
-
-              // Incident markers
-              MarkerLayer(markers: _incidentMarkers),
-
-              // Route markers (user location and destination)
-              if (_routeMarkers.isNotEmpty) MarkerLayer(markers: _routeMarkers),
-
-              // User location marker when tracking
-              if (_userLocation != null && _isTracking)
-                MarkerLayer(
-                  markers: [
-                    Marker(
-                      point: _userLocation!,
-                      width: 50,
-                      height: 50,
-                      child: const Icon(
-                        Icons.navigation,
-                        color: Colors.blue,
-                        size: 40,
-                      ),
+                CircleLayer(
+                  circles: [
+                    CircleMarker(
+                      point: _angelesCityCenter,
+                      radius: _angelesCityRadiusMeters,
+                      useRadiusInMeter: true,
+                      color: AppColors.appGreen.withOpacity(0.07),
+                      borderColor: AppColors.appGreen.withOpacity(0.45),
+                      borderStrokeWidth: 2.0,
                     ),
                   ],
                 ),
 
-              // Attribution (required for OSM)
-              RichAttributionWidget(
-                attributions: [
-                  TextSourceAttribution(
-                    'OpenStreetMap contributors',
-                    onTap: () {},
+                // Route polyline
+                if (_routePolylines.isNotEmpty)
+                  PolylineLayer(polylines: _routePolylines),
+
+                // Incident markers
+                MarkerLayer(markers: _incidentMarkers),
+
+                // Route markers (user location and destination)
+                if (_routeMarkers.isNotEmpty)
+                  MarkerLayer(markers: _routeMarkers),
+
+                // User location marker when tracking
+                if (_userLocation != null && _isTracking)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: _userLocation!,
+                        width: 50,
+                        height: 50,
+                        child: const Icon(
+                          Icons.navigation,
+                          color: Colors.blue,
+                          size: 40,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ],
+
+                // Attribution (required for OSM)
+                RichAttributionWidget(
+                  attributions: [
+                    TextSourceAttribution(
+                      'OpenStreetMap contributors',
+                      onTap: () {},
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
 
           Positioned.fill(
@@ -1998,12 +2076,9 @@ class _MapPageState extends State<MapPage> {
                                 _showFire = showFire;
                                 _showVehicular = showVehicular;
                                 _showOthers = showOthers;
+                                _rebuildIncidentMarkersFromCache();
                               });
-
-                              final snapshot = _latestReportSnapshot;
-                              if (snapshot != null) {
-                                _applyReportSnapshot(snapshot);
-                              } else {
+                              if (_reportsById.isEmpty) {
                                 _loadReportsFromFirestore();
                               }
                             },

@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'firebase_options.dart';
+import 'common/navigation/app_page_transitions.dart';
 import 'features/home/pages/home_page.dart';
 import 'features/loading/pages/loading_screen.dart';
 // auth pages
@@ -20,6 +24,22 @@ void main() async {
   // Initialize notification service for background messages
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
+  if (!kDebugMode) {
+    debugPrint = (String? message, {int? wrapWidth}) {};
+    runZonedGuarded(
+      () => runApp(const MyApp()),
+      (error, stackTrace) {
+        FlutterError.reportError(
+          FlutterErrorDetails(exception: error, stack: stackTrace),
+        );
+      },
+      zoneSpecification: ZoneSpecification(
+        print: (self, parent, zone, line) {},
+      ),
+    );
+    return;
+  }
+
   runApp(const MyApp());
 }
 
@@ -31,6 +51,15 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: AppPageTransitionsBuilder(),
+            TargetPlatform.iOS: AppPageTransitionsBuilder(),
+            TargetPlatform.macOS: AppPageTransitionsBuilder(),
+            TargetPlatform.windows: AppPageTransitionsBuilder(),
+            TargetPlatform.linux: AppPageTransitionsBuilder(),
+          },
+        ),
         textTheme: const TextTheme(
           displayLarge: TextStyle(fontSize: 48.0, fontWeight: FontWeight.bold),
           displayMedium: TextStyle(fontSize: 40.0, fontWeight: FontWeight.bold),
