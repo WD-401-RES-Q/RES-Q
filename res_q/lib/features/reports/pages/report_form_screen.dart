@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -565,9 +565,16 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         if (mediaPath.isEmpty) {
           throw Exception('Captured media path is empty.');
         }
-        final uploadSnapshot = await storageRef
-            .putFile(File(mediaPath), metadata)
-            .timeout(uploadTimeout);
+        final UploadTask uploadTask;
+        if (kIsWeb) {
+          // Web runtime does not support dart:io File APIs.
+          final mediaBytes = await _capturedMedia!.readAsBytes();
+          uploadTask = storageRef.putData(mediaBytes, metadata);
+        } else {
+          uploadTask = storageRef.putFile(File(mediaPath), metadata);
+        }
+
+        final uploadSnapshot = await uploadTask.timeout(uploadTimeout);
 
         mediaUrl = await uploadSnapshot.ref.getDownloadURL().timeout(
           const Duration(seconds: 20),
