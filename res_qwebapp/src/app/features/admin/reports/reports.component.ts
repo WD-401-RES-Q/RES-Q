@@ -92,9 +92,12 @@ export class ReportsComponent implements OnInit, OnDestroy {
   showApproveModal = false;
   showRejectModal = false;
   showRevertModal = false;
+  showDeleteModal = false;
+  isDeletingReport = false;
   reportToApprove: Report | null = null;
   reportToReject: Report | null = null;
   reportToRevert: Report | null = null;
+  reportToDelete: Report | null = null;
 
   // Comments state
   expandedReportId: string | null = null;
@@ -568,6 +571,72 @@ export class ReportsComponent implements OnInit, OnDestroy {
   cancelRevert() {
     this.showRevertModal = false;
     this.reportToRevert = null;
+  }
+
+  deleteReport(report: Report) {
+    if (!report.id || this.isDeletingReport) {
+      return;
+    }
+    this.reportToDelete = report;
+    this.showDeleteModal = true;
+    this.cdr.markForCheck();
+  }
+
+  async confirmDeleteReport() {
+    if (this.isDeletingReport) {
+      return;
+    }
+
+    const target = this.reportToDelete;
+    if (!target?.id) {
+      console.error('Missing report id, cannot delete');
+      this.cancelDeleteReport();
+      return;
+    }
+
+    const adminId = this.getCurrentAdminId();
+    if (!adminId) {
+      console.error('Missing admin id, cannot delete report');
+      this.cancelDeleteReport();
+      return;
+    }
+
+    this.isDeletingReport = true;
+    this.cdr.markForCheck();
+
+    try {
+      await this.firestoreService.deleteReportAsAdmin(target.id, adminId);
+    } catch (err) {
+      console.error('Failed to delete report:', err);
+    } finally {
+      this.isDeletingReport = false;
+      this.showDeleteModal = false;
+      this.reportToDelete = null;
+      this.cdr.markForCheck();
+    }
+  }
+
+  cancelDeleteReport() {
+    if (this.isDeletingReport) {
+      return;
+    }
+    this.showDeleteModal = false;
+    this.reportToDelete = null;
+    this.cdr.markForCheck();
+  }
+
+  private getCurrentAdminId(): string {
+    try {
+      const raw = localStorage.getItem('currentAdmin');
+      if (!raw) {
+        return '';
+      }
+      const parsed = JSON.parse(raw) as { id?: unknown };
+      return typeof parsed.id === 'string' ? parsed.id.trim() : '';
+    } catch (error) {
+      console.error('Failed to read current admin id:', error);
+      return '';
+    }
   }
 
   // Comments - load directly from Firestore

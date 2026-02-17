@@ -1,10 +1,11 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:ui' as ui;
 import '../theme/app_theme.dart';
@@ -1317,8 +1318,8 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         imageQuality: 85,
       );
 
-      final imagePath = pickedFile?.path;
-      if (imagePath == null) return;
+      if (pickedFile == null) return;
+      final imagePath = pickedFile.path;
 
       setState(() {
         _uploadingFront = true;
@@ -1342,7 +1343,8 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         return;
       }
 
-      final bytes = await File(croppedPath).readAsBytes();
+      final uploadFile = kIsWeb ? pickedFile : XFile(croppedPath);
+      final bytes = await uploadFile.readAsBytes();
       final aspectRatio = await _getImageAspectRatioFromBytes(bytes);
 
       setState(() {
@@ -1351,11 +1353,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
       });
 
       // Upload to Firebase Storage
-      final downloadUrl = await _uploadToFirebase(
-        XFile(croppedPath),
-        'front',
-        bytes,
-      );
+      final downloadUrl = await _uploadToFirebase(uploadFile, 'front', bytes);
 
       setState(() {
         _frontIdUrl = downloadUrl;
@@ -1397,8 +1395,8 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         imageQuality: 85,
       );
 
-      final imagePath = pickedFile?.path;
-      if (imagePath == null) return;
+      if (pickedFile == null) return;
+      final imagePath = pickedFile.path;
 
       setState(() {
         _uploadingSelfieWithId = true;
@@ -1422,7 +1420,8 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         return;
       }
 
-      final bytes = await File(croppedPath).readAsBytes();
+      final uploadFile = kIsWeb ? pickedFile : XFile(croppedPath);
+      final bytes = await uploadFile.readAsBytes();
       final aspectRatio = await _getImageAspectRatioFromBytes(bytes);
 
       setState(() {
@@ -1431,7 +1430,7 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
       });
 
       final downloadUrl = await _uploadToFirebase(
-        XFile(croppedPath),
+        uploadFile,
         'selfie_with_id',
         bytes,
       );
@@ -1466,6 +1465,17 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     String side,
     Uint8List? bytes,
   ) async {
+    // Web debug tests may run before phone auth in registration.
+    // Ensure there is at least an anonymous auth session so Storage rules
+    // that require request.auth can pass during testing.
+    if (kIsWeb && kDebugMode && FirebaseAuth.instance.currentUser == null) {
+      try {
+        await FirebaseAuth.instance.signInAnonymously();
+      } catch (e) {
+        debugPrint('Web debug anonymous auth for ID upload failed: $e');
+      }
+    }
+
     final fileName = 'id_${side}_${DateTime.now().millisecondsSinceEpoch}.jpg';
     final username = widget.usernameForPath?.trim().isNotEmpty == true
         ? widget.usernameForPath!.trim()
@@ -1483,14 +1493,24 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
       SettableMetadata(contentType: 'image/jpeg'),
     );
 
-    final snapshot = await uploadTask.timeout(
-      const Duration(seconds: 30),
-      onTimeout: () {
+    late TaskSnapshot snapshot;
+    try {
+      snapshot = await uploadTask.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw Exception(
+            'Upload timed out. Please check your internet connection.',
+          );
+        },
+      );
+    } on FirebaseException catch (e) {
+      if (kIsWeb && kDebugMode && e.code == 'unauthorized') {
         throw Exception(
-          'Upload timed out. Please check your internet connection.',
+          'Web test upload blocked by Storage rules. Deploy `storage.rules` or use Firebase Emulator with Storage enabled.',
         );
-      },
-    );
+      }
+      rethrow;
+    }
 
     return await snapshot.ref.getDownloadURL();
   }

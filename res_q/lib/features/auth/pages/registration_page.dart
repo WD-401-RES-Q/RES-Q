@@ -1,16 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/theme/app_text_styles.dart';
 import '../../../common/constants/app_dimensions.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
+import '../../../common/services/phone_lookup_service.dart';
 import '../../../common/services/registration_prefs.dart';
-import '../../../common/utils/security_hash.dart';
 
 /// User registration page with AES-256-GCM encrypted PII storage.
 /// See docs/AES-256-GCM-ENCRYPTION.md for encryption architecture details.
@@ -24,6 +25,7 @@ class RegistrationPage extends StatefulWidget {
 
 class _RegistrationPageState extends State<RegistrationPage> {
   static const int _maxAddressLength = 256;
+  static const String _phoneLookupScopeKey = 'register';
 
   final _formKey = GlobalKey<FormState>();
   final _firstNameCtl = TextEditingController();
@@ -44,10 +46,12 @@ class _RegistrationPageState extends State<RegistrationPage> {
   String? _idPhotoError;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final PhoneLookupService _phoneLookupService = PhoneLookupService.instance;
 
   @override
   void initState() {
     super.initState();
+    _contactCtl.addListener(_onContactChanged);
     _loadSavedData();
   }
 
@@ -66,6 +70,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
   @override
   void dispose() {
+    _phoneLookupService.cancelDebounce(_phoneLookupScopeKey);
+    _contactCtl.removeListener(_onContactChanged);
     _firstNameCtl.dispose();
     _lastNameCtl.dispose();
     _emailCtl.dispose();
@@ -111,52 +117,29 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
   Future<bool> _checkPhoneNumberExists(String phone) async {
     try {
-      final phoneHash = SecurityHash.sha256Hex(phone);
-
-      // Check in pending_users
-      final pendingQuery = await FirebaseFirestore.instance
-          .collection('pending_users')
-          .where('contactNumber_hash', isEqualTo: phoneHash)
-          .limit(1)
-          .get();
-
-      if (pendingQuery.docs.isNotEmpty) {
-        return true;
-      }
-
-      // Backward compatibility fallback (pre-hash records).
-      final pendingLegacyQuery = await FirebaseFirestore.instance
-          .collection('pending_users')
-          .where('contactNumber', isEqualTo: phone)
-          .limit(1)
-          .get();
-
-      if (pendingLegacyQuery.docs.isNotEmpty) {
-        return true;
-      }
-
-      // Check in approved_users
-      final approvedQuery = await FirebaseFirestore.instance
-          .collection('approved_users')
-          .where('contactNumber_hash', isEqualTo: phoneHash)
-          .limit(1)
-          .get();
-
-      if (approvedQuery.docs.isNotEmpty) {
-        return true;
-      }
-
-      final approvedLegacyQuery = await FirebaseFirestore.instance
-          .collection('approved_users')
-          .where('contactNumber', isEqualTo: phone)
-          .limit(1)
-          .get();
-
-      return approvedLegacyQuery.docs.isNotEmpty;
+      return await _phoneLookupService.hasRegistrationConflict(phone);
     } catch (e) {
       debugPrint('Error checking phone number: $e');
       return false;
     }
+  }
+
+  void _onContactChanged() {
+    final phoneDigits = _contactCtl.text.replaceAll(RegExp(r'\D'), '');
+    _phoneLookupService.cancelDebounce(_phoneLookupScopeKey);
+    if (phoneDigits.length != 10) return;
+
+    unawaited(
+      _phoneLookupService
+          .debouncedLookupAccountStatus(
+            scopeKey: _phoneLookupScopeKey,
+            phone: '+63$phoneDigits',
+          )
+          .catchError((error) {
+            debugPrint('Registration phone lookup failed: $error');
+            return null;
+          }),
+    );
   }
 
   Future<void> _submit() async {

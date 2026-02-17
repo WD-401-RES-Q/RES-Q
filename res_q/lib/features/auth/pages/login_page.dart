@@ -15,6 +15,7 @@ import '../../semi_admin/pages/semi_admin_main_page.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/registration_prefs.dart';
 import '../../../common/services/notification_service.dart';
+import '../../../common/services/phone_lookup_service.dart';
 import '../../../common/utils/security_hash.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -31,9 +32,9 @@ class _LoginPageState extends State<LoginPage>
   static const appBlue = Color(0xFFAC1B22);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
-  static const Duration _phoneValidationCacheTtl = Duration(seconds: 12);
   static const bool _enableSemiAdminBootstrap = false;
   static const String _semiAdminBootstrapDoneKey = 'semi_admin_bootstrap_done';
+  static const String _phoneValidationScopeKey = 'login';
 
   final _formKey = GlobalKey<FormState>();
   bool _loading = false;
@@ -46,11 +47,9 @@ class _LoginPageState extends State<LoginPage>
   bool _showPhoneError = false;
   String _phoneErrorMessage = '';
   bool _isPendingApprovalPhone = false;
+  bool _isBanDialogVisible = false;
   bool _showSavedPhoneCard = false;
   bool _isPhoneVerifiedForPin = false;
-  int _phoneValidationRequestId = 0;
-  Timer? _phoneValidationDebounce;
-  final Map<String, _PhoneValidationCacheEntry> _phoneValidationCache = {};
 
   // Shake animation
   late AnimationController _shakeController;
@@ -63,30 +62,9 @@ class _LoginPageState extends State<LoginPage>
   String? _biometricsPhone;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final PhoneLookupService _phoneLookupService = PhoneLookupService.instance;
 
   bool get _isPinUnlocked => _isPhoneVerifiedForPin;
-
-  Future<QuerySnapshot<Map<String, dynamic>>> _queryUsersByPhone({
-    required String collection,
-    required String phone,
-  }) async {
-    final phoneHash = SecurityHash.sha256Hex(phone);
-    final hashedQuery = await _firestore
-        .collection(collection)
-        .where('contactNumber_hash', isEqualTo: phoneHash)
-        .limit(1)
-        .get();
-    if (hashedQuery.docs.isNotEmpty) {
-      return hashedQuery;
-    }
-
-    // Backward compatibility fallback for legacy plaintext docs.
-    return _firestore
-        .collection(collection)
-        .where('contactNumber', isEqualTo: phone)
-        .limit(1)
-        .get();
-  }
 
   bool _isPinMatch(Map<String, dynamic> userData, String pin) {
     final storedPinHash = userData['pin_hash']?.toString();
@@ -187,6 +165,24 @@ class _LoginPageState extends State<LoginPage>
     await RegistrationPrefs.setApprovedLoginCompleted(true);
   }
 
+  void _syncNotificationUserId(Map<String, dynamic> userData) {
+    final phoneNumber =
+        (userData['contactNumber'] ?? userData['phoneNumber'])
+            ?.toString()
+            .replaceAll(RegExp(r'[^0-9]'), '') ??
+        '';
+
+    if (phoneNumber.isNotEmpty) {
+      UserSession.setUserId(phoneNumber);
+      NotificationService().setUserId(phoneNumber);
+      debugPrint('UserSession userId set to phone number: $phoneNumber');
+      return;
+    }
+
+    debugPrint('No phone number found in userData');
+    debugPrint('Available fields: ${userData.keys.toList()}');
+  }
+
   Future<void> _updateSemiAdminPresence({
     required Map<String, dynamic> semiAdminData,
     required bool isLoggedIn,
@@ -222,12 +218,32 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
+  Future<void> _ensureFirebaseSession() async {
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        return;
+      }
+      final userCredential = await FirebaseAuth.instance.signInAnonymously();
+      debugPrint(
+        'Firebase anonymous sign-in ready: ${userCredential.user?.uid}',
+      );
+    } catch (authError) {
+      debugPrint('Firebase anonymous sign-in failed: $authError');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    _initialize();
     _initShakeAnimation();
-    _checkBiometrics();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // Keep startup responsive: defer non-critical startup work until
+      // after the first frame and run it in the background.
+      unawaited(_initialize());
+      unawaited(_checkBiometrics());
+    });
   }
 
   void _initShakeAnimation() {
@@ -313,27 +329,32 @@ class _LoginPageState extends State<LoginPage>
     final phone = '+63$phoneInput';
 
     try {
-      final accountQueries = await Future.wait([
+      final accountQueries = await Future.wait<dynamic>([
         _firestore
             .collection('semi_admins')
             .where('contactNumber', isEqualTo: phone)
             .limit(1)
             .get(),
-        _queryUsersByPhone(collection: 'approved_users', phone: phone),
+        _phoneLookupService.getFirstApprovedUserDoc(phone),
       ]);
-      final semiAdminQuery = accountQueries[0];
-      final userQuery = accountQueries[1];
+      final semiAdminQuery =
+          accountQueries[0] as QuerySnapshot<Map<String, dynamic>>;
+      final userDoc =
+          accountQueries[1] as QueryDocumentSnapshot<Map<String, dynamic>>?;
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin biometric login successful!');
+        await _ensureFirebaseSession();
         // Persist phone locally for faster next login.
         await _saveApprovedLoginState(phoneInput);
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
-        UserSession.setUserData({
+        final sessionData = {
           ...semiAdminData,
           'id': semiAdminQuery.docs.first.id,
-        });
+        };
+        UserSession.setUserData(sessionData);
+        _syncNotificationUserId(sessionData);
         await _updateSemiAdminPresence(
           semiAdminData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
           isLoggedIn: true,
@@ -347,10 +368,18 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
-      if (userQuery.docs.isEmpty) {
-        final isPending = await _isPhonePendingApproval(phone);
+      if (userDoc == null) {
+        final accountStatus = await _phoneLookupService.lookupAccountStatus(
+          phone,
+        );
         setState(() => _loading = false);
-        if (isPending) {
+        if (accountStatus.isBannedAccount) {
+          await _showBannedAccountDialog(
+            isPermanentBan: accountStatus.isPermanentBan,
+            bannedUntil: accountStatus.bannedUntil,
+            banReasons: accountStatus.banReasons,
+          );
+        } else if (accountStatus.isPendingAccount) {
           _showPendingApprovalDialog();
         } else {
           _showError('No account found with this phone number.');
@@ -358,12 +387,21 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
-      final userDoc = userQuery.docs.first;
       final userData = _buildSessionUserData(
         userDoc: userDoc,
         contactNumber: phone,
       );
       final accountStatus = userData['accountStatus'] as String?;
+      final isBanned = _isBannedStatus(accountStatus);
+      if (isBanned) {
+        setState(() => _loading = false);
+        await _showBannedAccountDialog(
+          isPermanentBan: _isPermanentBanData(userData, isBanned),
+          bannedUntil: _parseBanUntil(userData['bannedUntil']),
+          banReasons: _parseBanReasons(userData['banReasons']),
+        );
+        return;
+      }
 
       if (accountStatus != 'approved') {
         setState(() => _loading = false);
@@ -385,22 +423,7 @@ class _LoginPageState extends State<LoginPage>
       // Persist phone locally for faster next login.
       await _saveApprovedLoginState(phoneInput);
       UserSession.setUserData(userData);
-
-      // Use phone number as user ID for easier tracking
-      // Note: Firestore uses 'contactNumber' as the field name
-      final phoneNumber =
-          (userData['contactNumber'] ?? userData['phoneNumber'])
-              ?.toString()
-              .replaceAll(RegExp(r'[^0-9]'), '') ??
-          '';
-      if (phoneNumber.isNotEmpty) {
-        UserSession.setUserId(phoneNumber);
-        NotificationService().setUserId(phoneNumber);
-        debugPrint('✅ UserSession userId set to phone number: $phoneNumber');
-      } else {
-        debugPrint('⚠️ No phone number found in userData');
-        debugPrint('   Available fields: ${userData.keys.toList()}');
-      }
+      _syncNotificationUserId(userData);
       _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
@@ -428,106 +451,92 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
-  _PhoneValidationResult? _readCachedPhoneValidation(String phoneDigits) {
-    final cached = _phoneValidationCache[phoneDigits];
-    if (cached == null) return null;
-
-    final cacheAge = DateTime.now().difference(cached.checkedAt);
-    if (cacheAge > _phoneValidationCacheTtl) {
-      _phoneValidationCache.remove(phoneDigits);
-      return null;
-    }
-
-    return cached.result;
+  PhoneLookupResult? _readCachedPhoneValidation(String phoneDigits) {
+    if (phoneDigits.length != 10) return null;
+    return _phoneLookupService.readCachedAccountStatus('+63$phoneDigits');
   }
 
-  Future<_PhoneValidationResult> _fetchPhoneValidation(String phone) async {
-    final accountQueries = await Future.wait([
-      _firestore
-          .collection('semi_admins')
-          .where('contactNumber', isEqualTo: phone)
-          .limit(1)
-          .get(),
-      _queryUsersByPhone(collection: 'approved_users', phone: phone),
-    ]);
+  Future<void> _applyPhoneValidationResult(
+    String phoneDigits,
+    PhoneLookupResult validationResult,
+  ) async {
+    if (!mounted) return;
+    final currentDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
+    if (currentDigits != phoneDigits) return;
 
-    final hasSemiAdminAccount = accountQueries[0].docs.isNotEmpty;
-    final hasApprovedAccount = accountQueries[1].docs.isNotEmpty;
-
-    if (hasSemiAdminAccount || hasApprovedAccount) {
-      return _PhoneValidationResult(
-        hasSemiAdminAccount: hasSemiAdminAccount,
-        hasApprovedAccount: hasApprovedAccount,
-        isPendingAccount: false,
+    if (validationResult.isBannedAccount) {
+      final isPermanentBan = validationResult.isPermanentBan;
+      setState(() {
+        _isPhoneVerifiedForPin = false;
+        _isPendingApprovalPhone = false;
+        _showPhoneError = true;
+        _phoneErrorMessage = isPermanentBan
+            ? 'This account is permanently banned.'
+            : 'This account is temporarily banned.';
+        _pinCtl.clear();
+        _showPinError = false;
+        _pinErrorMessage = '';
+      });
+      await _showBannedAccountDialog(
+        isPermanentBan: isPermanentBan,
+        bannedUntil: validationResult.bannedUntil,
+        banReasons: validationResult.banReasons,
       );
+      return;
     }
 
-    final pendingQuery = await _queryUsersByPhone(
-      collection: 'pending_users',
-      phone: phone,
-    );
+    if (validationResult.isPendingAccount) {
+      setState(() {
+        _isPhoneVerifiedForPin = false;
+        _isPendingApprovalPhone = true;
+        _showPhoneError = false;
+        _phoneErrorMessage = '';
+        _pinCtl.clear();
+        _showPinError = false;
+        _pinErrorMessage = '';
+      });
+      _showPendingApprovalDialog();
+      return;
+    }
 
-    return _PhoneValidationResult(
-      hasSemiAdminAccount: false,
-      hasApprovedAccount: false,
-      isPendingAccount: pendingQuery.docs.isNotEmpty,
-    );
+    if (!validationResult.hasAnyAccount) {
+      setState(() {
+        _isPhoneVerifiedForPin = false;
+        _isPendingApprovalPhone = false;
+        _showPhoneError = true;
+        _phoneErrorMessage = 'No account found with this phone number.';
+        _pinCtl.clear();
+        _showPinError = false;
+        _pinErrorMessage = '';
+      });
+      return;
+    }
+
+    setState(() {
+      _isPhoneVerifiedForPin = true;
+      _isPendingApprovalPhone = false;
+      _showPhoneError = false;
+      _phoneErrorMessage = '';
+    });
+
+    await RegistrationPrefs.savePhoneNumber(phoneDigits);
   }
 
   Future<void> _validatePhoneForPinEntry(String phoneDigits) async {
     if (phoneDigits.length != 10) return;
 
-    final requestId = ++_phoneValidationRequestId;
     final phone = '+63$phoneDigits';
 
     try {
-      final validationResult =
-          _readCachedPhoneValidation(phoneDigits) ??
-          await _fetchPhoneValidation(phone);
-      _phoneValidationCache[phoneDigits] = _PhoneValidationCacheEntry(
-        result: validationResult,
-        checkedAt: DateTime.now(),
+      final validationResult = await _phoneLookupService.lookupAccountStatus(
+        phone,
       );
-      if (!mounted || requestId != _phoneValidationRequestId) return;
-
-      if (validationResult.isPendingAccount) {
-        setState(() {
-          _isPhoneVerifiedForPin = false;
-          _isPendingApprovalPhone = true;
-          _showPhoneError = false;
-          _phoneErrorMessage = '';
-          _pinCtl.clear();
-          _showPinError = false;
-          _pinErrorMessage = '';
-        });
-        _showPendingApprovalDialog();
-        return;
-      }
-
-      if (!validationResult.hasAnyAccount) {
-        setState(() {
-          _isPhoneVerifiedForPin = false;
-          _isPendingApprovalPhone = false;
-          _showPhoneError = true;
-          _phoneErrorMessage = 'No account found with this phone number.';
-          _pinCtl.clear();
-          _showPinError = false;
-          _pinErrorMessage = '';
-        });
-        return;
-      }
-
-      setState(() {
-        _isPhoneVerifiedForPin = true;
-        _isPendingApprovalPhone = false;
-        _showPhoneError = false;
-        _phoneErrorMessage = '';
-      });
-
-      await RegistrationPrefs.savePhoneNumber(phoneDigits);
+      await _applyPhoneValidationResult(phoneDigits, validationResult);
     } catch (e) {
       debugPrint('Error validating phone number for PIN login: $e');
-      if (!mounted || requestId != _phoneValidationRequestId) return;
+      if (!mounted) return;
+      final currentDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
+      if (currentDigits != phoneDigits) return;
       setState(() {
         _isPhoneVerifiedForPin = false;
         _isPendingApprovalPhone = false;
@@ -542,8 +551,7 @@ class _LoginPageState extends State<LoginPage>
 
   void _onPhoneChanged(String _) {
     final digits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
-    _phoneValidationDebounce?.cancel();
-    _phoneValidationRequestId++;
+    _phoneLookupService.cancelDebounce(_phoneValidationScopeKey);
 
     final shouldRebuild =
         _pinCtl.text.isNotEmpty ||
@@ -566,24 +574,24 @@ class _LoginPageState extends State<LoginPage>
       });
     }
 
-    if (digits.length == 10) {
-      _phoneValidationDebounce = Timer(const Duration(milliseconds: 300), () {
-        unawaited(_validatePhoneForPinEntry(digits));
-      });
-    }
-  }
+    if (digits.length != 10) return;
 
-  Future<bool> _isPhonePendingApproval(String phone) async {
-    try {
-      final pendingQuery = await _queryUsersByPhone(
-        collection: 'pending_users',
-        phone: phone,
-      );
-      return pendingQuery.docs.isNotEmpty;
-    } catch (e) {
-      debugPrint('Error checking pending_users: $e');
-      return false;
-    }
+    final phone = '+63$digits';
+    unawaited(
+      _phoneLookupService
+          .debouncedLookupAccountStatus(
+            scopeKey: _phoneValidationScopeKey,
+            phone: phone,
+          )
+          .then((result) async {
+            if (result == null) return;
+            await _applyPhoneValidationResult(digits, result);
+          })
+          .catchError((error) {
+            debugPrint('Error validating phone number: $error');
+            return null;
+          }),
+    );
   }
 
   @override
@@ -699,7 +707,7 @@ class _LoginPageState extends State<LoginPage>
 
   @override
   void dispose() {
-    _phoneValidationDebounce?.cancel();
+    _phoneLookupService.cancelDebounce(_phoneValidationScopeKey);
     _pinCtl.dispose();
     _phoneCtl.dispose();
     _shakeController.dispose();
@@ -823,28 +831,33 @@ class _LoginPageState extends State<LoginPage>
     final phone = '+63$phoneInput';
 
     try {
-      final authQueries = await Future.wait([
+      final authQueries = await Future.wait<dynamic>([
         _firestore
             .collection('semi_admins')
             .where('contactNumber', isEqualTo: phone)
             .where('pin', isEqualTo: pin)
             .limit(1)
             .get(),
-        _queryUsersByPhone(collection: 'approved_users', phone: phone),
+        _phoneLookupService.getFirstApprovedUserDoc(phone),
       ]);
-      final semiAdminQuery = authQueries[0];
-      final userQuery = authQueries[1];
+      final semiAdminQuery =
+          authQueries[0] as QuerySnapshot<Map<String, dynamic>>;
+      final userDoc =
+          authQueries[1] as QueryDocumentSnapshot<Map<String, dynamic>>?;
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin login successful via PIN!');
+        await _ensureFirebaseSession();
         // Persist phone locally for faster next login.
         await _saveApprovedLoginState(phoneInput);
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
-        UserSession.setUserData({
+        final sessionData = {
           ...semiAdminData,
           'id': semiAdminQuery.docs.first.id,
-        });
+        };
+        UserSession.setUserData(sessionData);
+        _syncNotificationUserId(sessionData);
         await _updateSemiAdminPresence(
           semiAdminData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
           isLoggedIn: true,
@@ -858,7 +871,7 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
-      if (userQuery.docs.isEmpty) {
+      if (userDoc == null) {
         setState(() {
           _loading = false;
           _pinCtl.clear();
@@ -866,6 +879,14 @@ class _LoginPageState extends State<LoginPage>
           _pinErrorMessage = '';
         });
         final cachedValidation = _readCachedPhoneValidation(phoneInput);
+        if (cachedValidation != null && cachedValidation.isBannedAccount) {
+          await _showBannedAccountDialog(
+            isPermanentBan: cachedValidation.isPermanentBan,
+            bannedUntil: cachedValidation.bannedUntil,
+            banReasons: cachedValidation.banReasons,
+          );
+          return;
+        }
         if (cachedValidation != null && !cachedValidation.hasAnyAccount) {
           _resetPinWithError('No account found with this phone number.');
           return;
@@ -878,11 +899,25 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
-      final userDoc = userQuery.docs.first;
       final userData = _buildSessionUserData(
         userDoc: userDoc,
         contactNumber: phone,
       );
+      final isBanned = _isBannedStatus(userData['accountStatus']);
+      if (isBanned) {
+        setState(() {
+          _loading = false;
+          _pinCtl.clear();
+          _showPinError = false;
+          _pinErrorMessage = '';
+        });
+        await _showBannedAccountDialog(
+          isPermanentBan: _isPermanentBanData(userData, isBanned),
+          bannedUntil: _parseBanUntil(userData['bannedUntil']),
+          banReasons: _parseBanReasons(userData['banReasons']),
+        );
+        return;
+      }
 
       if (!_isPinMatch(userData, pin)) {
         setState(() {
@@ -917,22 +952,7 @@ class _LoginPageState extends State<LoginPage>
       // Persist phone locally for faster next login.
       await _saveApprovedLoginState(phoneInput);
       UserSession.setUserData(userData);
-
-      // Use phone number as user ID for easier tracking
-      // Note: Firestore uses 'contactNumber' as the field name
-      final phoneNumber =
-          (userData['contactNumber'] ?? userData['phoneNumber'])
-              ?.toString()
-              .replaceAll(RegExp(r'[^0-9]'), '') ??
-          '';
-      if (phoneNumber.isNotEmpty) {
-        UserSession.setUserId(phoneNumber);
-        NotificationService().setUserId(phoneNumber);
-        debugPrint('✅ UserSession userId set to phone number: $phoneNumber');
-      } else {
-        debugPrint('⚠️ No phone number found in userData');
-        debugPrint('   Available fields: ${userData.keys.toList()}');
-      }
+      _syncNotificationUserId(userData);
       _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
@@ -1087,6 +1107,201 @@ class _LoginPageState extends State<LoginPage>
       }
     } catch (e) {
       debugPrint('Failed to backfill semi-admin presence defaults: $e');
+    }
+  }
+
+  bool _isBannedStatus(dynamic rawStatus) {
+    return rawStatus is String && rawStatus.trim().toUpperCase() == 'BANNED';
+  }
+
+  bool _isPermanentBanData(Map<String, dynamic> data, bool isBanned) {
+    if (!isBanned) {
+      return false;
+    }
+    if (data['isPermanent'] == true) {
+      return true;
+    }
+    final banType = (data['banType'] ?? '').toString().trim().toLowerCase();
+    if (banType == 'permanent') {
+      return true;
+    }
+    return data['bannedUntil'] == null;
+  }
+
+  DateTime? _parseBanUntil(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is Map<String, dynamic>) {
+      final seconds = value['seconds'] ?? value['_seconds'];
+      final nanoseconds = value['nanoseconds'] ?? value['_nanoseconds'] ?? 0;
+      if (seconds is int) {
+        final nanos = nanoseconds is int
+            ? nanoseconds
+            : (nanoseconds is num ? nanoseconds.toInt() : 0);
+        return DateTime.fromMillisecondsSinceEpoch(
+          (seconds * 1000) + (nanos ~/ 1000000),
+        );
+      }
+    }
+    return null;
+  }
+
+  List<String> _parseBanReasons(dynamic rawReasons) {
+    if (rawReasons is! List) return const <String>[];
+    return rawReasons
+        .map((reason) => reason.toString().trim())
+        .where((reason) => reason.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  String _formatBanUntil(DateTime? bannedUntil) {
+    if (bannedUntil == null) {
+      return '';
+    }
+    final date = DateTime(
+      bannedUntil.year,
+      bannedUntil.month,
+      bannedUntil.day,
+      bannedUntil.hour,
+      bannedUntil.minute,
+    );
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    final year = date.year.toString();
+    final hour24 = date.hour;
+    final hour12 = hour24 == 0 ? 12 : (hour24 > 12 ? hour24 - 12 : hour24);
+    final minute = date.minute.toString().padLeft(2, '0');
+    final meridiem = hour24 >= 12 ? 'PM' : 'AM';
+    return '$month/$day/$year $hour12:$minute $meridiem';
+  }
+
+  Future<void> _showBannedAccountDialog({
+    required bool isPermanentBan,
+    DateTime? bannedUntil,
+    List<String> banReasons = const <String>[],
+  }) async {
+    if (!mounted || _isBanDialogVisible) return;
+
+    _isBanDialogVisible = true;
+    final reasonText = banReasons.isEmpty ? '' : banReasons.join(', ');
+    final formattedUntil = _formatBanUntil(bannedUntil);
+    final title = isPermanentBan
+        ? 'ACCOUNT PERMANENTLY BANNED'
+        : 'ACCOUNT TEMPORARILY BANNED';
+    final subtitle = isPermanentBan
+        ? 'Your account is permanently banned and cannot access RES-Q.'
+        : 'Your account is temporarily banned and cannot access RES-Q right now.';
+    final untilText = isPermanentBan || formattedUntil.isEmpty
+        ? ''
+        : 'Ban ends on: $formattedUntil';
+
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: appBlue.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: appBlue, width: 2),
+                  ),
+                  child: const Icon(Icons.block, size: 48, color: appBlue),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: appBlue,
+                    letterSpacing: 1.0,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: appBlack.withValues(alpha: 0.85),
+                    height: 1.35,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                if (untilText.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    untilText,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: appBlack,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+                if (reasonText.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Reason(s): $reasonText',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: appBlack.withValues(alpha: 0.8),
+                      height: 1.3,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: appBlue,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text(
+                      'OK',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                        fontSize: 16,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBanDialogVisible = false;
+        });
+      } else {
+        _isBanDialogVisible = false;
+      }
     }
   }
 
@@ -1680,28 +1895,4 @@ class _LoginPageState extends State<LoginPage>
       ),
     );
   }
-}
-
-class _PhoneValidationResult {
-  const _PhoneValidationResult({
-    required this.hasSemiAdminAccount,
-    required this.hasApprovedAccount,
-    required this.isPendingAccount,
-  });
-
-  final bool hasSemiAdminAccount;
-  final bool hasApprovedAccount;
-  final bool isPendingAccount;
-
-  bool get hasAnyAccount => hasSemiAdminAccount || hasApprovedAccount;
-}
-
-class _PhoneValidationCacheEntry {
-  const _PhoneValidationCacheEntry({
-    required this.result,
-    required this.checkedAt,
-  });
-
-  final _PhoneValidationResult result;
-  final DateTime checkedAt;
 }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import '../../home/pages/home_page.dart';
+import '../../../common/services/shell_navigation_service.dart';
 
 class EmergencyCallScreen extends StatelessWidget {
   const EmergencyCallScreen({super.key});
@@ -54,11 +54,7 @@ class EmergencyCallScreen extends StatelessWidget {
                 height: 70,
                 child: ElevatedButton(
                   onPressed: () {
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(builder: (context) => MainPage()),
-                      (route) => false,
-                    );
+                    MainShellNavigationService.popToRootAndOpenTab(context, 0);
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFAC1B22),

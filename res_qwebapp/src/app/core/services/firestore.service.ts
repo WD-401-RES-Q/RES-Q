@@ -412,6 +412,44 @@ export class FirestoreService {
     await deleteDoc(doc(db, collectionName, docId));
   }
 
+  async deleteReportAsAdmin(
+    reportId: string,
+    adminId: string,
+  ): Promise<{
+    success: boolean;
+    reportId: string;
+    mediaDeleted: boolean;
+    deletedCommentDocs: number;
+    deletedVoteRecordDocs: number;
+  }> {
+    const callable = httpsCallable(functions, 'deleteReportAsAdmin');
+    const result = await callable({ reportId, adminId });
+    return result.data as {
+      success: boolean;
+      reportId: string;
+      mediaDeleted: boolean;
+      deletedCommentDocs: number;
+      deletedVoteRecordDocs: number;
+    };
+  }
+
+  async deleteAnnouncementAsAdmin(
+    announcementId: string,
+    adminId: string,
+  ): Promise<{
+    success: boolean;
+    announcementId: string;
+    mediaDeleted: boolean;
+  }> {
+    const callable = httpsCallable(functions, 'deleteAnnouncementAsAdmin');
+    const result = await callable({ announcementId, adminId });
+    return result.data as {
+      success: boolean;
+      announcementId: string;
+      mediaDeleted: boolean;
+    };
+  }
+
   // Account approval methods
   async approvePendingUser(user: any, adminUsername: string) {
     try {

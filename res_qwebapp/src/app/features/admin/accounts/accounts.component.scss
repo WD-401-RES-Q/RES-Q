@@ -38,6 +38,33 @@
     margin-top: 6px;
   }
 
+  .status-filter {
+    display: block;
+    width: min(100%, 260px);
+    max-width: 100%;
+    margin-top: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #111827;
+    font-family: "Roboto Condensed", sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 12px;
+    cursor: pointer;
+  }
+
+  .status-filter:focus {
+    outline: none;
+    border-color: #ac1b22;
+    box-shadow: 0 0 0 2px rgba(172, 27, 34, 0.12);
+  }
+
+  .status-filter:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
   .unlock-all-btn {
     border: none;
     border-radius: 10px;
@@ -422,6 +449,10 @@
     }
 
     .unlock-all-btn {
+      width: 100%;
+    }
+
+    .status-filter {
       width: 100%;
     }
 

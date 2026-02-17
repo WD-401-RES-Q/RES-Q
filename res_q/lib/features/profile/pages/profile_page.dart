@@ -33,6 +33,22 @@ class ProfilePage extends StatefulWidget {
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
+class _ProfileDraft {
+  const _ProfileDraft({
+    required this.fullName,
+    required this.email,
+    required this.address,
+    required this.phoneNumber,
+    required this.docId,
+  });
+
+  final String fullName;
+  final String email;
+  final String address;
+  final String phoneNumber;
+  final String docId;
+}
+
 class _ProfilePageState extends State<ProfilePage>
     with AutomaticKeepAliveClientMixin {
   bool _pushNotifications = true;
@@ -114,6 +130,21 @@ class _ProfilePageState extends State<ProfilePage>
     return '';
   }
 
+  _ProfileDraft _snapshotProfileDraft() {
+    final userData = UserSession.currentUserData ?? {};
+    return _ProfileDraft(
+      fullName: _readProfileField(
+        userData,
+        'fullName',
+        fallbacks: const ['displayName'],
+      ),
+      email: _readProfileField(userData, 'email'),
+      address: _readProfileField(userData, 'address'),
+      phoneNumber: userData['contactNumber']?.toString() ?? '',
+      docId: userData['docId']?.toString() ?? '',
+    );
+  }
+
   Future<void> _ensureFirebaseAuthSession() async {
     if (FirebaseAuth.instance.currentUser != null) {
       return;
@@ -162,6 +193,15 @@ class _ProfilePageState extends State<ProfilePage>
     return candidates.toList(growable: false);
   }
 
+  String? _firstResolvedDocId(List<String?> docIds) {
+    for (final docId in docIds) {
+      if (docId != null && docId.isNotEmpty) {
+        return docId;
+      }
+    }
+    return null;
+  }
+
   Future<String?> _resolveApprovedUserDocId({
     required String contactNumber,
     String? preferredDocId,
@@ -177,25 +217,41 @@ class _ProfilePageState extends State<ProfilePage>
     }
 
     final contactCandidates = _buildContactCandidates(contactNumber);
-    for (final candidate in contactCandidates) {
-      final contactHash = SecurityHash.sha256Hex(candidate);
-      final hashedQuery = await usersRef
-          .where('contactNumber_hash', isEqualTo: contactHash)
-          .limit(1)
-          .get();
-      if (hashedQuery.docs.isNotEmpty) {
-        return hashedQuery.docs.first.id;
-      }
+    final hashedMatchesFuture = Future.wait<String?>(
+      contactCandidates.map((candidate) async {
+        final contactHash = SecurityHash.sha256Hex(candidate);
+        final hashedQuery = await usersRef
+            .where('contactNumber_hash', isEqualTo: contactHash)
+            .limit(1)
+            .get();
+        return hashedQuery.docs.isNotEmpty ? hashedQuery.docs.first.id : null;
+      }),
+    );
+    final plaintextMatchesFuture = Future.wait<String?>(
+      contactCandidates.map((candidate) async {
+        final plaintextQuery = await usersRef
+            .where('contactNumber', isEqualTo: candidate)
+            .limit(1)
+            .get();
+        return plaintextQuery.docs.isNotEmpty
+            ? plaintextQuery.docs.first.id
+            : null;
+      }),
+    );
+
+    // Preserve existing priority (hashed first, plaintext fallback) while
+    // running both lookup groups concurrently.
+    final hashedMatches = await hashedMatchesFuture;
+    final plaintextMatches = await plaintextMatchesFuture;
+
+    final hashedDocId = _firstResolvedDocId(hashedMatches);
+    if (hashedDocId != null) {
+      return hashedDocId;
     }
 
-    for (final candidate in contactCandidates) {
-      final plaintextQuery = await usersRef
-          .where('contactNumber', isEqualTo: candidate)
-          .limit(1)
-          .get();
-      if (plaintextQuery.docs.isNotEmpty) {
-        return plaintextQuery.docs.first.id;
-      }
+    final plaintextDocId = _firstResolvedDocId(plaintextMatches);
+    if (plaintextDocId != null) {
+      return plaintextDocId;
     }
 
     return null;
@@ -413,24 +469,41 @@ class _ProfilePageState extends State<ProfilePage>
     IconData icon,
     String title,
   ) async {
-    if (title == 'Personal Information') {
-      await _refreshProfileDataFromFirestore();
-      if (!context.mounted) return;
-    }
-
     final content = _getModalContent(title);
     int feedbackRating = 4;
     String? selectedProblemType;
+    _ProfileDraft profileDraft = _snapshotProfileDraft();
+    bool isProfileRefreshing = false;
+    bool didStartProfileRefresh = false;
+    StateSetter? setModalStateRef;
+    bool isModalOpen = true;
 
     // Prevent swipe to dismiss for Personal Information modal
     final bool canDismiss = title != 'Personal Information';
 
-    showDialog(
+    await showDialog(
       context: context,
       barrierDismissible: canDismiss,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
+            setModalStateRef = setDialogState;
+            if (title == 'Personal Information' && !didStartProfileRefresh) {
+              didStartProfileRefresh = true;
+              isProfileRefreshing = true;
+              Future<void>(() async {
+                await _refreshProfileDataFromFirestore(force: true);
+                if (!mounted || !isModalOpen) return;
+                final latestDraft = _snapshotProfileDraft();
+                final updater = setModalStateRef;
+                if (updater != null) {
+                  updater(() {
+                    profileDraft = latestDraft;
+                    isProfileRefreshing = false;
+                  });
+                }
+              });
+            }
             return Dialog(
               backgroundColor: const Color(0xFFF7F8F3),
               shape: RoundedRectangleBorder(
@@ -514,6 +587,8 @@ class _ProfilePageState extends State<ProfilePage>
                         (value) =>
                             setDialogState(() => selectedProblemType = value),
                         setDialogState,
+                        profileDraft: profileDraft,
+                        isProfileRefreshing: isProfileRefreshing,
                       ),
                     ),
                   ],
@@ -524,6 +599,7 @@ class _ProfilePageState extends State<ProfilePage>
         );
       },
     );
+    isModalOpen = false;
   }
 
   void _showLogoutConfirm() {
@@ -944,26 +1020,15 @@ class _ProfilePageState extends State<ProfilePage>
             .set({'profilePhotoUrl': downloadUrl}, SetOptions(merge: true));
       } else {
         // Backward compatibility for sessions without stored docId.
-        final contactHash = SecurityHash.sha256Hex(contactNumber);
-        var userQuery = await FirebaseFirestore.instance
-            .collection('approved_users')
-            .where('contactNumber_hash', isEqualTo: contactHash)
-            .limit(1)
-            .get();
-
-        if (userQuery.docs.isEmpty) {
-          userQuery = await FirebaseFirestore.instance
+        final resolvedDocId = await _resolveApprovedUserDocId(
+          contactNumber: contactNumber,
+        );
+        if (resolvedDocId != null && resolvedDocId.isNotEmpty) {
+          await FirebaseFirestore.instance
               .collection('approved_users')
-              .where('contactNumber', isEqualTo: contactNumber)
-              .limit(1)
-              .get();
-        }
-
-        if (userQuery.docs.isNotEmpty) {
-          await userQuery.docs.first.reference.update({
-            'profilePhotoUrl': downloadUrl,
-          });
-          UserSession.currentUserData?['docId'] = userQuery.docs.first.id;
+              .doc(resolvedDocId)
+              .set({'profilePhotoUrl': downloadUrl}, SetOptions(merge: true));
+          UserSession.currentUserData?['docId'] = resolvedDocId;
         }
       }
 
@@ -1126,11 +1191,16 @@ class _ProfilePageState extends State<ProfilePage>
     String? selectedProblemType,
     ValueChanged<int> onRatingChanged,
     ValueChanged<String?> onProblemTypeChanged,
-    StateSetter setDialogState,
-  ) {
+    StateSetter setDialogState, {
+    _ProfileDraft? profileDraft,
+    bool isProfileRefreshing = false,
+  }) {
     switch (title) {
       case 'Personal Information':
-        return _buildPersonalInfoContent();
+        return _buildPersonalInfoContent(
+          profileDraft: profileDraft ?? _snapshotProfileDraft(),
+          isProfileRefreshing: isProfileRefreshing,
+        );
       case 'Account Security':
         return _buildAccountSecurityContent();
       case 'Notifications':
@@ -1170,21 +1240,19 @@ class _ProfilePageState extends State<ProfilePage>
     }
   }
 
-  Widget _buildPersonalInfoContent() {
-    final userData = UserSession.currentUserData ?? {};
-    String fullNameValue = _readProfileField(
-      userData,
-      'fullName',
-      fallbacks: const ['displayName'],
-    );
-    String emailValue = _readProfileField(userData, 'email');
-    String addressValue = _readProfileField(userData, 'address');
+  Widget _buildPersonalInfoContent({
+    required _ProfileDraft profileDraft,
+    required bool isProfileRefreshing,
+  }) {
+    String fullNameValue = profileDraft.fullName;
+    String emailValue = profileDraft.email;
+    String addressValue = profileDraft.address;
     final fullNameCtl = TextEditingController(text: fullNameValue);
     final emailCtl = TextEditingController(text: emailValue);
     final addressCtl = TextEditingController(text: addressValue);
-    final phoneNumber = userData['contactNumber']?.toString() ?? '';
+    final phoneNumber = profileDraft.phoneNumber;
     // Get the Firestore document ID (set during login)
-    final docId = userData['docId']?.toString() ?? '';
+    final docId = profileDraft.docId;
     bool isEditing = false;
     bool isSaving = false;
     String? errorMessage;
@@ -1196,6 +1264,42 @@ class _ProfilePageState extends State<ProfilePage>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (isProfileRefreshing && !isEditing) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFAC1B22).withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Row(
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Refreshing latest profile data...',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontFamily: 'RobotoCondensed',
+                            color: Color(0xFFAC1B22),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+
               // Full Name Field
               _buildEditableField(
                 label: 'Full Name',

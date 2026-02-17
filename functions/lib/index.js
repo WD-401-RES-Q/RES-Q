@@ -1,14 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupOldReports = exports.syncApprovedUsersEncryption = exports.getDecryptedUsers = exports.getOwnDecryptedProfile = exports.decryptUserData = exports.registerUserEncrypted = void 0;
+exports.sendPushOnApprovedUserBanUpdate = exports.sendPushOnResponderDeployment = exports.sendPushOnReportCreate = exports.sendPushOnAnnouncementCreate = exports.cleanupOldReports = exports.syncApprovedUsersEncryption = exports.deleteAnnouncementAsAdmin = exports.deleteReportAsAdmin = exports.getDecryptedUsers = exports.getOwnDecryptedProfile = exports.decryptUserData = exports.registerUserEncrypted = void 0;
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
 admin.initializeApp();
 const db = admin.firestore();
-// PII fields that should be encrypted
-const PII_FIELDS = [
-    'fullName',
+// PII fields that should have encrypted mirrors.
+// `fullName` is intentionally plaintext-only (no encrypted mirror).
+const ENCRYPTED_PII_FIELDS = [
     'email',
     'address',
     'dateOfBirth',
@@ -16,12 +16,525 @@ const PII_FIELDS = [
     'password',
     'pin'
 ];
+const LEGACY_DECRYPTABLE_FIELDS = ['fullName', ...ENCRYPTED_PII_FIELDS];
+const PLAINTEXT_ONLY_FIELDS = new Set(['fullName']);
 const ENCRYPTION_VERSION = 'aes-256-gcm-v2-compat';
 const DISPLAY_NAME_FIELD = 'displayName';
 const LOOKUP_HASH_FIELDS = new Set([
     'contactNumber',
     'pin',
 ]);
+const NOTIFICATION_CHANNEL_ID = 'resq_notifications';
+const ALERT_NOTIFICATION_CHANNEL_ID = 'resq_emergency_alerts';
+const PUSH_TOPIC_ANNOUNCEMENTS = 'announcements';
+const PUSH_TOPIC_REPORTS = 'reports';
+const USER_TOKENS_COLLECTION = 'user_tokens';
+const INVALID_FCM_TOKEN_ERROR_CODES = new Set([
+    'messaging/invalid-registration-token',
+    'messaging/registration-token-not-registered',
+]);
+function readTrimmedString(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+    return value.trim();
+}
+function normalizeStatusValue(value) {
+    return readTrimmedString(value)
+        .toLowerCase()
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ');
+}
+function isDispatchStatus(value) {
+    const normalized = normalizeStatusValue(value);
+    return (normalized === 'responding' ||
+        normalized === 'deployed' ||
+        normalized === 'dispatched');
+}
+function hasResponderAssignment(data) {
+    return (readTrimmedString(data.responderId).length > 0 ||
+        readTrimmedString(data.responderContactNumber).length > 0 ||
+        readTrimmedString(data.responderPhone).length > 0 ||
+        readTrimmedString(data.responderName).length > 0);
+}
+function isResponderDeploymentTransition(beforeData, afterData) {
+    var _a, _b, _c, _d, _e, _f;
+    const afterAssigned = hasResponderAssignment(afterData);
+    if (!afterAssigned) {
+        return false;
+    }
+    const beforeAssigned = hasResponderAssignment(beforeData);
+    const beforeStatus = (_a = beforeData.responderStatus) !== null && _a !== void 0 ? _a : beforeData.status;
+    const afterStatus = (_b = afterData.responderStatus) !== null && _b !== void 0 ? _b : afterData.status;
+    const beforeAssignedAt = (_d = (_c = beforeData.responderAssignedAt) !== null && _c !== void 0 ? _c : beforeData.deployedAt) !== null && _d !== void 0 ? _d : beforeData.respondingAt;
+    const afterAssignedAt = (_f = (_e = afterData.responderAssignedAt) !== null && _e !== void 0 ? _e : afterData.deployedAt) !== null && _f !== void 0 ? _f : afterData.respondingAt;
+    const assignedAtTransition = beforeAssignedAt == null && afterAssignedAt != null;
+    const statusBecameDispatch = !isDispatchStatus(beforeStatus) && isDispatchStatus(afterStatus);
+    return !beforeAssigned || assignedAtTransition || statusBecameDispatch;
+}
+function toFcmDataPayload(payload) {
+    const data = {};
+    for (const [key, value] of Object.entries(payload)) {
+        if (value == null) {
+            continue;
+        }
+        data[key] = String(value);
+    }
+    return data;
+}
+function normalizePhoneLikeValue(value) {
+    return value.replace(/[^0-9]/g, '');
+}
+function normalizeAdminRole(value) {
+    return readTrimmedString(value).toLowerCase();
+}
+async function assertAdminAccess(adminIdRaw) {
+    var _a;
+    const adminId = readTrimmedString(adminIdRaw);
+    if (adminId.length === 0) {
+        throw new functions.https.HttpsError('invalid-argument', 'adminId is required');
+    }
+    const adminDoc = await db.collection('admins').doc(adminId).get();
+    if (!adminDoc.exists) {
+        throw new functions.https.HttpsError('permission-denied', 'Admin not found');
+    }
+    const adminData = ((_a = adminDoc.data()) !== null && _a !== void 0 ? _a : {});
+    if (normalizeAdminRole(adminData.role) !== 'admin') {
+        throw new functions.https.HttpsError('permission-denied', 'Only admins can perform this action');
+    }
+    return adminId;
+}
+function parseStorageTarget(rawValue) {
+    const raw = readTrimmedString(rawValue);
+    if (raw.length === 0) {
+        return null;
+    }
+    if (raw.startsWith('gs://')) {
+        const withoutScheme = raw.slice('gs://'.length);
+        const firstSlash = withoutScheme.indexOf('/');
+        if (firstSlash <= 0 || firstSlash >= withoutScheme.length - 1) {
+            return null;
+        }
+        return {
+            bucketName: withoutScheme.slice(0, firstSlash),
+            objectPath: withoutScheme.slice(firstSlash + 1),
+        };
+    }
+    if (raw.startsWith('https://') || raw.startsWith('http://')) {
+        try {
+            const parsedUrl = new URL(raw);
+            const pathSegments = parsedUrl.pathname.split('/').filter(Boolean);
+            const bucketSegmentIndex = pathSegments.indexOf('b');
+            const objectSegmentIndex = pathSegments.indexOf('o');
+            const encodedObjectPath = objectSegmentIndex >= 0 && objectSegmentIndex + 1 < pathSegments.length
+                ? pathSegments.slice(objectSegmentIndex + 1).join('/')
+                : '';
+            if (encodedObjectPath.length === 0) {
+                return null;
+            }
+            const bucketName = bucketSegmentIndex >= 0 && bucketSegmentIndex + 1 < pathSegments.length
+                ? pathSegments[bucketSegmentIndex + 1]
+                : undefined;
+            return {
+                bucketName,
+                objectPath: decodeURIComponent(encodedObjectPath),
+            };
+        }
+        catch (error) {
+            console.error('Failed to parse storage URL:', raw, error);
+            return null;
+        }
+    }
+    return { objectPath: raw };
+}
+async function deleteStorageTarget(rawValue) {
+    var _a;
+    const target = parseStorageTarget(rawValue);
+    if (!target) {
+        return false;
+    }
+    try {
+        const bucket = target.bucketName
+            ? admin.storage().bucket(target.bucketName)
+            : admin.storage().bucket();
+        await bucket.file(target.objectPath).delete({ ignoreNotFound: true });
+        return true;
+    }
+    catch (error) {
+        console.error(`Failed deleting storage object ${target.objectPath} from ${(_a = target.bucketName) !== null && _a !== void 0 ? _a : '[default-bucket]'}:`, error);
+        return false;
+    }
+}
+async function deleteSubcollectionDocs(parentRef, subcollectionName) {
+    let deletedDocs = 0;
+    while (true) {
+        const snapshot = await parentRef.collection(subcollectionName).limit(200).get();
+        if (snapshot.empty) {
+            break;
+        }
+        const batch = db.batch();
+        for (const documentSnapshot of snapshot.docs) {
+            batch.delete(documentSnapshot.ref);
+            deletedDocs += 1;
+        }
+        await batch.commit();
+    }
+    return deletedDocs;
+}
+async function deleteReportCommentsAndReplies(reportRef) {
+    let deletedDocs = 0;
+    while (true) {
+        const commentsSnapshot = await reportRef.collection('comments').limit(120).get();
+        if (commentsSnapshot.empty) {
+            break;
+        }
+        for (const commentSnapshot of commentsSnapshot.docs) {
+            deletedDocs += await deleteSubcollectionDocs(commentSnapshot.ref, 'replies');
+        }
+        const batch = db.batch();
+        for (const commentSnapshot of commentsSnapshot.docs) {
+            batch.delete(commentSnapshot.ref);
+            deletedDocs += 1;
+        }
+        await batch.commit();
+    }
+    return deletedDocs;
+}
+async function deleteVoteRecordsForReport(reportDocId, readableReportId) {
+    const idsToDelete = new Set();
+    const snapshots = [];
+    const byDocId = await db
+        .collection('voteRecords')
+        .where('reportDocId', '==', reportDocId)
+        .get();
+    snapshots.push(byDocId);
+    const normalizedReadableId = readableReportId.trim();
+    if (normalizedReadableId.length > 0 && normalizedReadableId !== reportDocId) {
+        const byReadableId = await db
+            .collection('voteRecords')
+            .where('reportId', '==', normalizedReadableId)
+            .get();
+        snapshots.push(byReadableId);
+    }
+    for (const snapshot of snapshots) {
+        for (const docSnapshot of snapshot.docs) {
+            idsToDelete.add(docSnapshot.id);
+        }
+    }
+    if (idsToDelete.size === 0) {
+        return 0;
+    }
+    let deletedDocs = 0;
+    let batch = db.batch();
+    let queuedDeletes = 0;
+    for (const voteRecordId of idsToDelete) {
+        batch.delete(db.collection('voteRecords').doc(voteRecordId));
+        deletedDocs += 1;
+        queuedDeletes += 1;
+        if (queuedDeletes >= 400) {
+            await batch.commit();
+            batch = db.batch();
+            queuedDeletes = 0;
+        }
+    }
+    if (queuedDeletes > 0) {
+        await batch.commit();
+    }
+    return deletedDocs;
+}
+function extractIncidentType(data) {
+    return readTrimmedString(data.incidentType) || 'Incident';
+}
+function buildAnnouncementTitle(data) {
+    return readTrimmedString(data.title) || 'New Announcement';
+}
+function buildAnnouncementBody(data) {
+    const content = readTrimmedString(data.content);
+    if (content.length > 0) {
+        return content.length > 180 ? `${content.slice(0, 177)}...` : content;
+    }
+    return 'Tap to view the latest announcement.';
+}
+function buildReportTitle(data) {
+    return `${extractIncidentType(data)} Reported`;
+}
+function buildReportBody(data) {
+    const incidentType = extractIncidentType(data).toLowerCase();
+    const barangay = readTrimmedString(data.barangay);
+    if (barangay.length > 0) {
+        return `A new ${incidentType} report was submitted in ${barangay}.`;
+    }
+    const details = readTrimmedString(data.details) || readTrimmedString(data.description);
+    if (details.length > 0) {
+        return details.length > 180 ? `${details.slice(0, 177)}...` : details;
+    }
+    return `A new ${incidentType} report was submitted.`;
+}
+function buildResponderDeploymentBody(data) {
+    const incidentType = extractIncidentType(data).toLowerCase();
+    const responderName = readTrimmedString(data.responderName);
+    if (responderName.length > 0) {
+        return `${responderName} is now responding to your ${incidentType} report.`;
+    }
+    return `A responder is now responding to your ${incidentType} report.`;
+}
+function buildResponderAssignmentTitle(data) {
+    const incidentType = extractIncidentType(data);
+    return `${incidentType} Deployment`;
+}
+function buildResponderAssignmentBody(data) {
+    const incidentType = extractIncidentType(data).toLowerCase();
+    const barangay = readTrimmedString(data.barangay);
+    if (barangay.length > 0) {
+        return `You were deployed to a ${incidentType} incident in ${barangay}.`;
+    }
+    return `You were deployed to a ${incidentType} incident.`;
+}
+function pushTokenCandidateVariants(candidates, seen, rawCandidate) {
+    const pushCandidate = (candidate) => {
+        const value = candidate.trim();
+        if (value.length === 0 || seen.has(value)) {
+            return;
+        }
+        seen.add(value);
+        candidates.push(value);
+    };
+    const raw = readTrimmedString(rawCandidate);
+    if (raw.length === 0) {
+        return;
+    }
+    pushCandidate(raw);
+    const digits = normalizePhoneLikeValue(raw);
+    if (digits.length === 0) {
+        return;
+    }
+    pushCandidate(digits);
+    if (digits.startsWith('63')) {
+        pushCandidate(`+${digits}`);
+    }
+}
+function isBannedAccount(data) {
+    return normalizeStatusValue(data.accountStatus) === 'banned';
+}
+function readBanReasons(data) {
+    const rawReasons = data.banReasons;
+    if (!Array.isArray(rawReasons)) {
+        return [];
+    }
+    return rawReasons
+        .map((reason) => readTrimmedString(reason))
+        .filter((reason) => reason.length > 0);
+}
+function toTimestampMillis(value) {
+    var _a, _b;
+    if (value == null) {
+        return null;
+    }
+    if (value instanceof admin.firestore.Timestamp) {
+        return value.toMillis();
+    }
+    if (typeof value === 'object') {
+        const maybeTimestamp = value;
+        if (typeof maybeTimestamp.toMillis === 'function') {
+            return maybeTimestamp.toMillis();
+        }
+        if (typeof maybeTimestamp.toDate === 'function') {
+            return maybeTimestamp.toDate().getTime();
+        }
+        const seconds = (_a = value.seconds) !== null && _a !== void 0 ? _a : value._seconds;
+        const nanos = (_b = value.nanoseconds) !== null && _b !== void 0 ? _b : value._nanoseconds;
+        if (typeof seconds === 'number') {
+            const msFromNanos = typeof nanos === 'number' ? nanos / 1000000 : 0;
+            return Math.round((seconds * 1000) + msFromNanos);
+        }
+    }
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string') {
+        const parsed = Date.parse(value);
+        return Number.isNaN(parsed) ? null : parsed;
+    }
+    return null;
+}
+function isPermanentBan(data) {
+    if (!isBannedAccount(data)) {
+        return false;
+    }
+    if (data.isPermanent === true) {
+        return true;
+    }
+    const banType = normalizeStatusValue(data.banType);
+    if (banType === 'permanent') {
+        return true;
+    }
+    return data.bannedUntil == null;
+}
+function shouldSendBanUpdateNotification(beforeData, afterData) {
+    const beforeBanned = isBannedAccount(beforeData);
+    const afterBanned = isBannedAccount(afterData);
+    if (!afterBanned) {
+        return false;
+    }
+    if (!beforeBanned) {
+        return true;
+    }
+    const beforeIsPermanent = isPermanentBan(beforeData);
+    const afterIsPermanent = isPermanentBan(afterData);
+    if (beforeIsPermanent !== afterIsPermanent) {
+        return true;
+    }
+    const beforeUntil = toTimestampMillis(beforeData.bannedUntil);
+    const afterUntil = toTimestampMillis(afterData.bannedUntil);
+    if (beforeUntil !== afterUntil) {
+        return true;
+    }
+    const beforeReasons = readBanReasons(beforeData).join('|');
+    const afterReasons = readBanReasons(afterData).join('|');
+    return beforeReasons !== afterReasons;
+}
+function formatBanUntilLabel(data) {
+    const ms = toTimestampMillis(data.bannedUntil);
+    if (ms == null) {
+        return '';
+    }
+    const date = new Date(ms);
+    if (Number.isNaN(date.getTime())) {
+        return '';
+    }
+    return new Intl.DateTimeFormat('en-PH', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'Asia/Manila',
+    }).format(date);
+}
+function buildBanNotificationTitle(data) {
+    return isPermanentBan(data)
+        ? 'Account Permanently Banned'
+        : 'Account Temporarily Banned';
+}
+function buildBanNotificationBody(data) {
+    const reasons = readBanReasons(data);
+    const reasonsText = reasons.length > 0 ? ` Reason: ${reasons.join(', ')}.` : '';
+    if (isPermanentBan(data)) {
+        return `Your RES-Q account was permanently banned.${reasonsText}`;
+    }
+    const untilLabel = formatBanUntilLabel(data);
+    const untilText = untilLabel.length > 0 ? ` until ${untilLabel}` : '';
+    return `Your RES-Q account was temporarily banned${untilText}.${reasonsText}`;
+}
+function buildReporterTokenDocCandidates(data) {
+    const candidates = [];
+    const seen = new Set();
+    pushTokenCandidateVariants(candidates, seen, data.userId);
+    pushTokenCandidateVariants(candidates, seen, data.contactNumber);
+    return candidates;
+}
+function buildResponderTokenDocCandidates(data) {
+    const candidates = [];
+    const seen = new Set();
+    pushTokenCandidateVariants(candidates, seen, data.responderId);
+    pushTokenCandidateVariants(candidates, seen, data.responderContactNumber);
+    pushTokenCandidateVariants(candidates, seen, data.responderPhone);
+    return candidates;
+}
+async function getTokenRecordForCandidates(candidates) {
+    var _a;
+    for (const candidate of candidates) {
+        const doc = await db.collection(USER_TOKENS_COLLECTION).doc(candidate).get();
+        if (!doc.exists) {
+            continue;
+        }
+        const docData = ((_a = doc.data()) !== null && _a !== void 0 ? _a : {});
+        const token = readTrimmedString(docData.fcmToken);
+        if (token.length > 0) {
+            return {
+                docId: doc.id,
+                fcmToken: token,
+            };
+        }
+    }
+    return null;
+}
+async function deleteTokenRecord(docId) {
+    try {
+        await db.collection(USER_TOKENS_COLLECTION).doc(docId).delete();
+    }
+    catch (error) {
+        console.error(`Failed to delete stale token doc ${docId}:`, error);
+    }
+}
+async function sendTopicPushNotification(topic, title, body, data) {
+    const message = {
+        topic,
+        notification: { title, body },
+        data: toFcmDataPayload(data),
+        android: {
+            priority: 'high',
+            notification: {
+                channelId: NOTIFICATION_CHANNEL_ID,
+                sound: 'default',
+            },
+        },
+        apns: {
+            headers: {
+                'apns-priority': '10',
+                'apns-push-type': 'alert',
+            },
+            payload: {
+                aps: {
+                    sound: 'default',
+                },
+            },
+        },
+    };
+    const messageId = await admin.messaging().send(message);
+    console.log(`Sent topic push notification (${topic}): ${messageId}`);
+}
+async function sendUserTokenPushNotification(docId, fcmToken, title, body, data, options) {
+    var _a;
+    const channelId = readTrimmedString(options === null || options === void 0 ? void 0 : options.channelId) || NOTIFICATION_CHANNEL_ID;
+    const message = {
+        token: fcmToken,
+        notification: { title, body },
+        data: toFcmDataPayload(data),
+        android: {
+            priority: 'high',
+            notification: {
+                channelId,
+                sound: 'default',
+            },
+        },
+        apns: {
+            headers: {
+                'apns-priority': '10',
+                'apns-push-type': 'alert',
+            },
+            payload: {
+                aps: {
+                    sound: 'default',
+                },
+            },
+        },
+    };
+    try {
+        const messageId = await admin.messaging().send(message);
+        console.log(`Sent device push notification (${docId}): ${messageId}`);
+    }
+    catch (error) {
+        const errorCode = (_a = error.code) !== null && _a !== void 0 ? _a : '';
+        if (INVALID_FCM_TOKEN_ERROR_CODES.has(errorCode)) {
+            await deleteTokenRecord(docId);
+            console.warn(`Deleted stale token for ${docId} due to ${errorCode}`);
+            return;
+        }
+        throw error;
+    }
+}
 /**
  * AES-256-GCM Encryption using Node.js crypto
  */
@@ -90,7 +603,7 @@ class EncryptionHelper {
     }
     static encryptUserData(userData) {
         const encrypted = Object.assign({}, userData);
-        for (const field of PII_FIELDS) {
+        for (const field of ENCRYPTED_PII_FIELDS) {
             const value = encrypted[field];
             const cipherField = this.cipherField(field);
             const hashField = this.hashField(field);
@@ -114,13 +627,19 @@ class EncryptionHelper {
                 delete encrypted[encryptedFlagField];
             }
         }
+        // Keep selected fields plaintext-only by removing any legacy encryption artifacts.
+        for (const field of PLAINTEXT_ONLY_FIELDS) {
+            delete encrypted[this.cipherField(field)];
+            delete encrypted[this.hashField(field)];
+            delete encrypted[`${field}_encrypted`];
+        }
         encrypted['_encryptedAt'] = admin.firestore.FieldValue.serverTimestamp();
         encrypted['_encryptionVersion'] = ENCRYPTION_VERSION;
         return encrypted;
     }
     static normalizeLegacyUserData(userData) {
         const normalized = Object.assign({}, userData);
-        for (const field of PII_FIELDS) {
+        for (const field of LEGACY_DECRYPTABLE_FIELDS) {
             const cipherField = this.cipherField(field);
             const encryptedFlagField = `${field}_encrypted`;
             const hasTopLevelField = Object.prototype.hasOwnProperty.call(normalized, field);
@@ -161,7 +680,7 @@ class EncryptionHelper {
     static buildEncryptionFieldUpdates(afterData, beforeData) {
         const updates = {};
         let hasChanges = false;
-        for (const field of PII_FIELDS) {
+        for (const field of ENCRYPTED_PII_FIELDS) {
             const value = afterData[field];
             let beforeValue = beforeData === null || beforeData === void 0 ? void 0 : beforeData[field];
             const cipherField = this.cipherField(field);
@@ -222,6 +741,21 @@ class EncryptionHelper {
                 }
             }
         }
+        // Remove legacy artifacts for fields that are now plaintext-only.
+        for (const field of PLAINTEXT_ONLY_FIELDS) {
+            const cipherField = this.cipherField(field);
+            const hashField = this.hashField(field);
+            const encryptedFlagField = `${field}_encrypted`;
+            const hasCipher = afterData[cipherField] != null;
+            const hasHash = afterData[hashField] != null;
+            const hasEncryptedFlag = afterData[encryptedFlagField] != null;
+            if (hasCipher || hasHash || hasEncryptedFlag) {
+                updates[cipherField] = admin.firestore.FieldValue.delete();
+                updates[hashField] = admin.firestore.FieldValue.delete();
+                updates[encryptedFlagField] = admin.firestore.FieldValue.delete();
+                hasChanges = true;
+            }
+        }
         if (hasChanges) {
             updates['_encryptedAt'] = admin.firestore.FieldValue.serverTimestamp();
             updates['_encryptionVersion'] = ENCRYPTION_VERSION;
@@ -230,7 +764,7 @@ class EncryptionHelper {
     }
     static buildPlaintextFieldRestoreUpdates(normalizedData, currentData) {
         const updates = {};
-        for (const field of PII_FIELDS) {
+        for (const field of LEGACY_DECRYPTABLE_FIELDS) {
             const normalizedValue = normalizedData[field];
             const currentValue = currentData[field];
             if (this.isNonEmptyString(normalizedValue) && currentValue !== normalizedValue) {
@@ -241,7 +775,7 @@ class EncryptionHelper {
     }
     static buildEncryptionArtifactDeleteUpdates() {
         const updates = {};
-        for (const field of PII_FIELDS) {
+        for (const field of LEGACY_DECRYPTABLE_FIELDS) {
             updates[this.cipherField(field)] = admin.firestore.FieldValue.delete();
             updates[this.hashField(field)] = admin.firestore.FieldValue.delete();
             updates[`${field}_encrypted`] = admin.firestore.FieldValue.delete();
@@ -252,7 +786,7 @@ class EncryptionHelper {
     }
     static decryptUserData(userData) {
         const decrypted = Object.assign({}, userData);
-        for (const field of PII_FIELDS) {
+        for (const field of LEGACY_DECRYPTABLE_FIELDS) {
             const cipherField = this.cipherField(field);
             const topLevelValue = decrypted[field];
             const hasTopLevelString = this.isNonEmptyString(topLevelValue);
@@ -588,6 +1122,83 @@ exports.getDecryptedUsers = functions
         throw new functions.https.HttpsError('internal', 'Failed to get users');
     }
 });
+/**
+ * Admin-only hard delete for a report document.
+ * Also removes report comments/replies, linked vote records, and media in Storage.
+ */
+exports.deleteReportAsAdmin = functions
+    .region('asia-east2')
+    .https.onCall(async (data, context) => {
+    var _a, _b;
+    try {
+        const payload = (data !== null && data !== void 0 ? data : {});
+        const reportId = readTrimmedString(payload.reportId);
+        await assertAdminAccess(payload.adminId);
+        if (reportId.length === 0) {
+            throw new functions.https.HttpsError('invalid-argument', 'reportId is required');
+        }
+        const reportRef = db.collection('reports').doc(reportId);
+        const reportSnapshot = await reportRef.get();
+        if (!reportSnapshot.exists) {
+            throw new functions.https.HttpsError('not-found', 'Report not found');
+        }
+        const reportData = ((_a = reportSnapshot.data()) !== null && _a !== void 0 ? _a : {});
+        const mediaDeleted = await deleteStorageTarget((_b = reportData.mediaUrl) !== null && _b !== void 0 ? _b : reportData.imageUrl);
+        const deletedCommentDocs = await deleteReportCommentsAndReplies(reportRef);
+        const deletedVoteRecordDocs = await deleteVoteRecordsForReport(reportId, readTrimmedString(reportData.reportId));
+        await reportRef.delete();
+        return {
+            success: true,
+            reportId,
+            mediaDeleted,
+            deletedCommentDocs,
+            deletedVoteRecordDocs,
+        };
+    }
+    catch (error) {
+        console.error('deleteReportAsAdmin failed:', error);
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        throw new functions.https.HttpsError('internal', 'Failed to delete report');
+    }
+});
+/**
+ * Admin-only hard delete for an announcement document and its optional image.
+ */
+exports.deleteAnnouncementAsAdmin = functions
+    .region('asia-east2')
+    .https.onCall(async (data, context) => {
+    var _a;
+    try {
+        const payload = (data !== null && data !== void 0 ? data : {});
+        const announcementId = readTrimmedString(payload.announcementId);
+        await assertAdminAccess(payload.adminId);
+        if (announcementId.length === 0) {
+            throw new functions.https.HttpsError('invalid-argument', 'announcementId is required');
+        }
+        const announcementRef = db.collection('announcements').doc(announcementId);
+        const announcementSnapshot = await announcementRef.get();
+        if (!announcementSnapshot.exists) {
+            throw new functions.https.HttpsError('not-found', 'Announcement not found');
+        }
+        const announcementData = ((_a = announcementSnapshot.data()) !== null && _a !== void 0 ? _a : {});
+        const mediaDeleted = await deleteStorageTarget(announcementData.imageUrl);
+        await announcementRef.delete();
+        return {
+            success: true,
+            announcementId,
+            mediaDeleted,
+        };
+    }
+    catch (error) {
+        console.error('deleteAnnouncementAsAdmin failed:', error);
+        if (error instanceof functions.https.HttpsError) {
+            throw error;
+        }
+        throw new functions.https.HttpsError('internal', 'Failed to delete announcement');
+    }
+});
 async function syncEncryptedMirrorsOnWrite(change) {
     var _a, _b;
     if (!change.after.exists) {
@@ -657,6 +1268,158 @@ exports.cleanupOldReports = functions
         totalDeleted += batchDocs.length;
     }
     console.log(`Deleted ${totalDeleted} reports older than 30 days.`);
+    return null;
+});
+/**
+ * Broadcasts push notifications to all subscribed devices when an announcement is published.
+ */
+exports.sendPushOnAnnouncementCreate = functions
+    .region('asia-east2')
+    .firestore.document('announcements/{announcementId}')
+    .onCreate(async (snapshot, context) => {
+    var _a;
+    const data = ((_a = snapshot.data()) !== null && _a !== void 0 ? _a : {});
+    if (data.isPlaceholder === true) {
+        return null;
+    }
+    const announcementId = context.params.announcementId;
+    const title = buildAnnouncementTitle(data);
+    const body = buildAnnouncementBody(data);
+    await sendTopicPushNotification(PUSH_TOPIC_ANNOUNCEMENTS, title, body, {
+        type: 'announcement',
+        announcementId,
+    });
+    return null;
+});
+/**
+ * Broadcasts push notifications to all subscribed devices whenever a report is submitted.
+ */
+exports.sendPushOnReportCreate = functions
+    .region('asia-east2')
+    .firestore.document('reports/{reportId}')
+    .onCreate(async (snapshot, context) => {
+    var _a;
+    const data = ((_a = snapshot.data()) !== null && _a !== void 0 ? _a : {});
+    const reportId = context.params.reportId;
+    const title = buildReportTitle(data);
+    const body = buildReportBody(data);
+    await sendTopicPushNotification(PUSH_TOPIC_REPORTS, title, body, {
+        type: 'report',
+        reportId,
+        incidentType: extractIncidentType(data),
+    });
+    return null;
+});
+/**
+ * Sends direct push notifications when a responder is deployed:
+ * - report owner receives "Responder Deployed"
+ * - assigned responder receives an emergency deployment alert
+ */
+exports.sendPushOnResponderDeployment = functions
+    .region('asia-east2')
+    .firestore.document('reports/{reportId}')
+    .onUpdate(async (change, context) => {
+    var _a, _b;
+    const beforeData = ((_a = change.before.data()) !== null && _a !== void 0 ? _a : {});
+    const afterData = ((_b = change.after.data()) !== null && _b !== void 0 ? _b : {});
+    if (!isResponderDeploymentTransition(beforeData, afterData)) {
+        return null;
+    }
+    const reportId = context.params.reportId;
+    const incidentType = extractIncidentType(afterData);
+    const responderName = readTrimmedString(afterData.responderName);
+    const reporterTokenDocCandidates = buildReporterTokenDocCandidates(afterData);
+    if (reporterTokenDocCandidates.length === 0) {
+        console.warn(`Skipping report-owner deployment push for ${reportId}: no user token candidates.`);
+    }
+    else {
+        const reporterTokenRecord = await getTokenRecordForCandidates(reporterTokenDocCandidates);
+        if (!reporterTokenRecord) {
+            console.warn(`Skipping report-owner deployment push for ${reportId}: no FCM token found.`);
+        }
+        else {
+            await sendUserTokenPushNotification(reporterTokenRecord.docId, reporterTokenRecord.fcmToken, 'Responder Deployed', buildResponderDeploymentBody(afterData), {
+                type: 'responder_deployed',
+                reportId,
+                incidentType,
+                responderName,
+            });
+        }
+    }
+    const responderTokenDocCandidates = buildResponderTokenDocCandidates(afterData);
+    if (responderTokenDocCandidates.length === 0) {
+        console.warn(`Skipping responder assignment push for ${reportId}: no responder token candidates.`);
+        return null;
+    }
+    const responderTokenRecord = await getTokenRecordForCandidates(responderTokenDocCandidates);
+    if (!responderTokenRecord) {
+        console.warn(`Skipping responder assignment push for ${reportId}: no FCM token found.`);
+        return null;
+    }
+    await sendUserTokenPushNotification(responderTokenRecord.docId, responderTokenRecord.fcmToken, buildResponderAssignmentTitle(afterData), buildResponderAssignmentBody(afterData), {
+        type: 'responder_assignment',
+        reportId,
+        incidentType,
+        responderName,
+    }, {
+        channelId: ALERT_NOTIFICATION_CHANNEL_ID,
+    });
+    return null;
+});
+/**
+ * Sends a direct push notification when an approved user becomes banned.
+ * Covers both temporary and permanent bans and includes admin-selected reasons.
+ */
+exports.sendPushOnApprovedUserBanUpdate = functions
+    .region('asia-east2')
+    .firestore.document('approved_users/{userId}')
+    .onUpdate(async (change, context) => {
+    var _a, _b;
+    const beforeData = ((_a = change.before.data()) !== null && _a !== void 0 ? _a : {});
+    const afterData = ((_b = change.after.data()) !== null && _b !== void 0 ? _b : {});
+    if (!shouldSendBanUpdateNotification(beforeData, afterData)) {
+        return null;
+    }
+    const userId = readTrimmedString(context.params.userId);
+    const tokenDocCandidates = buildReporterTokenDocCandidates(Object.assign(Object.assign({}, afterData), { userId }));
+    if (tokenDocCandidates.length === 0) {
+        console.warn(`Skipping account ban push for ${userId}: no user token candidates.`);
+        return null;
+    }
+    const tokenRecord = await getTokenRecordForCandidates(tokenDocCandidates);
+    if (!tokenRecord) {
+        console.warn(`Skipping account ban push for ${userId}: no FCM token found.`);
+        return null;
+    }
+    const isPermanent = isPermanentBan(afterData);
+    const title = buildBanNotificationTitle(afterData);
+    const body = buildBanNotificationBody(afterData);
+    const reasons = readBanReasons(afterData);
+    const bannedUntilMillis = toTimestampMillis(afterData.bannedUntil);
+    const pushData = {
+        type: 'account_ban',
+        banType: isPermanent ? 'permanent' : 'temporary',
+        banReasons: reasons.join('|'),
+    };
+    if (bannedUntilMillis != null) {
+        pushData.bannedUntil = new Date(bannedUntilMillis).toISOString();
+    }
+    await sendUserTokenPushNotification(tokenRecord.docId, tokenRecord.fcmToken, title, body, pushData);
+    try {
+        await db
+            .collection('users')
+            .doc(tokenRecord.docId)
+            .collection('notifications')
+            .add(Object.assign({ title,
+            body, type: 'account_ban', banType: isPermanent ? 'permanent' : 'temporary', reasons, read: false, createdAt: admin.firestore.FieldValue.serverTimestamp() }, (bannedUntilMillis == null
+            ? {}
+            : {
+                bannedUntil: admin.firestore.Timestamp.fromMillis(bannedUntilMillis),
+            })));
+    }
+    catch (error) {
+        console.error(`Failed to store account ban notification feed item for ${tokenRecord.docId}:`, error);
+    }
     return null;
 });
 //# sourceMappingURL=index.js.map

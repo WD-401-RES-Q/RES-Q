@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -10,18 +12,176 @@ import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:async';
+import 'dart:io';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/location_service.dart';
+import '../../../common/services/shell_navigation_service.dart';
+import '../../../common/theme/app_theme.dart';
 import '../../../common/utils/phone_utils.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
-import '../../home/pages/home_page.dart';
 import '../../emergency/pages/emergency_call_screen.dart';
+
+void _debugLog(Object? message) {
+  if (kDebugMode) {
+    debugPrint('$message');
+  }
+}
 
 enum LocationSelectionMode { current, pin }
 
 enum CapturedMediaType { photo, video }
+
+Future<void> _showReportThemedDialog({
+  required BuildContext context,
+  required String title,
+  required String message,
+  String primaryLabel = 'OK',
+  VoidCallback? onPrimaryPressed,
+  String? secondaryLabel,
+  VoidCallback? onSecondaryPressed,
+  IconData icon = Icons.info_outline_rounded,
+  Color iconColor = AppTheme.appRed,
+  bool barrierDismissible = true,
+}) async {
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: barrierDismissible,
+    barrierColor: Colors.black.withValues(alpha: 0.52),
+    builder: (dialogContext) => Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+      backgroundColor: Colors.transparent,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppTheme.appOffWhite,
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: AppTheme.appOffYellow.withValues(alpha: 0.45),
+            width: 1.4,
+          ),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x4A000000),
+              blurRadius: 18,
+              offset: Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: iconColor.withValues(alpha: 0.14),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: AppTheme.appOffYellow.withValues(alpha: 0.78),
+                        width: 1.8,
+                      ),
+                    ),
+                    child: Icon(icon, color: iconColor, size: 23),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontWeight: FontWeight.w900,
+                        fontSize: 22,
+                        color: AppTheme.appBlack,
+                        height: 1.05,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                message,
+                style: const TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontWeight: FontWeight.w400,
+                  fontSize: 16,
+                  color: AppTheme.appBlack,
+                  height: 1.22,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  if (secondaryLabel != null) ...[
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          Navigator.of(dialogContext).pop();
+                          onSecondaryPressed?.call();
+                        },
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.appRed,
+                          side: BorderSide(
+                            color: AppTheme.appRed.withValues(alpha: 0.65),
+                            width: 1.4,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 11),
+                        ),
+                        child: Text(
+                          secondaryLabel,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(dialogContext).pop();
+                        onPrimaryPressed?.call();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.appRed,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                      ),
+                      child: Text(
+                        primaryLabel,
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
 
 class _VehicleInvolved {
   _VehicleInvolved();
@@ -93,7 +253,11 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
   void _loadUserInfo() {
     final data = UserSession.currentUserData;
-    _fullName = data?['fullName'] as String?;
+    final rawFullName = (data?['fullName'] ?? data?['displayName']) as String?;
+    final normalizedFullName = rawFullName?.trim();
+    _fullName = normalizedFullName != null && normalizedFullName.isNotEmpty
+        ? normalizedFullName
+        : null;
     _contactNumber = data?['contactNumber'] as String?;
   }
 
@@ -122,7 +286,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         _capturedMediaType == CapturedMediaType.video ||
         _isLikelyVideoPath(_capturedMedia!.path);
     final typeLabel = isVideo ? 'Video' : 'Photo';
-    return '✓ $typeLabel captured: $fileName';
+    return '[OK] $typeLabel captured: $fileName';
   }
 
   String _fileNameFromPath(String path) {
@@ -361,7 +525,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     setState(() => _submitting = true);
 
     try {
-      debugPrint('Starting report submission...');
+      _debugLog('Starting report submission...');
+      await _ensureStorageAuthSession();
       final now = DateTime.now();
 
       String? mediaUrl;
@@ -390,15 +555,18 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
             : 'image/jpeg';
         final metadata = SettableMetadata(contentType: contentType);
 
-        debugPrint(
+        _debugLog(
           'Uploading ${isVideo ? 'video' : 'photo'} to Firebase Storage...',
         );
-        final data = await _capturedMedia!.readAsBytes();
         final uploadTimeout = isVideo
             ? const Duration(seconds: 120)
             : const Duration(seconds: 60);
+        final mediaPath = _capturedMedia!.path;
+        if (mediaPath.isEmpty) {
+          throw Exception('Captured media path is empty.');
+        }
         final uploadSnapshot = await storageRef
-            .putData(data, metadata)
+            .putFile(File(mediaPath), metadata)
             .timeout(uploadTimeout);
 
         mediaUrl = await uploadSnapshot.ref.getDownloadURL().timeout(
@@ -410,16 +578,16 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         await uploadSnapshot.ref.getMetadata().timeout(
           const Duration(seconds: 10),
         );
-        debugPrint('Media uploaded successfully: $mediaUrl');
+        _debugLog('Media uploaded successfully: $mediaUrl');
       } else {
-        debugPrint('Skipping media upload (no media captured)');
+        _debugLog('Skipping media upload (no media captured)');
       }
 
-      debugPrint('Saving report to Firestore...');
+      _debugLog('Saving report to Firestore...');
 
       // Generate a unique report ID for easier tracking
       final reportId = _generateReportId();
-      debugPrint('Generated Report ID: $reportId');
+      _debugLog('Generated Report ID: $reportId');
       final incidentTypeValue = _incidentTypeForStorage();
       final vehiclesPayload = _isVehicularIncident()
           ? _buildVehiclesPayload()
@@ -442,8 +610,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         throw Exception('Contact number is required to submit a report.');
       }
       if (userId != sanitizedContactNumber) {
-        debugPrint(
-          '❌ Contact number mismatch: profile=$userId, form=$sanitizedContactNumber',
+        _debugLog(
+          '[ERROR] Contact number mismatch: profile=$userId, form=$sanitizedContactNumber',
         );
 
         FirebaseAnalytics.instance.logEvent(
@@ -510,108 +678,60 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           })
           .timeout(const Duration(seconds: 15));
 
-      debugPrint('Report saved with ID: ${docRef.id}');
+      _debugLog('Report saved with ID: ${docRef.id}');
 
       if (!mounted) return;
 
-      // Show success modal
-      await showDialog(
+      await _showReportThemedDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: Row(
-            children: [
-              const Icon(Icons.check_circle, color: Colors.green, size: 32),
-              const SizedBox(width: 12),
-              Text(
-                'Success!',
-                style: const TextStyle(
-                  fontFamily: 'Roboto',
-                  fontWeight: FontWeight.w900,
-                  fontSize: 20,
-                ),
-              ),
-            ],
-          ),
-          content: Text(
+        title: 'Success',
+        message:
             'Your ${widget.incidentType} report has been submitted successfully.',
-            style: const TextStyle(
-              fontFamily: 'RobotoCondensed',
-              fontWeight: FontWeight.w400,
-              fontSize: 14,
-            ),
-          ),
-          actions: [
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop(); // Close dialog
-                final reportData = {
-                  'name': _fullName ?? 'Unknown',
-                  'contactNumber': _contactNumber ?? 'Unknown',
-                  'incidentType': incidentTypeValue,
-                  'details': _informationController.text.trim(),
-                  if (_isVehicularIncident()) ...{
-                    'vehiclePlateNumber': firstVehicle?['plateNumber'],
-                    'vehicleBodyType': firstVehicle?['bodyType'],
-                    'vehicleColor': firstVehicle?['color'],
-                    'vehicleCount': vehiclesPayload.length,
-                    'vehicles': vehiclesPayload,
-                  },
-                  if (_isFireIncident()) 'fireType': _fireType,
-                  'barangay': _barangayController.text.trim(),
-                  'injuredCount': _injuredCount,
-                  'needsAmbulance': _isFloodIncident()
-                      ? false
-                      : _needsAmbulance,
-                  if (_isOthersIncident()) ...{
-                    'otherIncidentType': _otherIncidentController.text.trim(),
-                  },
-                  'mediaUrl': mediaUrl,
-                  'mediaType': mediaType,
-                  'reportedAt': now,
-                  'locationSource':
-                      _locationMode == LocationSelectionMode.current
-                      ? 'current'
-                      : 'pin',
-                  if (_locationMode == LocationSelectionMode.current) ...{
-                    'reporterLocationLat': location.latitude,
-                    'reporterLocationLng': location.longitude,
-                  },
-                  'incidentLocationLat': location.latitude,
-                  'incidentLocationLng': location.longitude,
-                  'locationLat': location.latitude,
-                  'locationLng': location.longitude,
-                };
-                UserSession.addActiveReport(
-                  reportId: docRef.id,
-                  reportData: reportData,
-                );
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(
-                    builder: (context) => const MainPage(initialIndex: 2),
-                  ),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFAC1B22),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              child: const Text(
-                'OK',
-                style: TextStyle(
-                  fontFamily: 'RobotoCondensed',
-                  fontWeight: FontWeight.w400,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ],
-        ),
+        icon: Icons.check_circle_rounded,
+        iconColor: const Color(0xFF00A458),
+        primaryLabel: 'OK',
+        onPrimaryPressed: () {
+          final reportData = {
+            'name': _fullName ?? 'Unknown',
+            'contactNumber': _contactNumber ?? 'Unknown',
+            'incidentType': incidentTypeValue,
+            'details': _informationController.text.trim(),
+            if (_isVehicularIncident()) ...{
+              'vehiclePlateNumber': firstVehicle?['plateNumber'],
+              'vehicleBodyType': firstVehicle?['bodyType'],
+              'vehicleColor': firstVehicle?['color'],
+              'vehicleCount': vehiclesPayload.length,
+              'vehicles': vehiclesPayload,
+            },
+            if (_isFireIncident()) 'fireType': _fireType,
+            'barangay': _barangayController.text.trim(),
+            'injuredCount': _injuredCount,
+            'needsAmbulance': _isFloodIncident() ? false : _needsAmbulance,
+            if (_isOthersIncident()) ...{
+              'otherIncidentType': _otherIncidentController.text.trim(),
+            },
+            'mediaUrl': mediaUrl,
+            'mediaType': mediaType,
+            'reportedAt': now,
+            'locationSource': _locationMode == LocationSelectionMode.current
+                ? 'current'
+                : 'pin',
+            if (_locationMode == LocationSelectionMode.current) ...{
+              'reporterLocationLat': location.latitude,
+              'reporterLocationLng': location.longitude,
+            },
+            'incidentLocationLat': location.latitude,
+            'incidentLocationLng': location.longitude,
+            'locationLat': location.latitude,
+            'locationLng': location.longitude,
+          };
+          UserSession.addActiveReport(
+            reportId: docRef.id,
+            reportData: reportData,
+          );
+          MainShellNavigationService.popToRootAndOpenTab(context, 2);
+        },
       );
     } on TimeoutException {
       if (!mounted) return;
@@ -622,12 +742,13 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       );
     } on FirebaseException catch (e) {
       if (!mounted) return;
-      AppSnackBar.show(
-        context,
-        'Firebase Storage upload failed (${e.code}). '
-        'Please check your connection and Storage rules/quota.',
-        type: AppSnackBarType.error,
-      );
+      final code = e.code.toLowerCase().trim();
+      final message = code == 'unauthorized' || code == 'unauthenticated'
+          ? 'Upload blocked by Firebase Storage permissions. '
+                'Please log in again and verify Storage rules are deployed.'
+          : 'Firebase Storage upload failed (${e.code}). '
+                'Please check your connection and Storage rules/quota.';
+      AppSnackBar.show(context, message, type: AppSnackBarType.error);
     } catch (e) {
       if (!mounted) return;
       AppSnackBar.show(
@@ -640,6 +761,20 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     }
   }
 
+  Future<void> _ensureStorageAuthSession() async {
+    try {
+      final auth = FirebaseAuth.instance;
+      if (auth.currentUser != null) {
+        return;
+      }
+      await auth.signInAnonymously();
+      _debugLog('Firebase anonymous auth restored for report upload.');
+    } catch (e) {
+      _debugLog('Failed to establish Firebase auth session for upload: $e');
+      rethrow;
+    }
+  }
+
   Future<bool> _hasReachedReportLimit() async {
     if (UserSession.activeReportCount >= 2) {
       return true;
@@ -649,7 +784,9 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         _contactNumber ??
         (UserSession.currentUserData?['contactNumber'] as String?);
     final fallbackName =
-        _fullName ?? (UserSession.currentUserData?['fullName'] as String?);
+        _fullName ??
+        (UserSession.currentUserData?['fullName'] as String?) ??
+        (UserSession.currentUserData?['displayName'] as String?);
 
     if (contactNumber == null && fallbackName == null) {
       return false;
@@ -668,8 +805,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         query = query.where('name', isEqualTo: fallbackName);
       } else {
         // No valid identifier - return no results
-        debugPrint(
-          '⚠️ Warning: No valid identifier (contactNumber or name) for duplicate check',
+        _debugLog(
+          '[WARN] No valid identifier (contactNumber or name) for duplicate check',
         );
         // Use document ID query with impossible value (empty string is always invalid)
         query = query.where(FieldPath.documentId, isEqualTo: '');
@@ -691,71 +828,19 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
       return activeCount >= 2;
     } catch (e) {
-      debugPrint('⚠️ Could not check report limit: $e');
+      _debugLog('[WARN] Could not check report limit: $e');
       return UserSession.activeReportCount >= 2;
     }
   }
 
   Future<void> _showReportLimitDialog() async {
-    await showDialog(
+    await _showReportThemedDialog(
       context: context,
-      barrierDismissible: true,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: const Color(0xFFAC1B22),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.error_outline, color: Colors.white),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Active Report Limit',
-                style: TextStyle(
-                  fontFamily: 'Roboto',
-                  fontWeight: FontWeight.w900,
-                  fontSize: 18,
-                  color: Color(0xFF111827),
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: const Text(
+      title: 'Active Report Limit',
+      message:
           'You already have 2 active reports. Please wait for them to be resolved before submitting a new one.',
-          style: TextStyle(
-            fontFamily: 'RobotoCondensed',
-            fontWeight: FontWeight.w400,
-            fontSize: 14,
-            color: Color(0xFF4B5563),
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFAC1B22),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text(
-              'OK',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
-        ],
-      ),
+      icon: Icons.error_outline_rounded,
+      primaryLabel: 'OK',
     );
   }
 
@@ -802,47 +887,13 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   void _showLocationError(String message) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Location Issue',
-          style: TextStyle(
-            fontFamily: 'Roboto',
-            fontWeight: FontWeight.w900,
-            fontSize: 18,
-            color: Color(0xFF111827),
-          ),
-        ),
-        content: Text(
-          message,
-          style: const TextStyle(
-            fontFamily: 'RobotoCondensed',
-            fontWeight: FontWeight.w400,
-            fontSize: 14,
-            color: Color(0xFF4B5563),
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFAC1B22),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text(
-              'OK',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
-        ],
+    unawaited(
+      _showReportThemedDialog(
+        context: context,
+        title: 'Location Issue',
+        message: message,
+        icon: Icons.location_on_rounded,
+        primaryLabel: 'OK',
       ),
     );
   }
@@ -1343,10 +1394,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           setState(() {
             _navIndex = index;
           });
-          // Navigate back to MainPage with selected tab
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => MainPage(initialIndex: index)),
-          );
+          MainShellNavigationService.popToRootAndOpenTab(context, index);
         },
       ),
     );
@@ -2059,32 +2107,68 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
               );
             },
         optionsViewBuilder: (context, onSelected, options) {
+          final filteredOptions = options.toList(growable: false);
           return Align(
             alignment: Alignment.topLeft,
             child: Material(
-              elevation: 4,
-              borderRadius: BorderRadius.circular(8),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 200),
-                child: ListView.separated(
-                  padding: EdgeInsets.zero,
-                  shrinkWrap: true,
-                  itemBuilder: (context, index) {
-                    final option = options.elementAt(index);
-                    return ListTile(
-                      dense: true,
-                      title: Text(
-                        option,
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontSize: 12,
+              color: Colors.transparent,
+              surfaceTintColor: Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              shadowColor: Colors.black.withValues(alpha: 0.18),
+              child: Container(
+                margin: const EdgeInsets.only(top: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.appOffWhite,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppTheme.appRed.withValues(alpha: 0.28),
+                    width: 1.2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.14),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  child: ListView.separated(
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    itemBuilder: (context, index) {
+                      final option = filteredOptions[index];
+                      return InkWell(
+                        splashColor: AppTheme.appRed.withValues(alpha: 0.08),
+                        highlightColor: AppTheme.appRed.withValues(alpha: 0.05),
+                        hoverColor: AppTheme.appRed.withValues(alpha: 0.05),
+                        onTap: () => onSelected(option),
+                        child: Container(
+                          color: AppTheme.appOffWhite,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          child: Text(
+                            option,
+                            style: const TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                              color: AppTheme.appBlack,
+                            ),
+                          ),
                         ),
-                      ),
-                      onTap: () => onSelected(option),
-                    );
-                  },
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemCount: options.length,
+                      );
+                    },
+                    separatorBuilder: (_, index) => Divider(
+                      height: 1,
+                      color: AppTheme.appBlack.withValues(alpha: 0.1),
+                    ),
+                    itemCount: filteredOptions.length,
+                  ),
                 ),
               ),
             ),
@@ -2136,6 +2220,7 @@ class _PinPickerPage extends StatefulWidget {
 class _PinPickerPageState extends State<_PinPickerPage> {
   static const LatLng _center = LatLng(15.1450, 120.5887);
   static const double _radiusMeters = 6000;
+  static const double _reporterRadiusMeters = 500;
 
   final MapController _mapController = MapController();
   LatLng? _selected;
@@ -2189,76 +2274,24 @@ class _PinPickerPageState extends State<_PinPickerPage> {
           }
         },
         onError: (e) {
-          debugPrint('Location stream error: $e');
+          _debugLog('Location stream error: $e');
         },
       );
     } catch (e) {
-      debugPrint('Error starting location tracking: $e');
+      _debugLog('Error starting location tracking: $e');
     }
   }
 
   void _showOutsideAreaError() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: const Color(0xFFAC1B22),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.warning_amber_rounded,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Outside Coverage Area',
-                style: TextStyle(
-                  fontFamily: 'Roboto',
-                  fontWeight: FontWeight.w900,
-                  fontSize: 18,
-                  color: Color(0xFF111827),
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: const Text(
-          'Your current location is outside the Angeles City area. You can still pin a location within the coverage area to submit your report.',
-          style: TextStyle(
-            fontFamily: 'RobotoCondensed',
-            fontWeight: FontWeight.w400,
-            fontSize: 14,
-            color: Color(0xFF4B5563),
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFAC1B22),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text(
-              'I Understand',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
-        ],
+    unawaited(
+      _showReportThemedDialog(
+        context: context,
+        barrierDismissible: false,
+        title: 'Outside Coverage Area',
+        message:
+            'Your current location is outside the Angeles City area. You can still pin a location within the coverage area to submit your report.',
+        icon: Icons.warning_amber_rounded,
+        primaryLabel: 'I Understand',
       ),
     );
   }
@@ -2266,6 +2299,13 @@ class _PinPickerPageState extends State<_PinPickerPage> {
   bool _isWithinAngeles(LatLng point) {
     final distance = const Distance().as(LengthUnit.Meter, _center, point);
     return distance <= _radiusMeters;
+  }
+
+  double? _distanceFromReporterMeters() {
+    if (_selected == null || _currentLocation == null) {
+      return null;
+    }
+    return const Distance().as(LengthUnit.Meter, _currentLocation!, _selected!);
   }
 
   void _confirmSelection() {
@@ -2310,120 +2350,58 @@ class _PinPickerPageState extends State<_PinPickerPage> {
       return;
     }
 
+    final reporterDistanceMeters = _distanceFromReporterMeters();
+    if (reporterDistanceMeters == null ||
+        reporterDistanceMeters > _reporterRadiusMeters) {
+      FirebaseAnalytics.instance.logEvent(
+        name: 'report_pin_outside_reporter_radius',
+        parameters: {
+          'distance_meters': reporterDistanceMeters?.round() ?? -1,
+          'max_distance_meters': _reporterRadiusMeters.toInt(),
+          'incident_lat': _selected!.latitude,
+          'incident_lng': _selected!.longitude,
+          'user_lat': _currentLocation!.latitude,
+          'user_lng': _currentLocation!.longitude,
+        },
+      );
+      _showPinPickerError(
+        'Pinned location must be within 500 meters of your current location. '
+        'Move closer to the incident or pin inside the blue radius.',
+      );
+      return;
+    }
+
     Navigator.pop(context, _selected);
   }
 
   // RESTORED: Show error when user is outside Angeles City
   void _showUserLocationError() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: const Color(0xFFAC1B22),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.location_off, color: Colors.white),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Location Issue',
-                style: TextStyle(
-                  fontFamily: 'Roboto',
-                  fontWeight: FontWeight.w900,
-                  fontSize: 18,
-                  color: Color(0xFF111827),
-                ),
-              ),
-            ),
-          ],
-        ),
-        content: const Text(
-          'You cannot submit a report because your current location appears to be outside Angeles City. '
-          'To submit a report, you must be physically present within the Angeles City coverage area.\n\n'
-          'If you believe this is a GPS error, please:\n'
-          '• Ensure location services are enabled\n'
-          '• Move to an open area for better GPS signal\n'
-          '• Wait a moment for GPS to stabilize',
-          style: TextStyle(
-            fontFamily: 'RobotoCondensed',
-            fontWeight: FontWeight.w400,
-            fontSize: 14,
-            color: Color(0xFF4B5563),
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFAC1B22),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text(
-              'OK',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
-        ],
+    unawaited(
+      _showReportThemedDialog(
+        context: context,
+        barrierDismissible: false,
+        title: 'Location Issue',
+        message:
+            'You cannot submit a report because your current location appears to be outside Angeles City. '
+            'To submit a report, you must be physically present within the Angeles City coverage area.\n\n'
+            'If you believe this is a GPS error, please:\n'
+            '- Ensure location services are enabled\n'
+            '- Move to an open area for better GPS signal\n'
+            '- Wait a moment for GPS to stabilize',
+        icon: Icons.location_off_rounded,
+        primaryLabel: 'OK',
       ),
     );
   }
 
   void _showPinPickerError(String message) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Location Issue',
-          style: TextStyle(
-            fontFamily: 'Roboto',
-            fontWeight: FontWeight.w900,
-            fontSize: 18,
-            color: Color(0xFF111827),
-          ),
-        ),
-        content: Text(
-          message,
-          style: const TextStyle(
-            fontFamily: 'RobotoCondensed',
-            fontWeight: FontWeight.w400,
-            fontSize: 14,
-            color: Color(0xFF4B5563),
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFAC1B22),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text(
-              'OK',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
-        ],
+    unawaited(
+      _showReportThemedDialog(
+        context: context,
+        title: 'Location Issue',
+        message: message,
+        icon: Icons.location_on_rounded,
+        primaryLabel: 'OK',
       ),
     );
   }
@@ -2464,6 +2442,21 @@ class _PinPickerPageState extends State<_PinPickerPage> {
                   ),
                 ],
               ),
+              if (_currentLocation != null)
+                CircleLayer(
+                  circles: [
+                    CircleMarker(
+                      point: _currentLocation!,
+                      radius: _reporterRadiusMeters,
+                      useRadiusInMeter: true,
+                      color: const Color(0xFF1565C0).withValues(alpha: 0.12),
+                      borderColor: const Color(
+                        0xFF1565C0,
+                      ).withValues(alpha: 0.65),
+                      borderStrokeWidth: 2.0,
+                    ),
+                  ],
+                ),
               // Current location marker (blue)
               if (_currentLocation != null)
                 MarkerLayer(
@@ -2566,6 +2559,66 @@ class _PinPickerPageState extends State<_PinPickerPage> {
                       ),
                     ],
                   ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 72,
+            left: 16,
+            right: 16,
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.95),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.16),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.radio_button_checked,
+                      color: Color(0xFF1565C0),
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _currentLocation == null
+                            ? 'Locating you... Pin selection is limited to a 500m radius from your location.'
+                            : 'Blue radius = your 500m allowed pin area. Pin inside this circle.',
+                        style: const TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF111827),
+                          height: 1.25,
+                        ),
+                      ),
+                    ),
+                    if (_distanceFromReporterMeters() != null) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        '${_distanceFromReporterMeters()!.round()}m',
+                        style: const TextStyle(
+                          fontFamily: 'Roboto',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF1565C0),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),

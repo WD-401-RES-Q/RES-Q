@@ -1,8 +1,28 @@
 <section class="admin-page map-page">
   <div class="map-header">
-    <div>
-      <h1>Response Tracker</h1>
-      <p>Live auto-sync for new reports and responder login/logout activity; refresh is optional.</p>
+    <div class="map-header-main">
+      <div class="map-title-block">
+        <h1>Response Tracker</h1>
+        <p>Live auto-sync for new reports and responder availability updates.</p>
+      </div>
+      <div class="map-legend" aria-label="Map legend">
+        <div class="legend-item">
+          <span class="legend-dot report"></span>
+          Report location
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot reporter"></span>
+          Reporter location
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot responder"></span>
+          Responder location
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot fence"></span>
+          Angeles geofence
+        </div>
+      </div>
     </div>
     <div class="live-indicator" [class.offline]="!isListening">
       <span class="dot"></span>
@@ -18,14 +38,16 @@
           <button
             class="map-tool-btn optional refresh"
             type="button"
-            title="Optional hard refresh"
-            aria-label="Optional hard refresh"
+            title="Backup hard refresh"
+            aria-label="Backup hard refresh"
             (click)="hardRefresh()"
           >
             <span class="tool-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none">
                 <path d="M20 4V10H14" />
-                <path d="M20 10C18.6 6.7 15.5 4.5 12 4.5C7.3 4.5 3.5 8.3 3.5 13C3.5 17.7 7.3 21.5 12 21.5C15.8 21.5 19.1 19 20.2 15.5" />
+                <path
+                  d="M20 10C18.6 6.7 15.5 4.5 12 4.5C7.3 4.5 3.5 8.3 3.5 13C3.5 17.7 7.3 21.5 12 21.5C15.8 21.5 19.1 19 20.2 15.5"
+                />
               </svg>
             </span>
           </button>
@@ -45,24 +67,6 @@
               </svg>
             </span>
           </button>
-        </div>
-        <div class="map-legend">
-          <div class="legend-item">
-            <span class="legend-dot report"></span>
-            Report location
-          </div>
-          <div class="legend-item">
-            <span class="legend-dot reporter"></span>
-            Reporter location
-          </div>
-          <div class="legend-item">
-            <span class="legend-dot responder"></span>
-            Responder location
-          </div>
-          <div class="legend-item">
-            <span class="legend-dot fence"></span>
-            Angeles geofence
-          </div>
         </div>
         <div *ngIf="mapLoadError" class="map-error">{{ mapLoadError }}</div>
       </div>

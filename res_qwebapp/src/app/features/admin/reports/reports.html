@@ -173,7 +173,12 @@
 
       <!-- DETAILS -->
       <div class="details">
-        <h2 class="report-title">{{ report.title }}</h2>
+        <div class="report-title-row">
+          <h2 class="report-title">{{ report.title }}</h2>
+          <button class="btn btn-delete-inline" (click)="deleteReport(report)">
+            Delete Report
+          </button>
+        </div>
 
         <div class="meta-group">
           <span class="meta-label">Category:</span>
@@ -386,6 +391,30 @@
       <div class="modal-actions">
         <button type="button" class="btn-modal btn-yes" (click)="confirmRevert()">YES</button>
         <button type="button" class="btn-modal btn-no" (click)="cancelRevert()">NO</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DELETE MODAL -->
+  <div class="modal-overlay" *ngIf="showDeleteModal" (click)="cancelDeleteReport()">
+    <div class="modal-content-confirm" (click)="$event.stopPropagation()">
+      <h3 class="modal-title">DELETE THIS REPORT?</h3>
+      <p class="modal-subtitle">This permanently removes the report and its related data.</p>
+      <div class="modal-actions">
+        <button
+          type="button"
+          class="btn-modal btn-yes"
+          [disabled]="isDeletingReport"
+          (click)="confirmDeleteReport()">
+          {{ isDeletingReport ? 'DELETING...' : 'DELETE' }}
+        </button>
+        <button
+          type="button"
+          class="btn-modal btn-no"
+          [disabled]="isDeletingReport"
+          (click)="cancelDeleteReport()">
+          CANCEL
+        </button>
       </div>
     </div>
   </div>

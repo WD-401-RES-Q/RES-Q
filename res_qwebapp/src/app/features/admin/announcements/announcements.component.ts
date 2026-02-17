@@ -29,7 +29,10 @@ export class AnnouncementsComponent implements OnInit {
   isPublishing = false;
   posts: AdminAnnouncement[] = [];
   showSuccessModal = false;
+  showDeleteModal = false;
+  isDeletingAnnouncement = false;
   expandedImageUrl = '';
+  announcementToDelete: AdminAnnouncement | null = null;
 
   selectedImageFile: File | null = null;
   selectedImagePreview = '';
@@ -42,7 +45,7 @@ export class AnnouncementsComponent implements OnInit {
   ) {}
 
   ngOnInit(): void {
-    this.ensureAnnouncementsCollection();
+    void this.initializeAnnouncements();
   }
 
   get canPublish(): boolean {
@@ -74,31 +77,30 @@ export class AnnouncementsComponent implements OnInit {
       return;
     }
 
-    const newPost: AdminAnnouncement = {
-      id: Math.random().toString(36).slice(2),
-      title: this.title.trim(),
-      content: this.content.trim(),
-      priority: this.priority,
-      createdAt,
-      imageUrl: finalImageUrl || undefined,
-    };
-    this.updateUi(() => {
-      this.posts.unshift(newPost);
-    });
-
     try {
       // Persist to Firestore for mobile notifications
-      await this.withTimeout(
+      const announcementId = await this.withTimeout(
         this.firestoreService.addDocument('announcements', {
-          title: newPost.title,
-          content: newPost.content,
-          priority: newPost.priority,
-          imageUrl: newPost.imageUrl ?? '',
+          title: this.title.trim(),
+          content: this.content.trim(),
+          priority: this.priority,
+          imageUrl: finalImageUrl || '',
           isPlaceholder: false,
         }),
         8000,
         'Publish announcement',
       );
+
+      this.updateUi(() => {
+        this.posts.unshift({
+          id: announcementId,
+          title: this.title.trim(),
+          content: this.content.trim(),
+          priority: this.priority,
+          createdAt,
+          imageUrl: finalImageUrl || undefined,
+        });
+      });
 
       // Reset form only after a successful publish
       this.updateUi(() => {
@@ -110,6 +112,7 @@ export class AnnouncementsComponent implements OnInit {
         this.selectedImagePreview = '';
         this.showSuccessModal = true;
       });
+      await this.loadAnnouncements();
     } catch (error) {
       console.error('Failed to publish announcement:', error);
     } finally {
@@ -160,6 +163,79 @@ export class AnnouncementsComponent implements OnInit {
     this.showSuccessModal = false;
   }
 
+  requestDeleteAnnouncement(post: AdminAnnouncement): void {
+    if (this.isDeletingAnnouncement) {
+      return;
+    }
+    this.announcementToDelete = post;
+    this.showDeleteModal = true;
+    this.cdr.markForCheck();
+  }
+
+  cancelDeleteAnnouncement(): void {
+    if (this.isDeletingAnnouncement) {
+      return;
+    }
+    this.showDeleteModal = false;
+    this.announcementToDelete = null;
+    this.cdr.markForCheck();
+  }
+
+  async confirmDeleteAnnouncement(): Promise<void> {
+    if (this.isDeletingAnnouncement) {
+      return;
+    }
+
+    const target = this.announcementToDelete;
+    if (!target?.id) {
+      console.error('Missing announcement id, cannot delete');
+      this.cancelDeleteAnnouncement();
+      return;
+    }
+
+    const adminId = this.getCurrentAdminId();
+    if (!adminId) {
+      console.error('Missing admin id, cannot delete announcement');
+      this.cancelDeleteAnnouncement();
+      return;
+    }
+
+    this.isDeletingAnnouncement = true;
+    this.cdr.markForCheck();
+
+    try {
+      await this.withTimeout(
+        this.firestoreService.deleteAnnouncementAsAdmin(target.id, adminId),
+        12000,
+        'Delete announcement',
+      );
+      this.updateUi(() => {
+        this.posts = this.posts.filter((post) => post.id !== target.id);
+      });
+    } catch (error) {
+      console.error('Failed to delete announcement:', error);
+    } finally {
+      this.isDeletingAnnouncement = false;
+      this.showDeleteModal = false;
+      this.announcementToDelete = null;
+      this.cdr.markForCheck();
+    }
+  }
+
+  private getCurrentAdminId(): string {
+    try {
+      const raw = localStorage.getItem('currentAdmin');
+      if (!raw) {
+        return '';
+      }
+      const parsed = JSON.parse(raw) as { id?: unknown };
+      return typeof parsed.id === 'string' ? parsed.id.trim() : '';
+    } catch (error) {
+      console.error('Failed to read current admin id:', error);
+      return '';
+    }
+  }
+
   private async uploadAnnouncementImage(file: File): Promise<string> {
     const fileExt = file.name.split('.').pop() || 'jpg';
     const fileRef = ref(
@@ -192,6 +268,70 @@ export class AnnouncementsComponent implements OnInit {
     } catch (error) {
       console.error('Failed to ensure announcements collection:', error);
     }
+  }
+
+  private async initializeAnnouncements(): Promise<void> {
+    await this.ensureAnnouncementsCollection();
+    await this.loadAnnouncements();
+  }
+
+  private async loadAnnouncements(): Promise<void> {
+    try {
+      const docs = await this.withTimeout(
+        this.firestoreService.getCollection('announcements'),
+        8000,
+        'Load announcements list',
+      );
+
+      const announcements = docs
+        .filter((doc) => doc.isPlaceholder !== true)
+        .map((doc) => this.mapAnnouncement(doc))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+      this.updateUi(() => {
+        this.posts = announcements;
+      });
+    } catch (error) {
+      console.error('Failed to load announcements list:', error);
+    }
+  }
+
+  private mapAnnouncement(doc: any): AdminAnnouncement {
+    const createdAtRaw = doc.createdAt;
+    let createdAt = new Date();
+    if (createdAtRaw instanceof Date) {
+      createdAt = createdAtRaw;
+    } else if (
+      createdAtRaw &&
+      typeof createdAtRaw.toDate === 'function'
+    ) {
+      createdAt = createdAtRaw.toDate();
+    } else if (typeof createdAtRaw === 'string' || typeof createdAtRaw === 'number') {
+      const parsed = new Date(createdAtRaw);
+      if (!isNaN(parsed.getTime())) {
+        createdAt = parsed;
+      }
+    }
+
+    const priorityRaw = (doc.priority ?? 'Normal').toString();
+    const priority: AdminAnnouncement['priority'] =
+      priorityRaw === 'Critical' || priorityRaw === 'Important'
+        ? priorityRaw
+        : 'Normal';
+
+    const imageUrl =
+      typeof doc.imageUrl === 'string' && doc.imageUrl.trim().length > 0
+        ? doc.imageUrl.trim()
+        : undefined;
+
+    return {
+      id: (doc.id ?? '').toString(),
+      title: (doc.title ?? '').toString(),
+      content: (doc.content ?? '').toString(),
+      priority,
+      createdAt,
+      imageUrl,
+    };
   }
 
   private withTimeout<T>(

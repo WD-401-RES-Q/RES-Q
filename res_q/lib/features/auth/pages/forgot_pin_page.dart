@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:local_auth/local_auth.dart';
@@ -5,8 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/constants/app_dimensions.dart';
 import '../../../common/theme/app_text_styles.dart';
 import '../../../common/theme/app_theme.dart';
+import '../../../common/services/phone_lookup_service.dart';
 import '../../../common/services/registration_prefs.dart';
-import '../../../common/utils/security_hash.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
@@ -23,6 +25,7 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
   static const appBlue = Color(0xFFAC1B22);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
+  static const String _phoneLookupScopeKey = 'forgot-pin';
 
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _phoneCtl = TextEditingController();
@@ -34,9 +37,18 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final LocalAuthentication _localAuth = LocalAuthentication();
+  final PhoneLookupService _phoneLookupService = PhoneLookupService.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _phoneCtl.addListener(_onPhoneChanged);
+  }
 
   @override
   void dispose() {
+    _phoneLookupService.cancelDebounce(_phoneLookupScopeKey);
+    _phoneCtl.removeListener(_onPhoneChanged);
     _phoneCtl.dispose();
     _pinCtl.dispose();
     super.dispose();
@@ -53,26 +65,11 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
     setState(() => _loading = true);
 
     try {
-      final phoneHash = SecurityHash.sha256Hex(phone);
-
-      // Check if phone exists in approved_users
-      var userQuery = await _firestore
-          .collection('approved_users')
-          .where('contactNumber_hash', isEqualTo: phoneHash)
-          .limit(1)
-          .get();
-
-      if (userQuery.docs.isEmpty) {
-        userQuery = await _firestore
-            .collection('approved_users')
-            .where('contactNumber', isEqualTo: phone)
-            .limit(1)
-            .get();
-      }
+      final userDoc = await _phoneLookupService.getFirstApprovedUserDoc(phone);
 
       if (!mounted) return;
 
-      if (userQuery.docs.isEmpty) {
+      if (userDoc == null) {
         setState(() => _loading = false);
         AppSnackBar.show(
           context,
@@ -82,9 +79,8 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
         return;
       }
 
-      final doc = userQuery.docs.first;
-      _userId = doc.id;
-      _userData = {...doc.data(), 'contactNumber': phone};
+      _userId = userDoc.id;
+      _userData = {...userDoc.data(), 'contactNumber': phone};
 
       // Allow PIN reset - no longer blocking users who have existing PIN
       setState(() {
@@ -103,6 +99,24 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
       setState(() => _loading = false);
       AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
     }
+  }
+
+  void _onPhoneChanged() {
+    final phoneDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
+    _phoneLookupService.cancelDebounce(_phoneLookupScopeKey);
+    if (phoneDigits.length != 10) return;
+
+    unawaited(
+      _phoneLookupService
+          .debouncedLookupAccountStatus(
+            scopeKey: _phoneLookupScopeKey,
+            phone: '+63$phoneDigits',
+          )
+          .catchError((error) {
+            debugPrint('Forgot PIN phone lookup failed: $error');
+            return null;
+          }),
+    );
   }
 
   Future<bool> _checkBiometricsAvailable() async {
