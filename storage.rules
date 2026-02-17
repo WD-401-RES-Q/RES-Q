@@ -16,6 +16,12 @@ service firebase.storage {
       allow write: if true;
     }
 
+    // Profile photos uploaded from the mobile profile page.
+    match /profile_photos/{allPaths=**} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     // Deny everything else by default
     match /{allPaths=**} {
       allow read, write: if false;

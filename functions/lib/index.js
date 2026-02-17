@@ -442,6 +442,128 @@ function buildResponderTokenDocCandidates(data) {
     pushTokenCandidateVariants(candidates, seen, data.responderPhone);
     return candidates;
 }
+function buildPhoneLookupVariants(rawValue) {
+    const variants = [];
+    const seen = new Set();
+    const pushVariant = (value) => {
+        const trimmed = value.trim();
+        if (trimmed.length === 0 || seen.has(trimmed)) {
+            return;
+        }
+        seen.add(trimmed);
+        variants.push(trimmed);
+    };
+    const raw = readTrimmedString(rawValue);
+    if (raw.length === 0) {
+        return variants;
+    }
+    pushVariant(raw);
+    const digits = normalizePhoneLikeValue(raw);
+    if (digits.length === 0) {
+        return variants;
+    }
+    pushVariant(digits);
+    if (digits.startsWith('63')) {
+        pushVariant(`+${digits}`);
+        const local = digits.slice(2);
+        if (local.length === 10) {
+            pushVariant(local);
+            pushVariant(`0${local}`);
+        }
+        return variants;
+    }
+    if (digits.length === 11 && digits.startsWith('0')) {
+        const local = digits.slice(1);
+        if (local.length === 10) {
+            pushVariant(local);
+            pushVariant(`63${local}`);
+            pushVariant(`+63${local}`);
+        }
+        return variants;
+    }
+    if (digits.length === 10 && digits.startsWith('9')) {
+        pushVariant(`0${digits}`);
+        pushVariant(`63${digits}`);
+        pushVariant(`+63${digits}`);
+    }
+    return variants;
+}
+function appendResponderTokenCandidatesFromProfileData(candidates, seen, profileId, profileData) {
+    pushTokenCandidateVariants(candidates, seen, profileId);
+    pushTokenCandidateVariants(candidates, seen, profileData.id);
+    pushTokenCandidateVariants(candidates, seen, profileData.userId);
+    pushTokenCandidateVariants(candidates, seen, profileData.uid);
+    pushTokenCandidateVariants(candidates, seen, profileData.contactNumber);
+    pushTokenCandidateVariants(candidates, seen, profileData.phoneNumber);
+    pushTokenCandidateVariants(candidates, seen, profileData.responderContactNumber);
+    pushTokenCandidateVariants(candidates, seen, profileData.responderPhone);
+}
+async function resolveResponderTokenRecord(reportId, data) {
+    var _a, _b, _c, _d;
+    const candidates = buildResponderTokenDocCandidates(data);
+    const seen = new Set(candidates);
+    let tokenRecord = await getTokenRecordForCandidates(candidates);
+    if (tokenRecord) {
+        return tokenRecord;
+    }
+    const responderId = readTrimmedString(data.responderId);
+    if (responderId.length > 0) {
+        try {
+            const semiAdminDoc = await db.collection('semi_admins').doc(responderId).get();
+            if (semiAdminDoc.exists) {
+                appendResponderTokenCandidatesFromProfileData(candidates, seen, semiAdminDoc.id, ((_a = semiAdminDoc.data()) !== null && _a !== void 0 ? _a : {}));
+            }
+            const approvedUserDoc = await db.collection('approved_users').doc(responderId).get();
+            if (approvedUserDoc.exists) {
+                appendResponderTokenCandidatesFromProfileData(candidates, seen, approvedUserDoc.id, ((_b = approvedUserDoc.data()) !== null && _b !== void 0 ? _b : {}));
+            }
+        }
+        catch (error) {
+            console.error(`Failed to load responder profile fallback docs for deployment push ${reportId}:`, error);
+        }
+    }
+    tokenRecord = await getTokenRecordForCandidates(candidates);
+    if (tokenRecord) {
+        return tokenRecord;
+    }
+    const responderPhoneSeeds = [
+        data.responderContactNumber,
+        data.responderPhone,
+    ];
+    for (const seed of responderPhoneSeeds) {
+        const phoneVariants = buildPhoneLookupVariants(seed);
+        for (const phoneVariant of phoneVariants) {
+            try {
+                const semiAdminContactMatch = await db
+                    .collection('semi_admins')
+                    .where('contactNumber', '==', phoneVariant)
+                    .limit(1)
+                    .get();
+                if (!semiAdminContactMatch.empty) {
+                    const match = semiAdminContactMatch.docs[0];
+                    appendResponderTokenCandidatesFromProfileData(candidates, seen, match.id, ((_c = match.data()) !== null && _c !== void 0 ? _c : {}));
+                }
+                const semiAdminPhoneMatch = await db
+                    .collection('semi_admins')
+                    .where('phoneNumber', '==', phoneVariant)
+                    .limit(1)
+                    .get();
+                if (!semiAdminPhoneMatch.empty) {
+                    const match = semiAdminPhoneMatch.docs[0];
+                    appendResponderTokenCandidatesFromProfileData(candidates, seen, match.id, ((_d = match.data()) !== null && _d !== void 0 ? _d : {}));
+                }
+            }
+            catch (error) {
+                console.error(`Failed responder phone lookup fallback for deployment push ${reportId}:`, error);
+            }
+        }
+    }
+    tokenRecord = await getTokenRecordForCandidates(candidates);
+    if (!tokenRecord) {
+        console.warn(`Skipping responder assignment push for ${reportId}: no FCM token found after checking ${candidates.length} candidates.`);
+    }
+    return tokenRecord;
+}
 async function getTokenRecordForCandidates(candidates) {
     var _a;
     for (const candidate of candidates) {
@@ -1346,14 +1468,8 @@ exports.sendPushOnResponderDeployment = functions
             });
         }
     }
-    const responderTokenDocCandidates = buildResponderTokenDocCandidates(afterData);
-    if (responderTokenDocCandidates.length === 0) {
-        console.warn(`Skipping responder assignment push for ${reportId}: no responder token candidates.`);
-        return null;
-    }
-    const responderTokenRecord = await getTokenRecordForCandidates(responderTokenDocCandidates);
+    const responderTokenRecord = await resolveResponderTokenRecord(reportId, afterData);
     if (!responderTokenRecord) {
-        console.warn(`Skipping responder assignment push for ${reportId}: no FCM token found.`);
         return null;
     }
     await sendUserTokenPushNotification(responderTokenRecord.docId, responderTokenRecord.fcmToken, buildResponderAssignmentTitle(afterData), buildResponderAssignmentBody(afterData), {

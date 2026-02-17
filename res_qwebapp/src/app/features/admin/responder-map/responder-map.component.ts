@@ -368,18 +368,46 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     window.location.href = `tel:${phone}`;
   }
 
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    timeoutMessage: string,
+  ): Promise<T> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race<T>([
+        promise,
+        new Promise<T>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(new Error(timeoutMessage));
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+
   async deploySelectedResponder(): Promise<void> {
     if (!this.canDeploySelection || this.isDeploying || !this.selectedReportId || !this.selectedResponder) {
       return;
     }
 
-    const selectedReport = this.pendingReports.find((entry) => entry.reportId === this.selectedReportId);
+    const selectedReportId = this.selectedReportId;
+    const selectedResponder = this.selectedResponder;
+    if (!selectedResponder) {
+      return;
+    }
+
+    const selectedReport = this.pendingReports.find((entry) => entry.reportId === selectedReportId);
     if (!selectedReport) {
       this.mapLoadError = 'Selected report is no longer pending deployment.';
       return;
     }
 
-    if (!this.selectedResponder.isAvailable) {
+    if (!selectedResponder.isAvailable) {
       this.mapLoadError = 'Selected responder is no longer available.';
       return;
     }
@@ -388,8 +416,8 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     this.mapLoadError = '';
     try {
       const payload: Record<string, unknown> = {
-        responderId: this.selectedResponder.id,
-        responderName: this.selectedResponder.fullName,
+        responderId: selectedResponder.id,
+        responderName: selectedResponder.fullName,
         responderStatus: 'RESPONDING',
         status: 'RESPONDING',
         deployedAt: serverTimestamp(),
@@ -399,23 +427,29 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
         updatedAt: serverTimestamp(),
       };
 
-      if (this.selectedResponder.contactNumber) {
-        payload['responderContactNumber'] = this.selectedResponder.contactNumber;
+      if (selectedResponder.contactNumber) {
+        payload['responderContactNumber'] = selectedResponder.contactNumber;
       }
 
-      await updateDoc(doc(db, 'reports', this.selectedReportId), payload);
-      await setDoc(
-        doc(db, 'semi_admins', this.selectedResponder.id),
-        {
-          isLoggedIn: true,
-          status: 'busy',
-          isAvailable: false,
-          lastSeenAt: serverTimestamp(),
-        },
-        { merge: true },
+      await this.withTimeout(
+        Promise.all([
+          updateDoc(doc(db, 'reports', selectedReportId), payload),
+          setDoc(
+            doc(db, 'semi_admins', selectedResponder.id),
+            {
+              isLoggedIn: true,
+              status: 'busy',
+              isAvailable: false,
+              lastSeenAt: serverTimestamp(),
+            },
+            { merge: true },
+          ),
+        ]),
+        12000,
+        'Deployment sync timed out. Check connection, then refresh.',
       );
-      this.selectedId = this.selectedReportId;
-      this.focusResponder(this.selectedReportId);
+      this.selectedId = selectedReportId;
+      this.focusResponder(selectedReportId);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error';
       this.mapLoadError = `Failed to deploy responder: ${message}`;
@@ -820,6 +854,16 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
   private syncDerivedState(): void {
     this.activeDeployments = this.reports.filter((track) => this.hasResponderAssignment(track));
     this.pendingReports = this.reports.filter((track) => !this.hasResponderAssignment(track));
+
+    // Prevent sticky "Deploying..." button if writes are already reflected
+    // via live snapshots but network ack arrives late.
+    if (
+      this.isDeploying &&
+      this.selectedReportId &&
+      !this.pendingReports.some((track) => track.reportId === this.selectedReportId)
+    ) {
+      this.isDeploying = false;
+    }
 
     this.activeDeployments.sort((a, b) => {
       const aTime = (a.respondingAt ?? a.deployedAt)?.getTime() ?? 0;

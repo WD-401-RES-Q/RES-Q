@@ -238,9 +238,17 @@
 
   .report-title-row {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
     gap: 10px;
+  }
+
+  .report-title-tools {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
   }
 
   .meta-group {
@@ -268,11 +276,86 @@
     line-height: 1.5;
   }
 
+  .report-form-details-box {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #f8fafc;
+    padding: 10px 12px;
+  }
+
+  .report-form-details-title {
+    font-size: 12px;
+    font-weight: 700;
+    font-family: 'Roboto', sans-serif;
+    color: #374151;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .report-form-details-scroll {
+    height: 220px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .report-form-details-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .report-form-details-scroll::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 999px;
+  }
+
+  .report-form-detail-row {
+    display: flex;
+    gap: 6px;
+    font-size: 14px;
+    line-height: 1.4;
+    margin-bottom: 6px;
+    align-items: flex-start;
+  }
+
+  .report-form-detail-row .meta-label {
+    min-width: 132px;
+    flex: 0 0 132px;
+  }
+
+  .report-form-detail-row .meta-value {
+    min-width: 0;
+    flex: 1 1 auto;
+    word-break: break-word;
+  }
+
+  .report-form-detail-row--description .meta-value {
+    white-space: normal;
+  }
+
+  .report-form-detail-row:last-child {
+    margin-bottom: 0;
+  }
+
   /* COUNTERS */
   .counters {
     display: flex;
     gap: 10px;
     margin: 0;
+  }
+
+  .counters--inline {
+    gap: 8px;
+  }
+
+  .counters--inline .counter {
+    padding: 6px 10px;
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  .counters--inline .counter svg {
+    width: 15px;
+    height: 15px;
   }
 
   .counter {
@@ -748,6 +831,11 @@
     .report-title-row {
       align-items: center;
       flex-wrap: wrap;
+    }
+
+    .report-title-tools {
+      width: 100%;
+      justify-content: flex-start;
     }
 
     .meta-group {
