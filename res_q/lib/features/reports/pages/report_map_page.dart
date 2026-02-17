@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
@@ -9,9 +8,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import '../../../common/services/frame_timing_service.dart';
+import '../../../common/services/route_weather_cache_service.dart';
 import '../../../common/theme/app_theme.dart';
 
 import '../../../common/services/location_service.dart';
@@ -68,11 +68,6 @@ class _ReportMapPageState extends State<ReportMapPage>
   final MapController _mapController = MapController();
   late final AnimationController _pinBounceController;
 
-  // Weather cache (shared across instances, 15 min TTL)
-  static _WeatherData? _cachedWeatherData;
-  static DateTime? _weatherCacheTime;
-  static Future<_WeatherData>? _weatherRequestInFlight;
-  static const Duration _weatherCacheDuration = Duration(minutes: 15);
   bool _showWeatherCard = false;
   bool _isWeatherLoading = false;
   String? _weatherError;
@@ -96,6 +91,8 @@ class _ReportMapPageState extends State<ReportMapPage>
   LatLng? _lastRouteDestination;
   double? _responderRouteDistanceKm;
   String? _responderRouteEta;
+  bool _isResponderRouteUpdateInFlight = false;
+  bool _hasPendingResponderRouteUpdate = false;
 
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
@@ -113,6 +110,7 @@ class _ReportMapPageState extends State<ReportMapPage>
   @override
   void initState() {
     super.initState();
+    FrameTimingService.instance.setCurrentScreen('ReportMapPage');
     WidgetsBinding.instance.addObserver(this);
     _pinBounceController = AnimationController(
       vsync: this,
@@ -191,36 +189,171 @@ class _ReportMapPageState extends State<ReportMapPage>
     }
   }
 
-  Future<void> _showLocationSharingModal() async {
-    final result = await showDialog<bool>(
+  Future<void> _showReportModal({
+    required String title,
+    required String message,
+    String primaryLabel = 'OK',
+    VoidCallback? onPrimaryPressed,
+    String? secondaryLabel,
+    VoidCallback? onSecondaryPressed,
+    IconData icon = Icons.info_outline_rounded,
+    Color iconColor = AppTheme.appRed,
+    bool barrierDismissible = true,
+  }) async {
+    await showDialog<void>(
       context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.location_on, color: AppColors.appRed, size: 28),
-            const SizedBox(width: 12),
-            Text('Share Location', style: AppText.subheading),
-          ],
-        ),
-        content: Text(
-          'Please share your location so emergency responders can find you quickly.',
-          style: AppText.body,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Skip'),
+      barrierDismissible: barrierDismissible,
+      barrierColor: Colors.black.withValues(alpha: 0.52),
+      builder: (dialogContext) => Dialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+        backgroundColor: Colors.transparent,
+        child: Container(
+          decoration: BoxDecoration(
+            color: AppTheme.appOffWhite,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: AppTheme.appOffYellow.withValues(alpha: 0.45),
+              width: 1.4,
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x4A000000),
+                blurRadius: 18,
+                offset: Offset(0, 8),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Share Location'),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: iconColor.withValues(alpha: 0.14),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: AppTheme.appOffYellow.withValues(alpha: 0.78),
+                          width: 1.8,
+                        ),
+                      ),
+                      child: Icon(icon, color: iconColor, size: 23),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          fontFamily: 'Roboto',
+                          fontWeight: FontWeight.w900,
+                          fontSize: 22,
+                          color: AppTheme.appBlack,
+                          height: 1.05,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  message,
+                  style: const TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontWeight: FontWeight.w400,
+                    fontSize: 16,
+                    color: AppTheme.appBlack,
+                    height: 1.22,
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    if (secondaryLabel != null) ...[
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () {
+                            Navigator.of(dialogContext).pop();
+                            onSecondaryPressed?.call();
+                          },
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppTheme.appRed,
+                            side: BorderSide(
+                              color: AppTheme.appRed.withValues(alpha: 0.65),
+                              width: 1.4,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 11),
+                          ),
+                          child: Text(
+                            secondaryLabel,
+                            style: const TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.of(dialogContext).pop();
+                          onPrimaryPressed?.call();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.appRed,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 11),
+                        ),
+                        child: Text(
+                          primaryLabel,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
+  }
 
-    if (result == true) {
+  Future<void> _showLocationSharingModal() async {
+    bool shouldShareLocation = false;
+    await _showReportModal(
+      title: 'Share Location',
+      message:
+          'Please share your location so emergency responders can find you quickly.',
+      icon: Icons.location_on_rounded,
+      barrierDismissible: false,
+      primaryLabel: 'SHARE LOCATION',
+      secondaryLabel: 'SKIP',
+      onPrimaryPressed: () {
+        shouldShareLocation = true;
+      },
+    );
+
+    if (shouldShareLocation) {
       await _shareLocation();
     } else {
       // Show report card even if location not shared
@@ -316,117 +449,141 @@ class _ReportMapPageState extends State<ReportMapPage>
               final statusColor = _getStatusColor(status);
 
               return Dialog(
-                backgroundColor: Colors.white,
+                backgroundColor: Colors.transparent,
                 insetPadding: const EdgeInsets.symmetric(
                   horizontal: 20,
                   vertical: 24,
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 36,
-                            height: 36,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFAC1B22),
-                              borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.appOffWhite,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: AppTheme.appOffYellow.withValues(alpha: 0.45),
+                      width: 1.3,
+                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x4A000000),
+                        blurRadius: 18,
+                        offset: Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: AppTheme.appRed.withValues(alpha: 0.14),
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: AppTheme.appOffYellow.withValues(
+                                    alpha: 0.8,
+                                  ),
+                                  width: 1.8,
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.report,
+                                color: AppTheme.appRed,
+                                size: 22,
+                              ),
                             ),
-                            child: const Icon(
-                              Icons.report,
-                              color: Colors.white,
-                              size: 20,
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                incidentType.toUpperCase(),
+                                style: const TextStyle(
+                                  fontFamily: 'Roboto',
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                  color: AppTheme.appRed,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(
+                                Icons.close_rounded,
+                                size: 20,
+                                color: AppTheme.appBlack,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: statusColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: statusColor),
+                          ),
+                          child: Text(
+                            'Status: $status',
+                            style: TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: statusColor,
                             ),
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              incidentType.toUpperCase(),
-                              style: const TextStyle(
-                                fontFamily: 'Roboto',
-                                fontSize: 16,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Reported by $reporter',
+                          style: const TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.appBlack,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          description,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 14,
+                            height: 1.35,
+                            color: AppTheme.appBlack,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.appRed,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: const Text(
+                              'CLOSE',
+                              style: TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                color: Colors.white,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xFFAC1B22),
                               ),
                             ),
                           ),
-                          IconButton(
-                            onPressed: () => Navigator.pop(context),
-                            icon: const Icon(Icons.close, size: 20),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
                         ),
-                        decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: statusColor),
-                        ),
-                        child: Text(
-                          'Status: $status',
-                          style: TextStyle(
-                            fontFamily: 'Roboto',
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: statusColor,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Reported by $reporter',
-                        style: const TextStyle(
-                          fontFamily: 'Roboto',
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: Color(0xFF1F2933),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        description,
-                        style: const TextStyle(
-                          fontFamily: 'Roboto',
-                          fontSize: 13,
-                          height: 1.4,
-                          color: Color(0xFF4B5563),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: () => Navigator.pop(context),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFAC1B22),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                          ),
-                          child: const Text(
-                            'CLOSE',
-                            style: TextStyle(
-                              fontFamily: 'Roboto',
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               );
@@ -479,60 +636,74 @@ class _ReportMapPageState extends State<ReportMapPage>
     final destination = _userLocation ?? _incidentLocation;
     if (origin == null || destination == null) return;
 
-    if (_lastRouteOrigin != null && _lastRouteDestination != null) {
-      final originMoved = const Distance().as(
-        LengthUnit.Meter,
-        origin,
-        _lastRouteOrigin!,
-      );
-      final destinationMoved = const Distance().as(
-        LengthUnit.Meter,
-        destination,
-        _lastRouteDestination!,
-      );
-      if (originMoved < 30 && destinationMoved < 5) {
-        return;
+    if (_isResponderRouteUpdateInFlight) {
+      _hasPendingResponderRouteUpdate = true;
+      return;
+    }
+
+    _isResponderRouteUpdateInFlight = true;
+    try {
+      if (_lastRouteOrigin != null && _lastRouteDestination != null) {
+        final originMoved = const Distance().as(
+          LengthUnit.Meter,
+          origin,
+          _lastRouteOrigin!,
+        );
+        final destinationMoved = const Distance().as(
+          LengthUnit.Meter,
+          destination,
+          _lastRouteDestination!,
+        );
+        if (originMoved < 30 && destinationMoved < 5) {
+          return;
+        }
+      }
+
+      _lastRouteOrigin = origin;
+      _lastRouteDestination = destination;
+
+      _RouteResult? route = await _fetchRouteFromOsrm(origin, destination);
+      List<LatLng> points = route?.points ?? [];
+      double? distanceKm = route != null ? route.distanceMeters / 1000 : null;
+      String? eta = route != null
+          ? _formatDurationFromSeconds(route.durationSeconds)
+          : null;
+      if (points.isEmpty) {
+        points = _generateSimulatedRoute(origin, destination);
+        distanceKm = _calculateDistance(points);
+        eta = _calculateEstimatedTime(distanceKm);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _responderRoutePolylines = points.isEmpty
+            ? []
+            : [
+                Polyline(
+                  points: points,
+                  color: AppColors.appOffWhite.withOpacity(0.85),
+                  strokeWidth: 6.0,
+                  strokeCap: StrokeCap.round,
+                  strokeJoin: StrokeJoin.round,
+                ),
+                Polyline(
+                  points: points,
+                  color: AppColors.appGreen.withOpacity(0.92),
+                  strokeWidth: 3.5,
+                  strokeCap: StrokeCap.round,
+                  strokeJoin: StrokeJoin.round,
+                ),
+              ];
+        _responderRouteDistanceKm = points.isEmpty ? null : distanceKm;
+        _responderRouteEta = points.isEmpty ? null : eta;
+      });
+    } finally {
+      _isResponderRouteUpdateInFlight = false;
+      if (_hasPendingResponderRouteUpdate) {
+        _hasPendingResponderRouteUpdate = false;
+        _scheduleResponderRouteUpdate();
       }
     }
-
-    _lastRouteOrigin = origin;
-    _lastRouteDestination = destination;
-
-    _RouteResult? route = await _fetchRouteFromOsrm(origin, destination);
-    List<LatLng> points = route?.points ?? [];
-    double? distanceKm = route != null ? route.distanceMeters / 1000 : null;
-    String? eta = route != null
-        ? _formatDurationFromSeconds(route.durationSeconds)
-        : null;
-    if (points.isEmpty) {
-      points = _generateSimulatedRoute(origin, destination);
-      distanceKm = _calculateDistance(points);
-      eta = _calculateEstimatedTime(distanceKm);
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _responderRoutePolylines = points.isEmpty
-          ? []
-          : [
-              Polyline(
-                points: points,
-                color: AppColors.appOffWhite.withOpacity(0.85),
-                strokeWidth: 6.0,
-                strokeCap: StrokeCap.round,
-                strokeJoin: StrokeJoin.round,
-              ),
-              Polyline(
-                points: points,
-                color: AppColors.appGreen.withOpacity(0.92),
-                strokeWidth: 3.5,
-                strokeCap: StrokeCap.round,
-                strokeJoin: StrokeJoin.round,
-              ),
-            ];
-      _responderRouteDistanceKm = points.isEmpty ? null : distanceKm;
-      _responderRouteEta = points.isEmpty ? null : eta;
-    });
   }
 
   Future<_RouteResult?> _fetchRouteFromOsrm(LatLng start, LatLng end) async {
@@ -542,11 +713,10 @@ class _ReportMapPageState extends State<ReportMapPage>
       '${end.longitude},${end.latitude}'
       '?overview=full&geometries=geojson&alternatives=true',
     );
-    final response = await http.get(uri);
-    if (response.statusCode != 200) {
+    final data = await RouteWeatherCacheService.fetchRouteJson(uri);
+    if (data == null) {
       return null;
     }
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
     final routes = data['routes'] as List<dynamic>?;
     if (routes == null || routes.isEmpty) {
       return null;
@@ -837,101 +1007,29 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   void _showResolvedDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Incident Resolved',
-          style: TextStyle(
-            fontFamily: 'Roboto',
-            fontWeight: FontWeight.w900,
-            fontSize: 18,
-            color: Color(0xFF111827),
-          ),
-        ),
-        content: const Text(
-          'The incident has been resolved. THANK YOU',
-          style: TextStyle(
-            fontFamily: 'RobotoCondensed',
-            fontWeight: FontWeight.w400,
-            fontSize: 14,
-            color: Color(0xFF4B5563),
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _handleResolvedNavigation();
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFAC1B22),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text(
-              'RETURN',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
-        ],
+    unawaited(
+      _showReportModal(
+        title: 'Incident Resolved',
+        message: 'The incident has been resolved. THANK YOU.',
+        icon: Icons.check_circle_rounded,
+        iconColor: const Color(0xFF00A458),
+        barrierDismissible: false,
+        primaryLabel: 'RETURN',
+        onPrimaryPressed: _handleResolvedNavigation,
       ),
     );
   }
 
   void _showFlaggedDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'False Report',
-          style: TextStyle(
-            fontFamily: 'Roboto',
-            fontWeight: FontWeight.w900,
-            fontSize: 18,
-            color: Color(0xFF111827),
-          ),
-        ),
-        content: const Text(
-          'Your report has been flagged as not valid. Repeated false reports may lead to account suspension or ban.',
-          style: TextStyle(
-            fontFamily: 'RobotoCondensed',
-            fontWeight: FontWeight.w400,
-            fontSize: 14,
-            color: Color(0xFF4B5563),
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _handleResolvedNavigation();
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFAC1B22),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-            child: const Text(
-              'UNDERSTOOD',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ),
-        ],
+    unawaited(
+      _showReportModal(
+        title: 'False Report',
+        message:
+            'Your report has been flagged as not valid. Repeated false reports may lead to account suspension or ban.',
+        icon: Icons.warning_amber_rounded,
+        barrierDismissible: false,
+        primaryLabel: 'UNDERSTOOD',
+        onPrimaryPressed: _handleResolvedNavigation,
       ),
     );
   }
@@ -961,56 +1059,102 @@ class _ReportMapPageState extends State<ReportMapPage>
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: AppTheme.appOffWhite,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (modalContext) => SafeArea(
-        child: ListView.separated(
-          shrinkWrap: true,
-          itemCount: activeReports.length,
-          separatorBuilder: (_, __) => const Divider(height: 1),
-          itemBuilder: (context, index) {
-            final report = activeReports[index];
-            final data = report.reportData;
-            final title = (data['incidentType'] as String?) ?? 'Incident';
-            final isCurrent = report.reportId == widget.reportId;
-
-            return ListTile(
-              title: Text(
-                title,
-                style: const TextStyle(
-                  fontFamily: 'Roboto',
-                  fontWeight: FontWeight.w700,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppTheme.appBlack.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'SWITCH REPORT',
+              style: TextStyle(
+                fontFamily: 'Roboto',
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                color: AppTheme.appRed,
+                letterSpacing: 0.4,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: activeReports.length,
+                separatorBuilder: (_, __) => Divider(
+                  height: 1,
+                  color: AppTheme.appBlack.withValues(alpha: 0.08),
                 ),
-              ),
-              subtitle: Text(
-                report.reportId,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontFamily: 'RobotoCondensed'),
-              ),
-              trailing: isCurrent
-                  ? const Icon(Icons.check_circle, color: Color(0xFF00A458))
-                  : const Icon(Icons.chevron_right),
-              onTap: () {
-                Navigator.pop(modalContext);
-                if (isCurrent) return;
-                UserSession.addActiveReport(
-                  reportId: report.reportId,
-                  reportData: report.reportData,
-                );
-                if (widget.showBottomNav) {
-                  MainShellNavigationService.popToRootAndOpenTab(
-                    this.context,
-                    2,
+                itemBuilder: (context, index) {
+                  final report = activeReports[index];
+                  final data = report.reportData;
+                  final title = (data['incidentType'] as String?) ?? 'Incident';
+                  final isCurrent = report.reportId == widget.reportId;
+
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 2,
+                    ),
+                    title: Text(
+                      title,
+                      style: const TextStyle(
+                        fontFamily: 'Roboto',
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.appBlack,
+                      ),
+                    ),
+                    subtitle: Text(
+                      report.reportId,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        color: AppTheme.appBlack,
+                      ),
+                    ),
+                    trailing: isCurrent
+                        ? const Icon(
+                            Icons.check_circle_rounded,
+                            color: Color(0xFF00A458),
+                          )
+                        : const Icon(
+                            Icons.chevron_right_rounded,
+                            color: AppTheme.appBlack,
+                          ),
+                    onTap: () {
+                      Navigator.pop(modalContext);
+                      if (isCurrent) return;
+                      UserSession.addActiveReport(
+                        reportId: report.reportId,
+                        reportData: report.reportData,
+                      );
+                      if (widget.showBottomNav) {
+                        MainShellNavigationService.popToRootAndOpenTab(
+                          this.context,
+                          2,
+                        );
+                      } else {
+                        MainShellNavigationService.openTab(2);
+                      }
+                    },
                   );
-                } else {
-                  MainShellNavigationService.openTab(2);
-                }
-              },
-            );
-          },
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
         ),
       ),
     );
@@ -1424,49 +1568,7 @@ class _ReportMapPageState extends State<ReportMapPage>
   }
 
   Future<_WeatherData> _fetchWeatherForAngeles() async {
-    // Return cached data if still valid
-    if (_cachedWeatherData != null && _weatherCacheTime != null) {
-      final elapsed = DateTime.now().difference(_weatherCacheTime!);
-      if (elapsed < _weatherCacheDuration) {
-        return _cachedWeatherData!;
-      }
-    }
-
-    if (_weatherRequestInFlight != null) {
-      return _weatherRequestInFlight!;
-    }
-
-    final request = _requestWeatherFromApi();
-    _weatherRequestInFlight = request;
-    try {
-      final weatherData = await request;
-      _cachedWeatherData = weatherData;
-      _weatherCacheTime = DateTime.now();
-      return weatherData;
-    } catch (_) {
-      _cachedWeatherData = null;
-      _weatherCacheTime = null;
-      rethrow;
-    } finally {
-      _weatherRequestInFlight = null;
-    }
-  }
-
-  Future<_WeatherData> _requestWeatherFromApi() async {
-    const lat = 15.1450;
-    const lon = 120.5887;
-    final uri = Uri.parse(
-      'https://api.open-meteo.com/v1/forecast'
-      '?latitude=$lat&longitude=$lon'
-      '&current_weather=true'
-      '&daily=temperature_2m_max,temperature_2m_min,weathercode'
-      '&timezone=auto',
-    );
-    final response = await http.get(uri);
-    if (response.statusCode != 200) {
-      throw Exception('Weather request failed');
-    }
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final json = await RouteWeatherCacheService.fetchAngelesWeatherJson();
     final current = json['current_weather'] as Map<String, dynamic>?;
     final daily = json['daily'] as Map<String, dynamic>?;
     if (current == null || daily == null) {
@@ -2498,11 +2600,9 @@ class _ReportMapPageState extends State<ReportMapPage>
               currentIndex: _navIndex,
               onTap: (index) {
                 if (index != _navIndex) {
-                  MainShellNavigationService.popToRootAndOpenTab(
-                    context,
-                    index,
-                  );
+                  setState(() => _navIndex = index);
                 }
+                MainShellNavigationService.popToRootAndOpenTab(context, index);
               },
             )
           : null,

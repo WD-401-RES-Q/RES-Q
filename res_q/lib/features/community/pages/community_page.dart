@@ -2,9 +2,11 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import '../../../common/services/frame_timing_service.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
@@ -60,6 +62,7 @@ class _CommunityPageState extends State<CommunityPage>
   @override
   void initState() {
     super.initState();
+    FrameTimingService.instance.setCurrentScreen('CommunityPage');
     WidgetsBinding.instance.addObserver(this);
     _pendingInitialReportId = _normalizeInitialReportId(widget.initialReportId);
     _selectedFilter = _normalizeFilter(_selectedFilter);
@@ -455,7 +458,7 @@ class _CommunityPageState extends State<CommunityPage>
       'desc': data['details'] ?? 'No description provided.',
       'greenFlags': data['greenFlags'] ?? 0,
       'redFlags': data['redFlags'] ?? 0,
-      'status': data['status'] ?? 'Pending',
+      'status': _normalizeStatusLabel((data['status'] ?? 'Pending').toString()),
       'resolvedAt': resolvedAt,
       'comments': data['comments'] ?? 0,
       'commentsList': <Map<String, dynamic>>[],
@@ -503,13 +506,13 @@ class _CommunityPageState extends State<CommunityPage>
 
   List<Map<String, dynamic>> _computeVisibleReports() {
     final filtered = _reports.where((report) {
-      final status = (report['status'] as String? ?? '').toLowerCase();
+      final statusRaw = report['status']?.toString() ?? '';
+      final status = _normalizeStatusKey(statusRaw);
       final category = (report['title'] as String? ?? '').toLowerCase();
       final resolvedAt = report['resolvedAt'] as DateTime?;
       final reportedAt = report['reportedAt'] as DateTime?;
 
-      if ((status == 'resolved' || status == 'incident resolved') &&
-          resolvedAt != null) {
+      if (_isResolvedStatus(statusRaw) && resolvedAt != null) {
         final elapsed = DateTime.now().difference(resolvedAt);
         if (elapsed >= const Duration(hours: 1)) {
           return false;
@@ -520,15 +523,13 @@ class _CommunityPageState extends State<CommunityPage>
       switch (_selectedFilter) {
         case 'Approved':
           matchesFilter =
-              status == 'approved' ||
-              status == 'resolved' ||
-              status == 'incident resolved';
+              _isApprovedStatus(statusRaw) || _isResolvedStatus(statusRaw);
           break;
         case 'Under Review':
           matchesFilter = status == 'pending' || status == 'under review';
           break;
         case 'Flagged':
-          matchesFilter = status == 'flagged';
+          matchesFilter = _isFlaggedStatus(statusRaw);
           break;
         default:
           matchesFilter = true;
@@ -578,6 +579,53 @@ class _CommunityPageState extends State<CommunityPage>
       default:
         return 'All';
     }
+  }
+
+  String _normalizeStatusKey(String status) {
+    return status
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[_-]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  bool _isResolvedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'resolved' || normalized == 'incident resolved';
+  }
+
+  bool _isApprovedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'approved' || normalized == 'verified';
+  }
+
+  bool _isFlaggedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'flagged' ||
+        normalized == 'unverified' ||
+        normalized == 'admin flagged';
+  }
+
+  String _normalizeStatusLabel(String status) {
+    final normalized = _normalizeStatusKey(status);
+
+    if (_isResolvedStatus(status)) {
+      return 'RESOLVED';
+    }
+    if (_isApprovedStatus(status)) {
+      return 'APPROVED';
+    }
+    if (normalized == 'under review') {
+      return 'UNDER REVIEW';
+    }
+    if (normalized == 'pending') {
+      return 'PENDING';
+    }
+    if (_isFlaggedStatus(status)) {
+      return 'FLAGGED';
+    }
+
+    return status.trim().toUpperCase().replaceAll('_', ' ');
   }
 
   // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ DIALOG HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1942,6 +1990,10 @@ class _CommunityPageState extends State<CommunityPage>
       context: context,
       builder: (context) => Dialog(
         insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+        backgroundColor: appOffWhite,
+        surfaceTintColor: Colors.transparent,
+        elevation: 3,
+        clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: ConstrainedBox(
           constraints: BoxConstraints(
@@ -1984,38 +2036,41 @@ class _CommunityPageState extends State<CommunityPage>
               ),
               // Content
               Flexible(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if ((announcement['imageUrl'] as String?)?.isNotEmpty ==
-                          true)
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
-                          child: CachedNetworkImage(
-                            imageUrl: announcement['imageUrl'],
-                            height: 150,
-                            width: double.infinity,
-                            fit: BoxFit.cover,
-                            memCacheHeight: 300,
-                            maxHeightDiskCache: 300,
-                            errorWidget: (_, __, ___) =>
-                                const SizedBox.shrink(),
+                child: Container(
+                  color: appOffWhite,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if ((announcement['imageUrl'] as String?)?.isNotEmpty ==
+                            true)
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: CachedNetworkImage(
+                              imageUrl: announcement['imageUrl'],
+                              height: 150,
+                              width: double.infinity,
+                              fit: BoxFit.cover,
+                              memCacheHeight: 300,
+                              maxHeightDiskCache: 300,
+                              errorWidget: (context, url, error) =>
+                                  const SizedBox.shrink(),
+                            ),
+                          ),
+                        if ((announcement['imageUrl'] as String?)?.isNotEmpty ==
+                            true)
+                          const SizedBox(height: 12),
+                        Text(
+                          announcement['content'] ?? '',
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 14,
+                            color: appBlack,
                           ),
                         ),
-                      if ((announcement['imageUrl'] as String?)?.isNotEmpty ==
-                          true)
-                        const SizedBox(height: 12),
-                      Text(
-                        announcement['content'] ?? '',
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontSize: 14,
-                          color: appBlack,
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -2045,7 +2100,7 @@ class _CommunityPageState extends State<CommunityPage>
 
             // ANNOUNCEMENTS SECTION (horizontal scroll)
             if (_announcements.isNotEmpty) ...[
-              Text(
+              const Text(
                 'ANNOUNCEMENTS',
                 style: TextStyle(
                   fontSize: 16,
@@ -2057,139 +2112,158 @@ class _CommunityPageState extends State<CommunityPage>
               const SizedBox(height: 8),
               SizedBox(
                 height: 112,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _announcements.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 12),
-                  itemBuilder: (context, index) {
-                    final announcement = _announcements[index];
-                    final imageUrl = (announcement['imageUrl'] as String? ?? '')
-                        .trim();
-                    final hasImage = imageUrl.isNotEmpty;
-                    return GestureDetector(
-                      onTap: () => _showAnnouncementDetail(announcement),
-                      child: Container(
-                        width: 220,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [appBlue, appBlue.withOpacity(0.8)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
+                child: ScrollConfiguration(
+                  behavior: ScrollConfiguration.of(context).copyWith(
+                    dragDevices: const <PointerDeviceKind>{
+                      PointerDeviceKind.touch,
+                      PointerDeviceKind.mouse,
+                      PointerDeviceKind.stylus,
+                      PointerDeviceKind.unknown,
+                    },
+                    scrollbars: false,
+                  ),
+                  child: ListView.separated(
+                    primary: false,
+                    physics: const BouncingScrollPhysics(
+                      parent: AlwaysScrollableScrollPhysics(),
+                    ),
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _announcements.length,
+                    separatorBuilder: (_, index) => const SizedBox(width: 12),
+                    itemBuilder: (context, index) {
+                      final announcement = _announcements[index];
+                      final imageUrl =
+                          (announcement['imageUrl'] as String? ?? '').trim();
+                      final hasImage = imageUrl.isNotEmpty;
+                      return GestureDetector(
+                        onTap: () => _showAnnouncementDetail(announcement),
+                        child: Container(
+                          width: 220,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [appBlue, appBlue.withOpacity(0.8)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: appBlue.withOpacity(0.3),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
                           ),
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: appBlue.withOpacity(0.3),
-                              blurRadius: 8,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                const Icon(
-                                  Icons.campaign,
-                                  color: Colors.white,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    announcement['title'] ?? 'Announcement',
-                                    style: const TextStyle(
-                                      fontFamily: 'Roboto',
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                      color: Colors.white,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 6),
-                            Expanded(
-                              child: Row(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
                                 children: [
+                                  const Icon(
+                                    Icons.campaign,
+                                    color: Colors.white,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(
-                                      announcement['content'] ?? '',
-                                      style: TextStyle(
-                                        fontFamily: 'RobotoCondensed',
-                                        fontSize: 11,
-                                        color: Colors.white.withOpacity(0.9),
+                                      announcement['title'] ?? 'Announcement',
+                                      style: const TextStyle(
+                                        fontFamily: 'Roboto',
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
                                       ),
-                                      maxLines: hasImage ? 3 : 4,
+                                      maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
-                                  if (hasImage) ...[
-                                    const SizedBox(width: 10),
-                                    ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: SizedBox(
-                                        width: 56,
-                                        height: 56,
-                                        child: CachedNetworkImage(
-                                          imageUrl: imageUrl,
-                                          fit: BoxFit.cover,
-                                          fadeInDuration: const Duration(
-                                            milliseconds: 120,
-                                          ),
-                                          memCacheWidth: 220,
-                                          memCacheHeight: 220,
-                                          placeholder: (context, url) =>
-                                              Container(
-                                                color: Colors.white24,
-                                                alignment: Alignment.center,
-                                                child: const SizedBox(
-                                                  width: 14,
-                                                  height: 14,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                        strokeWidth: 1.8,
-                                                        color: Colors.white,
-                                                      ),
-                                                ),
-                                              ),
-                                          errorWidget: (context, url, error) =>
-                                              Container(
-                                                color: Colors.white24,
-                                                alignment: Alignment.center,
-                                                child: const Icon(
-                                                  Icons.broken_image_outlined,
-                                                  size: 18,
-                                                  color: Colors.white70,
-                                                ),
-                                              ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
                                 ],
                               ),
-                            ),
-                            if (hasImage) ...[
-                              const SizedBox(height: 4),
-                              Text(
-                                'Tap to preview',
-                                style: TextStyle(
-                                  fontFamily: 'RobotoCondensed',
-                                  fontSize: 9.5,
-                                  color: Colors.white.withOpacity(0.85),
+                              const SizedBox(height: 6),
+                              Expanded(
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        announcement['content'] ?? '',
+                                        style: TextStyle(
+                                          fontFamily: 'RobotoCondensed',
+                                          fontSize: 11,
+                                          color: Colors.white.withOpacity(0.9),
+                                        ),
+                                        maxLines: hasImage ? 3 : 4,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    if (hasImage) ...[
+                                      const SizedBox(width: 10),
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: SizedBox(
+                                          width: 56,
+                                          height: 56,
+                                          child: CachedNetworkImage(
+                                            imageUrl: imageUrl,
+                                            fit: BoxFit.cover,
+                                            fadeInDuration: const Duration(
+                                              milliseconds: 120,
+                                            ),
+                                            memCacheWidth: 220,
+                                            memCacheHeight: 220,
+                                            placeholder: (context, url) =>
+                                                Container(
+                                                  color: Colors.white24,
+                                                  alignment: Alignment.center,
+                                                  child: const SizedBox(
+                                                    width: 14,
+                                                    height: 14,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                          strokeWidth: 1.8,
+                                                          color: Colors.white,
+                                                        ),
+                                                  ),
+                                                ),
+                                            errorWidget:
+                                                (
+                                                  context,
+                                                  url,
+                                                  error,
+                                                ) => Container(
+                                                  color: Colors.white24,
+                                                  alignment: Alignment.center,
+                                                  child: const Icon(
+                                                    Icons.broken_image_outlined,
+                                                    size: 18,
+                                                    color: Colors.white70,
+                                                  ),
+                                                ),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
                               ),
+                              if (hasImage) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Tap to preview',
+                                  style: TextStyle(
+                                    fontFamily: 'RobotoCondensed',
+                                    fontSize: 9.5,
+                                    color: Colors.white.withOpacity(0.85),
+                                  ),
+                                ),
+                              ],
                             ],
-                          ],
+                          ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -2260,8 +2334,10 @@ class _CommunityPageState extends State<CommunityPage>
                     itemBuilder: (context, index) {
                       final report = visibleReports[index];
                       final reportId = report['id']?.toString() ?? '';
-                      final statusLower = (report['status'] as String? ?? '')
-                          .toLowerCase();
+                      final statusRaw = report['status']?.toString() ?? '';
+                      final isResolved = _isResolvedStatus(statusRaw);
+                      final isApproved = _isApprovedStatus(statusRaw);
+                      final isFlagged = _isFlaggedStatus(statusRaw);
                       final reportIndex = reportIndexById[reportId] ?? index;
                       final vote = report['userVote'] as String;
                       final bool greenSelected = vote == 'green';
@@ -2349,19 +2425,13 @@ class _CommunityPageState extends State<CommunityPage>
                                                         vertical: 2,
                                                       ),
                                                   decoration: BoxDecoration(
-                                                    color:
-                                                        statusLower ==
-                                                                'resolved' ||
-                                                            statusLower ==
-                                                                'incident resolved'
+                                                    color: isResolved
                                                         ? const Color(
                                                             0xFF4CAF50,
                                                           )
-                                                        : statusLower ==
-                                                              'approved'
+                                                        : isApproved
                                                         ? statusGreen
-                                                        : statusLower ==
-                                                              'flagged'
+                                                        : isFlagged
                                                         ? statusRed
                                                         : statusYellow,
                                                     borderRadius:
@@ -2370,13 +2440,9 @@ class _CommunityPageState extends State<CommunityPage>
                                                         ),
                                                   ),
                                                   child: Text(
-                                                    statusLower == 'resolved' ||
-                                                            statusLower ==
-                                                                'incident resolved'
-                                                        ? 'RESOLVED'
-                                                        : report['status']
-                                                              .toString()
-                                                              .toUpperCase(),
+                                                    _normalizeStatusLabel(
+                                                      statusRaw,
+                                                    ),
                                                     style: const TextStyle(
                                                       fontFamily:
                                                           'RobotoCondensed',
@@ -4929,36 +4995,27 @@ class _ImageZoomDialog extends StatelessWidget {
               child: InteractiveViewer(
                 minScale: 1.0,
                 maxScale: 4.0,
-                child: Image.network(
-                  imageUrl,
+                child: CachedNetworkImage(
+                  imageUrl: imageUrl,
                   fit: BoxFit.contain,
-                  loadingBuilder: (context, child, loadingProgress) {
-                    if (loadingProgress == null) {
-                      return child;
-                    }
-                    return const SizedBox(
-                      height: 260,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
-                          ),
-                        ),
+                  placeholder: (_, __) => const SizedBox(
+                    height: 260,
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                       ),
-                    );
-                  },
-                  errorBuilder: (context, error, stackTrace) {
-                    return const SizedBox(
-                      height: 260,
-                      child: Center(
-                        child: Icon(
-                          Icons.error_outline,
-                          color: Colors.white,
-                          size: 48,
-                        ),
+                    ),
+                  ),
+                  errorWidget: (_, __, ___) => const SizedBox(
+                    height: 260,
+                    child: Center(
+                      child: Icon(
+                        Icons.error_outline,
+                        color: Colors.white,
+                        size: 48,
                       ),
-                    );
-                  },
+                    ),
+                  ),
                 ),
               ),
             ),

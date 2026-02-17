@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 
@@ -7,13 +6,14 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show ValueListenable, kDebugMode;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../common/services/frame_timing_service.dart';
+import '../../../common/services/route_weather_cache_service.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/services/location_service.dart';
 import '../../../common/services/user_session.dart';
@@ -27,7 +27,9 @@ void _debugLog(Object? message) {
 enum WeatherState { none, sunny, cloudy, rainy }
 
 class AdminMapPage extends StatefulWidget {
-  const AdminMapPage({super.key});
+  const AdminMapPage({super.key, this.initialReportId});
+
+  final String? initialReportId;
 
   @override
   State<AdminMapPage> createState() => _AdminMapPageState();
@@ -51,9 +53,27 @@ class AdminComment {
   });
 }
 
+class _ResponderIdentity {
+  const _ResponderIdentity({
+    required this.phone,
+    required this.normalizedName,
+    required this.authUid,
+  });
+
+  final String phone;
+  final String normalizedName;
+  final String authUid;
+
+  bool get isEmpty =>
+      phone.isEmpty && normalizedName.isEmpty && authUid.isEmpty;
+}
+
 class _AdminMapPageState extends State<AdminMapPage>
     with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   final MapController _mapController = MapController();
+  final ValueNotifier<LatLng?> _trackingUserLocationNotifier =
+      ValueNotifier<LatLng?>(null);
+  final ValueNotifier<Offset> _weatherCardOffset = ValueNotifier(Offset.zero);
   late final AnimationController _pinBounceController;
   bool _showWeatherCard = false;
   bool _isWeatherLoading = false;
@@ -61,6 +81,7 @@ class _AdminMapPageState extends State<AdminMapPage>
   _WeatherData? _weatherData;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
   StreamSubscription<Position>? _responderLocationSub;
+  Timer? _responderLocationFallbackTimer;
   String? _activeReportId;
   String? _autoAssignedReportId;
   String? _lastPresenceStatus;
@@ -107,13 +128,39 @@ class _AdminMapPageState extends State<AdminMapPage>
   // Simulate moving along route
   Timer? _trackingTimer;
   Timer? _viewportRefreshDebounce;
+  Timer? _routeRecalcDebounce;
+  bool _routeCalcInFlight = false;
+  bool _routeCalcQueued = false;
+  String? _pendingFocusReportId;
+  bool _isOpeningPendingReport = false;
+  DateTime? _lastRouteCalcAt;
+  LatLng? _lastRouteCalcOrigin;
+  LatLng? _lastRouteCalcDestination;
+  static const Duration _routeRecalcDebounceDuration = Duration(
+    milliseconds: 220,
+  );
+  static const Duration _routeRecalcMinInterval = Duration(milliseconds: 900);
+  static const double _routeRecalcMinMoveMeters = 8.0;
+  static const Duration _responderLocationWriteMinInterval = Duration(
+    seconds: 2,
+  );
+  static const double _responderLocationWriteMinMoveMeters = 10.0;
+  DateTime? _lastResponderLocationWriteAt;
+  LatLng? _lastResponderLocationWritePoint;
+  String? _lastResponderLocationWriteReportId;
+  bool _isResponderLocationWriteInFlight = false;
+  LatLng? _pendingResponderLocationWritePoint;
+  String? _pendingResponderLocationWriteReportId;
 
   @override
   void initState() {
     super.initState();
+    FrameTimingService.instance.setCurrentScreen('AdminMapPage');
+    _pendingFocusReportId = widget.initialReportId?.trim();
     _subscribeToReportsRealtime();
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
+    _trackingUserLocationNotifier.value = _initialCenter;
     _syncUserLocation();
     _pinBounceController = AnimationController(
       vsync: this,
@@ -124,14 +171,30 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   @override
+  void didUpdateWidget(covariant AdminMapPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialReportId != oldWidget.initialReportId) {
+      final nextReportId = widget.initialReportId?.trim();
+      _pendingFocusReportId = (nextReportId == null || nextReportId.isEmpty)
+          ? null
+          : nextReportId;
+      unawaited(_tryOpenPendingReport());
+    }
+  }
+
+  @override
   void dispose() {
     _trackingTimer?.cancel();
     _viewportRefreshDebounce?.cancel();
+    _routeRecalcDebounce?.cancel();
     _reportsSubscription?.cancel();
     _responderLocationSub?.cancel();
+    _responderLocationFallbackTimer?.cancel();
     for (final timer in _resolvedRemovalTimers.values) {
       timer.cancel();
     }
+    _trackingUserLocationNotifier.dispose();
+    _weatherCardOffset.dispose();
     _pinBounceController.dispose();
     super.dispose();
   }
@@ -264,7 +327,6 @@ class _AdminMapPageState extends State<AdminMapPage>
         if (change.type == DocumentChangeType.removed || data == null) {
           _reportsById.remove(reportId);
           _incidentMarkerCache.remove(reportId);
-          _reporterMarkerCache.remove(reportId);
           _cancelResolvedRemoval(reportId);
           continue;
         }
@@ -276,13 +338,64 @@ class _AdminMapPageState extends State<AdminMapPage>
     if (!mounted) return;
     setState(_refreshMarkerLists);
     _syncAutoAssignedReport(snapshot);
+    unawaited(_tryOpenPendingReport());
     _debugLog('Loaded ${_reportsById.length} reports from Firestore');
+  }
+
+  Future<void> _tryOpenPendingReport() async {
+    final reportId = _pendingFocusReportId;
+    if (!mounted ||
+        _isOpeningPendingReport ||
+        reportId == null ||
+        reportId.isEmpty) {
+      return;
+    }
+
+    final data = _reportsById[reportId];
+    if (data == null || !_isAssignedToCurrentResponder(data)) {
+      return;
+    }
+
+    final incidentPoint =
+        _latLngFromDynamic(data['incidentLocation']) ??
+        _latLngFromDynamic(data['location']);
+    if (incidentPoint == null) {
+      _pendingFocusReportId = null;
+      return;
+    }
+
+    _isOpeningPendingReport = true;
+    _pendingFocusReportId = null;
+
+    try {
+      _activeReportId = reportId;
+      _destination = incidentPoint;
+      _scheduleRouteCalculation();
+      try {
+        final targetZoom = _mapController.camera.zoom < 15
+            ? 15.0
+            : _mapController.camera.zoom;
+        _mapController.move(incidentPoint, targetZoom);
+      } catch (_) {}
+
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted) return;
+      await _showIncidentInfo(data, reportId, incidentPoint);
+    } finally {
+      _isOpeningPendingReport = false;
+    }
   }
 
   void _updateMarkersForReport({
     required String reportId,
     required Map<String, dynamic> data,
   }) {
+    if (!_isAssignedToCurrentResponder(data)) {
+      _incidentMarkerCache.remove(reportId);
+      _reporterMarkerCache.remove(reportId);
+      return;
+    }
+
     final incidentPoint =
         _latLngFromDynamic(data['incidentLocation']) ??
         _latLngFromDynamic(data['location']);
@@ -300,7 +413,7 @@ class _AdminMapPageState extends State<AdminMapPage>
     final isApproved = _isApprovedStatus(status);
     final isFlagged = _isFlaggedStatus(status);
 
-    if (isFlagged) {
+    if (isFlagged || isApproved) {
       _cancelResolvedRemoval(reportId);
       _incidentMarkerCache.remove(reportId);
       _reporterMarkerCache.remove(reportId);
@@ -316,10 +429,6 @@ class _AdminMapPageState extends State<AdminMapPage>
         return;
       }
     } else {
-      _cancelResolvedRemoval(reportId);
-    }
-
-    if (isApproved) {
       _cancelResolvedRemoval(reportId);
     }
 
@@ -346,27 +455,7 @@ class _AdminMapPageState extends State<AdminMapPage>
         opacity: isCheckStatus ? 0.82 : 1,
       ),
     );
-
-    final reporterPoint = _latLngFromDynamic(data['reporterLocation']);
-    if (reporterPoint == null) {
-      _reporterMarkerCache.remove(reportId);
-      return;
-    }
-
-    _reporterMarkerCache[reportId] = Marker(
-      key: ValueKey('reporter-$reportId'),
-      point: reporterPoint,
-      width: 44,
-      height: 44,
-      child: GestureDetector(
-        onTap: () => _showIncidentInfo(data, reportId, incidentPoint),
-        child: const Icon(
-          Icons.person_pin_circle,
-          color: Color(0xFF2563EB),
-          size: 30,
-        ),
-      ),
-    );
+    _reporterMarkerCache.remove(reportId);
   }
 
   void _rebuildMarkersFromCache() {
@@ -387,13 +476,7 @@ class _AdminMapPageState extends State<AdminMapPage>
           (marker) => _isMarkerVisible(marker, visibleBounds),
         ),
       );
-    _reporterMarkers
-      ..clear()
-      ..addAll(
-        _reporterMarkerCache.values.where(
-          (marker) => _isMarkerVisible(marker, visibleBounds),
-        ),
-      );
+    _reporterMarkers.clear();
   }
 
   LatLngBounds? _safeVisibleBounds() {
@@ -421,6 +504,54 @@ class _AdminMapPageState extends State<AdminMapPage>
 
   String _normalizePhoneValue(Object? raw) {
     return (raw?.toString() ?? '').replaceAll(RegExp(r'\D'), '');
+  }
+
+  _ResponderIdentity _currentResponderIdentity() {
+    final userData = UserSession.currentUserData;
+    final phone = _normalizePhoneValue(
+      userData?['contactNumber'] ?? userData?['phoneNumber'],
+    );
+    final normalizedName =
+        (userData?['fullName'] ?? userData?['username'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+    final authUid = (FirebaseAuth.instance.currentUser?.uid ?? '').trim();
+
+    return _ResponderIdentity(
+      phone: phone,
+      normalizedName: normalizedName,
+      authUid: authUid,
+    );
+  }
+
+  bool _isAssignedToCurrentResponder(Map<String, dynamic> data) {
+    final identity = _currentResponderIdentity();
+    if (identity.isEmpty) {
+      return false;
+    }
+
+    final assignedId = (data['responderId'] as String? ?? '').trim();
+    final assignedIdPhone = _normalizePhoneValue(assignedId);
+    final assignedContactPhone = _normalizePhoneValue(
+      data['responderContactNumber'] ?? data['responderPhone'],
+    );
+    final assignedName = (data['responderName'] as String? ?? '')
+        .trim()
+        .toLowerCase();
+
+    final matchesPhone =
+        identity.phone.isNotEmpty &&
+        (assignedIdPhone == identity.phone ||
+            assignedContactPhone == identity.phone);
+    final matchesUid =
+        identity.authUid.isNotEmpty && assignedId == identity.authUid;
+    final matchesName =
+        identity.normalizedName.isNotEmpty &&
+        assignedName.isNotEmpty &&
+        assignedName == identity.normalizedName;
+
+    return matchesPhone || matchesUid || matchesName;
   }
 
   String _normalizeStatusKey(String status) {
@@ -498,18 +629,8 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   void _syncAutoAssignedReport(QuerySnapshot<Map<String, dynamic>> snapshot) {
-    final userData = UserSession.currentUserData;
-    final responderPhone = _normalizePhoneValue(
-      userData?['contactNumber'] ?? userData?['phoneNumber'],
-    );
-    final responderName = (userData?['fullName'] ?? userData?['username'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
-    final authUid = FirebaseAuth.instance.currentUser?.uid.trim();
-
-    if ((responderPhone.isEmpty && responderName.isEmpty) &&
-        (authUid == null || authUid.isEmpty)) {
+    final identity = _currentResponderIdentity();
+    if (identity.isEmpty) {
       return;
     }
 
@@ -528,27 +649,7 @@ class _AdminMapPageState extends State<AdminMapPage>
         continue;
       }
 
-      final assignedId = (data['responderId'] as String? ?? '').trim();
-      final assignedIdPhone = _normalizePhoneValue(assignedId);
-      final assignedContactPhone = _normalizePhoneValue(
-        data['responderContactNumber'] ?? data['responderPhone'],
-      );
-      final assignedName = (data['responderName'] as String? ?? '')
-          .trim()
-          .toLowerCase();
-
-      final matchesPhone =
-          responderPhone.isNotEmpty &&
-          (assignedIdPhone == responderPhone ||
-              assignedContactPhone == responderPhone);
-      final matchesUid =
-          authUid != null && authUid.isNotEmpty && assignedId == authUid;
-      final matchesName =
-          responderName.isNotEmpty &&
-          assignedName.isNotEmpty &&
-          assignedName == responderName;
-
-      if (!matchesPhone && !matchesUid && !matchesName) {
+      if (!_isAssignedToCurrentResponder(data)) {
         continue;
       }
 
@@ -576,6 +677,31 @@ class _AdminMapPageState extends State<AdminMapPage>
 
     if (matchedReportId == null || matchedDestination == null) {
       _autoAssignedReportId = null;
+      _activeReportId = null;
+      if (_destination != null ||
+          _routeMarkers.isNotEmpty ||
+          _routePolylines.isNotEmpty ||
+          _routePoints.isNotEmpty) {
+        if (mounted) {
+          setState(() {
+            _destination = null;
+            _routeMarkers.clear();
+            _routePolylines.clear();
+            _routePoints.clear();
+            _routeInstructions = '';
+            _estimatedDistance = 0;
+            _estimatedTime = '';
+          });
+        } else {
+          _destination = null;
+          _routeMarkers.clear();
+          _routePolylines.clear();
+          _routePoints.clear();
+          _routeInstructions = '';
+          _estimatedDistance = 0;
+          _estimatedTime = '';
+        }
+      }
       unawaited(_syncOwnPresence(status: 'available', isAvailable: true));
       return;
     }
@@ -607,7 +733,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       _destination = matchedDestination;
     }
 
-    _calculateRoute();
+    _scheduleRouteCalculation();
   }
 
   bool _shouldShowIncidentType(String incidentType) {
@@ -742,6 +868,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       setState(() {
         _showWeatherCard = false;
       });
+      _weatherCardOffset.value = Offset.zero;
       return;
     }
     setState(() {
@@ -749,6 +876,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       _isWeatherLoading = true;
       _weatherError = null;
     });
+    _weatherCardOffset.value = Offset.zero;
     try {
       final data = await _fetchWeatherForAngeles();
       if (!mounted) return;
@@ -822,26 +950,67 @@ class _AdminMapPageState extends State<AdminMapPage>
       top: 76,
       left: 16,
       right: 16,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.7),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withOpacity(0.35)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.12),
-                  blurRadius: 12,
-                  offset: const Offset(0, 6),
+      child: GestureDetector(
+        onPanUpdate: (details) {
+          _weatherCardOffset.value = _weatherCardOffset.value + details.delta;
+        },
+        onPanEnd: (details) {
+          final currentOffset = _weatherCardOffset.value;
+          const horizontalThreshold = 80.0;
+          const verticalThreshold = -50.0;
+
+          if (currentOffset.dx.abs() > horizontalThreshold ||
+              currentOffset.dy < verticalThreshold) {
+            setState(() {
+              _showWeatherCard = false;
+            });
+          }
+          _weatherCardOffset.value = Offset.zero;
+        },
+        child: ValueListenableBuilder<Offset>(
+          valueListenable: _weatherCardOffset,
+          builder: (context, offset, child) {
+            return AnimatedContainer(
+              duration: offset == Offset.zero
+                  ? const Duration(milliseconds: 200)
+                  : Duration.zero,
+              transform: Matrix4.translationValues(
+                offset.dx,
+                offset.dy.clamp(-100.0, 20.0),
+                0,
+              ),
+              child: Opacity(
+                opacity: (1 - (offset.distance / 150)).clamp(0.3, 1.0),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.7),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: Colors.white.withOpacity(0.35),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.12),
+                            blurRadius: 12,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: _buildWeatherCardContent(),
+                    ),
+                  ),
                 ),
-              ],
-            ),
-            child: _buildWeatherCardContent(),
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -955,20 +1124,7 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   Future<_WeatherData> _fetchWeatherForAngeles() async {
-    const lat = 15.1450;
-    const lon = 120.5887;
-    final uri = Uri.parse(
-      'https://api.open-meteo.com/v1/forecast'
-      '?latitude=$lat&longitude=$lon'
-      '&current_weather=true'
-      '&daily=temperature_2m_max,temperature_2m_min,weathercode'
-      '&timezone=auto',
-    );
-    final response = await http.get(uri);
-    if (response.statusCode != 200) {
-      throw Exception('Weather request failed');
-    }
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final json = await RouteWeatherCacheService.fetchAngelesWeatherJson();
     final current = json['current_weather'] as Map<String, dynamic>?;
     final daily = json['daily'] as Map<String, dynamic>?;
     if (current == null || daily == null) {
@@ -1059,11 +1215,17 @@ class _AdminMapPageState extends State<AdminMapPage>
   }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    final responderName =
+        (UserSession.currentUserData?['fullName'] ??
+                UserSession.currentUserData?['username'] ??
+                'Responder')
+            .toString()
+            .trim();
 
     try {
       final commentPayload = {
         'text': trimmed,
-        'author': 'Admin User',
+        'author': responderName,
         'type': 'admin',
         'role': 'responder',
         'timestamp': Timestamp.now(),
@@ -1087,7 +1249,7 @@ class _AdminMapPageState extends State<AdminMapPage>
           AdminComment(
             id: DateTime.now().millisecondsSinceEpoch.toString(),
             text: trimmed,
-            author: 'Admin User',
+            author: responderName,
             timestamp: DateTime.now(),
             position: position,
             reportId: reportId,
@@ -1145,6 +1307,9 @@ class _AdminMapPageState extends State<AdminMapPage>
   Future<bool> _updateIncidentStatus(String reportId, String status) async {
     try {
       final statusLower = status.trim().toLowerCase();
+      if (_isDuplicateStatusWrite(reportId, statusLower)) {
+        return true;
+      }
       final now = Timestamp.now();
       final responderName =
           UserSession.currentUserData?['fullName'] as String? ??
@@ -1296,27 +1461,146 @@ class _AdminMapPageState extends State<AdminMapPage>
     final hasPermission = await LocationService.requestLocationPermission();
     if (!hasPermission) return;
     _responderLocationSub?.cancel();
-    _responderLocationSub =
-        LocationService.getPositionStream(distanceFilterMeters: 5).listen((
-          position,
-        ) {
-          final point = LatLng(position.latitude, position.longitude);
-          if (!mounted) return;
-          setState(() {
-            _userLocation = point;
+    _responderLocationFallbackTimer?.cancel();
+    try {
+      _responderLocationSub =
+          LocationService.getPositionStream(distanceFilterMeters: 5).listen(
+            _handleResponderLocationPosition,
+            onError: (Object error, StackTrace stackTrace) {
+              _debugLog('Responder location stream error: $error');
+              _startResponderLocationPollingFallback();
+            },
+            onDone: _startResponderLocationPollingFallback,
+          );
+    } catch (e) {
+      _debugLog('Failed to start responder location stream: $e');
+      _startResponderLocationPollingFallback();
+    }
+  }
+
+  void _handleResponderLocationPosition(Position position) {
+    final point = LatLng(position.latitude, position.longitude);
+    _userLocation = point;
+    _trackingUserLocationNotifier.value = point;
+    final reportId = _activeReportId;
+    if (reportId == null) return;
+    _scheduleResponderLocationWrite(reportId: reportId, point: point);
+  }
+
+  void _startResponderLocationPollingFallback() {
+    _responderLocationFallbackTimer?.cancel();
+    _responderLocationFallbackTimer = Timer.periodic(
+      const Duration(seconds: 4),
+      (_) async {
+        final position = await LocationService.getCurrentPosition();
+        if (position == null) {
+          return;
+        }
+        if (!mounted) return;
+        _handleResponderLocationPosition(position);
+      },
+    );
+  }
+
+  void _scheduleResponderLocationWrite({
+    required String reportId,
+    required LatLng point,
+  }) {
+    _pendingResponderLocationWriteReportId = reportId;
+    _pendingResponderLocationWritePoint = point;
+    if (_isResponderLocationWriteInFlight) {
+      return;
+    }
+    unawaited(_flushResponderLocationWrite());
+  }
+
+  Future<void> _flushResponderLocationWrite() async {
+    final reportId = _pendingResponderLocationWriteReportId;
+    final point = _pendingResponderLocationWritePoint;
+    if (reportId == null || point == null) {
+      return;
+    }
+
+    _pendingResponderLocationWriteReportId = null;
+    _pendingResponderLocationWritePoint = null;
+
+    final now = DateTime.now();
+    final lastWriteAt = _lastResponderLocationWriteAt;
+    final lastPoint = _lastResponderLocationWritePoint;
+    final sameReport = _lastResponderLocationWriteReportId == reportId;
+    final movedMeters = lastPoint == null
+        ? double.infinity
+        : const Distance().as(LengthUnit.Meter, lastPoint, point);
+    final elapsed = lastWriteAt == null
+        ? _responderLocationWriteMinInterval
+        : now.difference(lastWriteAt);
+
+    if (sameReport &&
+        elapsed < _responderLocationWriteMinInterval &&
+        movedMeters < _responderLocationWriteMinMoveMeters) {
+      return;
+    }
+
+    _isResponderLocationWriteInFlight = true;
+    try {
+      await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .update({
+            'responderLocation': GeoPoint(point.latitude, point.longitude),
+            'responderLocationLat': point.latitude,
+            'responderLocationLng': point.longitude,
+            'responderLocationUpdatedAt': Timestamp.now(),
           });
-          final reportId = _activeReportId;
-          if (reportId == null) return;
-          FirebaseFirestore.instance
-              .collection('reports')
-              .doc(reportId)
-              .update({
-                'responderLocation': GeoPoint(point.latitude, point.longitude),
-                'responderLocationLat': point.latitude,
-                'responderLocationLng': point.longitude,
-                'responderLocationUpdatedAt': Timestamp.now(),
-              });
-        });
+      _lastResponderLocationWriteAt = DateTime.now();
+      _lastResponderLocationWritePoint = point;
+      _lastResponderLocationWriteReportId = reportId;
+    } catch (e) {
+      _debugLog('Failed to sync responder location: $e');
+    } finally {
+      _isResponderLocationWriteInFlight = false;
+      if (_pendingResponderLocationWriteReportId != null &&
+          _pendingResponderLocationWritePoint != null) {
+        unawaited(_flushResponderLocationWrite());
+      }
+    }
+  }
+
+  String _canonicalResponderStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    switch (normalized) {
+      case 'resolved':
+      case 'incident resolved':
+        return 'RESOLVED';
+      case 'flagged':
+      case 'unverified':
+      case 'admin flagged':
+        return 'FLAGGED';
+      case 'responding':
+        return 'RESPONDING';
+      case 'on scene':
+        return 'ON SCENE';
+      case 'pending':
+        return 'PENDING';
+      case 'approved':
+        return 'APPROVED';
+      default:
+        return _normalizeStatusLabel(status);
+    }
+  }
+
+  bool _isDuplicateStatusWrite(String reportId, String requestedStatus) {
+    final reportData = _reportsById[reportId];
+    if (reportData == null) {
+      return false;
+    }
+    final currentStatus =
+        (reportData['responderStatus'] ?? reportData['status'])?.toString();
+    if (currentStatus == null || currentStatus.trim().isEmpty) {
+      return false;
+    }
+    return _canonicalResponderStatus(currentStatus) ==
+        _canonicalResponderStatus(requestedStatus);
   }
 
   void _subscribeToReportsRealtime() {
@@ -1533,11 +1817,12 @@ class _AdminMapPageState extends State<AdminMapPage>
     }
     final mediaUrl = activeData['mediaUrl'] as String?;
     final mediaType = (activeData['mediaType'] as String?)?.toLowerCase();
+    const incidentMediaHeight = 140.0;
     final incidentUpper = incidentType.toUpperCase();
     final isVehicular = incidentUpper == 'VEHICULAR';
     final isFireOrFlood = incidentUpper == 'FIRE' || incidentUpper == 'FLOOD';
     _activeReportId = reportId;
-    _destination = position;
+    _destination = incidentLocation;
     final initialStatus = _normalizeStatusLabel(
       activeData['responderStatus'] as String? ??
           activeData['status'] as String? ??
@@ -1857,16 +2142,42 @@ class _AdminMapPageState extends State<AdminMapPage>
                             child: mediaType == 'photo'
                                 ? CachedNetworkImage(
                                     imageUrl: mediaUrl,
-                                    height: 200,
+                                    height: incidentMediaHeight,
                                     width: double.infinity,
                                     fit: BoxFit.cover,
+                                    placeholder: (context, url) => Container(
+                                      height: incidentMediaHeight,
+                                      width: double.infinity,
+                                      color: const Color(0xFFF3F4F6),
+                                      alignment: Alignment.center,
+                                      child: const SizedBox(
+                                        height: 18,
+                                        width: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: AppColors.appRed,
+                                        ),
+                                      ),
+                                    ),
                                     memCacheHeight: 400,
                                     maxHeightDiskCache: 400,
-                                    errorWidget: (_, __, ___) =>
-                                        const SizedBox.shrink(),
+                                    errorWidget: (_, __, ___) => Container(
+                                      height: 96,
+                                      width: double.infinity,
+                                      color: const Color(0xFFF3F4F6),
+                                      alignment: Alignment.center,
+                                      child: const Text(
+                                        'Unable to load attachment',
+                                        style: TextStyle(
+                                          fontFamily: 'Roboto',
+                                          fontSize: 12,
+                                          color: Color(0xFF6B7280),
+                                        ),
+                                      ),
+                                    ),
                                   )
                                 : Container(
-                                    height: 200,
+                                    height: 120,
                                     width: double.infinity,
                                     color: const Color(0xFFF3F4F6),
                                     child: const Center(
@@ -1882,7 +2193,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                                   ),
                           ),
                         ],
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 12),
                         const Text(
                           'Admin Comments',
                           style: TextStyle(
@@ -1951,8 +2262,12 @@ class _AdminMapPageState extends State<AdminMapPage>
                               child: OutlinedButton(
                                 onPressed: () {
                                   Navigator.pop(context);
-                                  _destination = position;
-                                  _calculateRoute();
+                                  _activeReportId = reportId;
+                                  _destination = incidentLocation;
+                                  _lastRouteCalcAt = null;
+                                  _lastRouteCalcOrigin = null;
+                                  _lastRouteCalcDestination = null;
+                                  _scheduleRouteCalculation(immediate: true);
                                 },
                                 style: OutlinedButton.styleFrom(
                                   side: const BorderSide(
@@ -2084,20 +2399,43 @@ class _AdminMapPageState extends State<AdminMapPage>
     return showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        backgroundColor: AppColors.appOffWhite,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(24),
+          side: const BorderSide(color: AppColors.appOffYellow, width: 1.2),
+        ),
         title: Text('Update Status', style: AppText.subheading),
         content: Text('Set incident status to $status?', style: AppText.body),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            style: TextButton.styleFrom(foregroundColor: AppColors.appRed),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(
+                fontFamily: 'Roboto',
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFFC806),
-              foregroundColor: Colors.white,
+              backgroundColor: AppColors.appOffYellow,
+              foregroundColor: AppColors.appBlack,
+              elevation: 2,
+              shape: const StadiumBorder(),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-            child: const Text('Confirm'),
+            child: const Text(
+              'Confirm',
+              style: TextStyle(
+                fontFamily: 'Roboto',
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
@@ -2107,16 +2445,67 @@ class _AdminMapPageState extends State<AdminMapPage>
   Future<void> _syncUserLocation() async {
     final position = await LocationService.getCurrentPosition();
     if (position == null) return;
-    if (!mounted) return;
-    setState(() {
-      _userLocation = LatLng(position.latitude, position.longitude);
+    final next = LatLng(position.latitude, position.longitude);
+    _userLocation = next;
+    _trackingUserLocationNotifier.value = next;
+  }
+
+  void _scheduleRouteCalculation({bool immediate = false}) {
+    _routeRecalcDebounce?.cancel();
+    if (immediate) {
+      unawaited(_calculateRoute());
+      return;
+    }
+    _routeRecalcDebounce = Timer(_routeRecalcDebounceDuration, () {
+      if (!mounted) return;
+      unawaited(_calculateRoute());
     });
+  }
+
+  bool _hasMeaningfulRouteChange(LatLng origin, LatLng destination) {
+    final lastOrigin = _lastRouteCalcOrigin;
+    final lastDestination = _lastRouteCalcDestination;
+    if (lastOrigin == null || lastDestination == null) {
+      return true;
+    }
+    final originMoved = const Distance().as(
+      LengthUnit.Meter,
+      lastOrigin,
+      origin,
+    );
+    final destinationMoved = const Distance().as(
+      LengthUnit.Meter,
+      lastDestination,
+      destination,
+    );
+    return originMoved >= _routeRecalcMinMoveMeters ||
+        destinationMoved >= _routeRecalcMinMoveMeters;
   }
 
   Future<void> _calculateRoute() async {
     if (_destination == null) return;
+
+    if (_routeCalcInFlight) {
+      _routeCalcQueued = true;
+      return;
+    }
+
     await _syncUserLocation();
-    if (_userLocation == null) return;
+    final origin = _userLocation;
+    final destination = _destination;
+    if (origin == null || destination == null) return;
+
+    final now = DateTime.now();
+    if (_lastRouteCalcAt != null &&
+        now.difference(_lastRouteCalcAt!) < _routeRecalcMinInterval &&
+        !_hasMeaningfulRouteChange(origin, destination)) {
+      return;
+    }
+
+    _routeCalcInFlight = true;
+    _lastRouteCalcAt = now;
+    _lastRouteCalcOrigin = origin;
+    _lastRouteCalcDestination = destination;
 
     setState(() {
       _isRouting = true;
@@ -2127,36 +2516,27 @@ class _AdminMapPageState extends State<AdminMapPage>
     });
 
     try {
-      final osrmRoute = await _fetchRouteFromOsrm(
-        _userLocation!,
-        _destination!,
-      );
+      final osrmRoute = await _fetchRouteFromOsrm(origin, destination);
       if (osrmRoute != null && osrmRoute.points.isNotEmpty) {
         _routePoints = osrmRoute.points;
         _estimatedDistance = osrmRoute.distanceMeters / 1000;
         _estimatedTime = _formatDurationFromSeconds(osrmRoute.durationSeconds);
       } else {
-        _routePoints = _generateSimulatedRoute(_userLocation!, _destination!);
+        _routePoints = _generateSimulatedRoute(origin, destination);
         final distance = _calculateDistance(_routePoints);
         _estimatedDistance = distance;
         _estimatedTime = _calculateEstimatedTime(distance);
       }
 
-      // Add markers
-      _routeMarkers.addAll([
+      // Add destination marker only to avoid extra blue pin overlays.
+      _routeMarkers.add(
         Marker(
-          point: _userLocation!,
-          width: 40,
-          height: 40,
-          child: const Icon(Icons.location_on, color: Colors.blue, size: 40),
-        ),
-        Marker(
-          point: _destination!,
+          point: destination,
           width: 40,
           height: 40,
           child: const Icon(Icons.flag, color: Colors.red, size: 40),
         ),
-      ]);
+      );
 
       // Add route polylines with subtle casing for visibility
       _routePolylines.addAll([
@@ -2185,9 +2565,16 @@ class _AdminMapPageState extends State<AdminMapPage>
       _debugLog('Error calculating route: $e');
       _routeInstructions = 'Failed to calculate route';
     } finally {
-      setState(() {
-        _isRouting = false;
-      });
+      _routeCalcInFlight = false;
+      if (mounted) {
+        setState(() {
+          _isRouting = false;
+        });
+      }
+      if (_routeCalcQueued) {
+        _routeCalcQueued = false;
+        _scheduleRouteCalculation(immediate: true);
+      }
     }
   }
 
@@ -2216,11 +2603,10 @@ class _AdminMapPageState extends State<AdminMapPage>
       '${end.longitude},${end.latitude}'
       '?overview=full&geometries=geojson&alternatives=true',
     );
-    final response = await http.get(uri);
-    if (response.statusCode != 200) {
+    final data = await RouteWeatherCacheService.fetchRouteJson(uri);
+    if (data == null) {
       return null;
     }
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
     final routes = data['routes'] as List<dynamic>?;
     if (routes == null || routes.isEmpty) {
       return null;
@@ -2630,13 +3016,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                 onPositionChanged: (_, __) {
                   _scheduleViewportMarkerRefresh();
                 },
-                onTap: (position, latlng) {
-                  // Allow setting destination by tapping on map
-                  if (!_isRouting) {
-                    _destination = latlng;
-                    _calculateRoute();
-                  }
-                },
+                onTap: (_, __) {},
               ),
               children: [
                 // Map tiles from OpenStreetMap
@@ -2693,30 +3073,15 @@ class _AdminMapPageState extends State<AdminMapPage>
                 // Incident markers
                 MarkerLayer(markers: _incidentMarkers),
 
-                // Reporter location markers (shared live location)
-                if (_reporterMarkers.isNotEmpty)
-                  MarkerLayer(markers: _reporterMarkers),
-
                 // Route markers (user location and destination)
                 if (_routeMarkers.isNotEmpty)
                   MarkerLayer(markers: _routeMarkers),
 
                 // User location marker when tracking
-                if (_userLocation != null && _isTracking)
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _userLocation!,
-                        width: 50,
-                        height: 50,
-                        child: const Icon(
-                          Icons.navigation,
-                          color: Colors.blue,
-                          size: 40,
-                        ),
-                      ),
-                    ],
-                  ),
+                _TrackingUserMarkerLayer(
+                  userLocationListenable: _trackingUserLocationNotifier,
+                  isTracking: _isTracking,
+                ),
 
                 // Attribution (required for OSM)
                 RichAttributionWidget(
@@ -2852,9 +3217,15 @@ class _AdminMapPageState extends State<AdminMapPage>
               right: 16,
               left: 16,
               child: Card(
+                color: AppColors.appOffWhite,
+                surfaceTintColor: Colors.transparent,
                 elevation: 10,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
+                  side: const BorderSide(
+                    color: AppColors.appOffYellow,
+                    width: 1.2,
+                  ),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -2870,7 +3241,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                                 width: 36,
                                 height: 36,
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFAC1B22),
+                                  color: AppColors.appRed,
                                   borderRadius: BorderRadius.circular(10),
                                 ),
                                 child: const Icon(
@@ -2886,13 +3257,17 @@ class _AdminMapPageState extends State<AdminMapPage>
                                   fontFamily: 'Roboto',
                                   fontWeight: FontWeight.w700,
                                   fontSize: 16,
-                                  color: Color(0xFFAC1B22),
+                                  color: AppColors.appRed,
                                 ),
                               ),
                             ],
                           ),
                           IconButton(
-                            icon: const Icon(Icons.close, size: 20),
+                            icon: const Icon(
+                              Icons.close,
+                              size: 20,
+                              color: AppColors.appBlack,
+                            ),
                             onPressed: _clearRoute,
                           ),
                         ],
@@ -2904,13 +3279,16 @@ class _AdminMapPageState extends State<AdminMapPage>
                           fontFamily: 'Roboto',
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFFAC1B22),
+                          color: AppColors.appRed,
                         ),
                       ),
                       const SizedBox(height: 8),
                       Text(
                         _routeInstructions,
-                        style: const TextStyle(fontSize: 15),
+                        style: const TextStyle(
+                          fontSize: 15,
+                          color: AppColors.appBlack,
+                        ),
                         maxLines: 5,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -2918,9 +3296,9 @@ class _AdminMapPageState extends State<AdminMapPage>
                       if (_currentStepIndex > 0)
                         LinearProgressIndicator(
                           value: _currentStepIndex / 3,
-                          backgroundColor: Colors.grey[200],
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Theme.of(context).primaryColor,
+                          backgroundColor: AppColors.appBrightWhite,
+                          valueColor: const AlwaysStoppedAnimation<Color>(
+                            AppColors.appRed,
                           ),
                         ),
                       const SizedBox(height: 8),
@@ -2928,7 +3306,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                         ElevatedButton(
                           onPressed: _startTracking,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFAC1B22),
+                            backgroundColor: AppColors.appRed,
                             minimumSize: const Size(double.infinity, 40),
                           ),
                           child: const Row(
@@ -2951,7 +3329,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                         ElevatedButton(
                           onPressed: _stopTracking,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red,
+                            backgroundColor: AppColors.appRed,
                             minimumSize: const Size(double.infinity, 40),
                           ),
                           child: const Row(
@@ -2994,6 +3372,42 @@ class _AdminMapPageState extends State<AdminMapPage>
           _buildWeatherCard(),
         ],
       ),
+    );
+  }
+}
+
+class _TrackingUserMarkerLayer extends StatelessWidget {
+  const _TrackingUserMarkerLayer({
+    required this.userLocationListenable,
+    required this.isTracking,
+  });
+
+  final ValueListenable<LatLng?> userLocationListenable;
+  final bool isTracking;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isTracking) {
+      return const SizedBox.shrink();
+    }
+
+    return ValueListenableBuilder<LatLng?>(
+      valueListenable: userLocationListenable,
+      builder: (context, location, _) {
+        if (location == null) {
+          return const SizedBox.shrink();
+        }
+        return MarkerLayer(
+          markers: [
+            Marker(
+              point: location,
+              width: 50,
+              height: 50,
+              child: const Icon(Icons.navigation, color: Colors.blue, size: 40),
+            ),
+          ],
+        );
+      },
     );
   }
 }

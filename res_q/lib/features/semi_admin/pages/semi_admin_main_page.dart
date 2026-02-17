@@ -5,10 +5,12 @@ import 'semi_admin_map_page.dart';
 import '../../community/pages/community_page.dart';
 import '../../notifications/pages/notifications_page.dart';
 import '../../profile/pages/profile_page.dart';
+import '../../../common/services/app_asset_precache_service.dart';
 import '../../../common/services/notification_service.dart';
 import '../../../common/services/shell_navigation_service.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
+import '../../../common/widgets/mandatory_permission_gate.dart';
 
 class SemiAdminMainPage extends StatelessWidget {
   const SemiAdminMainPage({
@@ -36,61 +38,60 @@ class SemiAdminMainPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final safeIndex = currentIndex.clamp(0, pages.length - 1);
 
-    return Scaffold(
-      backgroundColor: appOffWhite,
-      bottomNavigationBar: BottomNavBar(
-        currentIndex: safeIndex,
-        onTap: onTap,
-        itemConfigs: const [
-          BottomNavItemConfig(
-            label: "MAP",
-            activeIconPath: "$_navIconSvgPath/NAV-MAPS-ICON-YELLOW.svg",
-            inactiveIconPath: "$_navIconSvgPath/NAV-MAPS-ICON.svg",
-          ),
-          BottomNavItemConfig(
-            label: "COMMUNITY",
-            activeIconPath: "$_navIconSvgPath/NAV-COMMUNITY-ICON-YELLOW.svg",
-            inactiveIconPath: "$_navIconSvgPath/NAV-COMMUNITY-ICON.svg",
-          ),
-          BottomNavItemConfig(
-            label: "NOTIFICATION",
-            activeIconPath:
-                "$_navIconSvgPath/NAV-NOTIFICATIONS-ICON-YELLOW.svg",
-            inactiveIconPath: "$_navIconSvgPath/NAV-NOTIFICATIONS-ICON.svg",
-          ),
-          BottomNavItemConfig(
-            label: "PROFILE",
-            activeIconPath: "$_navIconSvgPath/NAV-PROFILE-ICON-YELLOW.svg",
-            inactiveIconPath: "$_navIconSvgPath/NAV-PROFILE-ICON.svg",
-          ),
-        ],
-      ),
-      body: SafeArea(
-        bottom: false,
-        child: Stack(
-          fit: StackFit.expand,
-          children: List<Widget>.generate(pages.length, (index) {
-            final isActive = index == safeIndex;
-            return Positioned.fill(
-              child: ExcludeSemantics(
-                excluding: !isActive,
-                child: IgnorePointer(
-                  ignoring: !isActive,
-                  child: TickerMode(
-                    enabled: isActive,
+    return MandatoryPermissionGate(
+      child: Scaffold(
+        backgroundColor: appOffWhite,
+        bottomNavigationBar: BottomNavBar(
+          currentIndex: safeIndex,
+          onTap: onTap,
+          itemConfigs: const [
+            BottomNavItemConfig(
+              label: "MAP",
+              activeIconPath: "$_navIconSvgPath/NAV-MAPS-ICON-YELLOW.svg",
+              inactiveIconPath: "$_navIconSvgPath/NAV-MAPS-ICON.svg",
+            ),
+            BottomNavItemConfig(
+              label: "COMMUNITY",
+              activeIconPath: "$_navIconSvgPath/NAV-COMMUNITY-ICON-YELLOW.svg",
+              inactiveIconPath: "$_navIconSvgPath/NAV-COMMUNITY-ICON.svg",
+            ),
+            BottomNavItemConfig(
+              label: "NOTIFICATION",
+              activeIconPath:
+                  "$_navIconSvgPath/NAV-NOTIFICATIONS-ICON-YELLOW.svg",
+              inactiveIconPath: "$_navIconSvgPath/NAV-NOTIFICATIONS-ICON.svg",
+            ),
+            BottomNavItemConfig(
+              label: "PROFILE",
+              activeIconPath: "$_navIconSvgPath/NAV-PROFILE-ICON-YELLOW.svg",
+              inactiveIconPath: "$_navIconSvgPath/NAV-PROFILE-ICON.svg",
+            ),
+          ],
+        ),
+        body: SafeArea(
+          bottom: false,
+          child: Stack(
+            fit: StackFit.expand,
+            children: List<Widget>.generate(pages.length, (index) {
+              final isActive = index == safeIndex;
+              return Positioned.fill(
+                child: ExcludeSemantics(
+                  excluding: !isActive,
+                  child: IgnorePointer(
+                    ignoring: !isActive,
                     child: AnimatedOpacity(
                       opacity: isActive ? 1 : 0,
                       duration: _tabTransitionDuration,
                       curve: isActive
                           ? Curves.easeOutCubic
                           : Curves.easeInCubic,
-                      child: pages[index],
+                      child: TickerMode(enabled: isActive, child: pages[index]),
                     ),
                   ),
                 ),
-              ),
-            );
-          }),
+              );
+            }),
+          ),
         ),
       ),
     );
@@ -107,6 +108,14 @@ class SemiAdminMainScreen extends StatefulWidget {
 class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
   int _currentIndex = 0;
   final Set<int> _loadedTabs = {0};
+  final Map<int, int> _tabReloadTokens = <int, int>{};
+  String? _currentMapReportId;
+
+  int _reloadTokenFor(int tabIndex) => _tabReloadTokens[tabIndex] ?? 0;
+
+  void _markTabForReset(int tabIndex) {
+    _tabReloadTokens[tabIndex] = _reloadTokenFor(tabIndex) + 1;
+  }
 
   @override
   void initState() {
@@ -129,6 +138,8 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
   }
 
   Future<void> _initializePostLoginServices() async {
+    unawaited(AppAssetPrecacheService.warmUpPostLoginAssets(context));
+
     String? userId;
     try {
       userId = UserSession.getUserId();
@@ -152,9 +163,18 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
     final command = SemiAdminShellNavigationService.commands.value;
     if (command == null || !mounted) return;
     final nextIndex = command.tabIndex.clamp(0, 3);
+    final reportId = command.reportId?.trim();
     setState(() {
+      _markTabForReset(nextIndex);
       _currentIndex = nextIndex;
       _loadedTabs.add(nextIndex);
+      if (reportId != null && reportId.isNotEmpty) {
+        _currentMapReportId = reportId;
+        _loadedTabs.add(0);
+        _markTabForReset(0);
+      } else if (nextIndex == 0) {
+        _currentMapReportId = null;
+      }
     });
   }
 
@@ -163,16 +183,35 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
       if (!_loadedTabs.contains(index)) {
         return const SizedBox.shrink();
       }
+      final reloadToken = _reloadTokenFor(index);
 
       switch (index) {
         case 0:
-          return const AdminMapPage();
+          final reportToken =
+              (_currentMapReportId == null || _currentMapReportId!.isEmpty)
+              ? 'none'
+              : _currentMapReportId!;
+          return KeyedSubtree(
+            key: ValueKey('semi-map-tab-$reportToken-$reloadToken'),
+            child: AdminMapPage(
+              initialReportId: reportToken == 'none' ? null : reportToken,
+            ),
+          );
         case 1:
-          return const CommunityPage();
+          return KeyedSubtree(
+            key: ValueKey('semi-community-tab-$reloadToken'),
+            child: const CommunityPage(),
+          );
         case 2:
-          return const NotificationsPage();
+          return KeyedSubtree(
+            key: ValueKey('semi-notifications-tab-$reloadToken'),
+            child: const NotificationsPage(),
+          );
         case 3:
-          return const ProfilePage();
+          return KeyedSubtree(
+            key: ValueKey('semi-profile-tab-$reloadToken'),
+            child: const ProfilePage(),
+          );
         default:
           return const SizedBox.shrink();
       }
@@ -185,8 +224,11 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
       currentIndex: _currentIndex,
       pages: _buildLazyPages(),
       onTap: (index) {
-        if (index == _currentIndex) return;
         setState(() {
+          if (index == 0) {
+            _currentMapReportId = null;
+          }
+          _markTabForReset(index);
           _currentIndex = index;
           _loadedTabs.add(index);
         });

@@ -236,6 +236,13 @@
     line-height: 1.15;
   }
 
+  .report-title-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
   .meta-group {
     display: flex;
     gap: 4px;
@@ -351,6 +358,34 @@
     background-color: #8f161c;
     transform: translateY(-2px);
     box-shadow: 0 3px 8px rgba(172, 27, 34, 0.35);
+  }
+
+  .btn-delete {
+    background-color: #111827;
+    color: #ffffff;
+  }
+
+  .btn-delete:hover {
+    background-color: #000000;
+    transform: translateY(-2px);
+    box-shadow: 0 3px 8px rgba(17, 24, 39, 0.38);
+  }
+
+  .btn-delete-inline {
+    background-color: #111827;
+    color: #ffffff;
+    padding: 8px 14px;
+    font-size: 13px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    line-height: 1.1;
+  }
+
+  .btn-delete-inline:hover {
+    background-color: #000000;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(17, 24, 39, 0.32);
   }
 
   .btn-revert {
@@ -628,6 +663,13 @@
     box-shadow: 0 4px 12px rgba(255, 200, 6, 0.4);
   }
 
+  .btn-modal[disabled] {
+    opacity: 0.6;
+    cursor: default;
+    transform: none;
+    box-shadow: none;
+  }
+
   /* APPROVAL TIMELINE */
   .approval-timeline {
     flex: 0 0 200px;
@@ -701,6 +743,11 @@
 
     .report-title {
       font-size: clamp(21px, 6vw, 26px);
+    }
+
+    .report-title-row {
+      align-items: center;
+      flex-wrap: wrap;
     }
 
     .meta-group {

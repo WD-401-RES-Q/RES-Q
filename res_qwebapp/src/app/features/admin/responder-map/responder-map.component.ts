@@ -87,6 +87,12 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
   private reportsUnsubscribe?: Unsubscribe;
   private respondersUnsubscribe?: Unsubscribe;
   private respondersRaw: ResponderProfile[] = [];
+  private reportsRetryTimer?: ReturnType<typeof setTimeout>;
+  private respondersRetryTimer?: ReturnType<typeof setTimeout>;
+  private reportsRetryAttempt = 0;
+  private respondersRetryAttempt = 0;
+  private reportsStreamOnline = false;
+  private respondersStreamOnline = false;
 
   private responderMarkerByReportId = new Map<string, any>();
   private reportMarkerByReportId = new Map<string, any>();
@@ -146,6 +152,12 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     }
     if (this.routeRefreshTimer) {
       clearTimeout(this.routeRefreshTimer);
+    }
+    if (this.reportsRetryTimer) {
+      clearTimeout(this.reportsRetryTimer);
+    }
+    if (this.respondersRetryTimer) {
+      clearTimeout(this.respondersRetryTimer);
     }
     this.clearSelectedRoute();
     if (this.map) {
@@ -597,6 +609,10 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
   }
 
   private startRealtimeTracking(): void {
+    if (this.reportsUnsubscribe) {
+      this.reportsUnsubscribe();
+      this.reportsUnsubscribe = undefined;
+    }
     const reportsRef = collection(db, 'reports');
     this.reportsUnsubscribe = onSnapshot(
       reportsRef,
@@ -664,25 +680,40 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
         });
 
         this.ngZone.run(() => {
+          if (this.reportsRetryTimer) {
+            clearTimeout(this.reportsRetryTimer);
+            this.reportsRetryTimer = undefined;
+          }
+          this.reportsRetryAttempt = 0;
+          this.reportsStreamOnline = true;
           this.reports = nextReports;
           this.syncDerivedState();
           this.isLoading = false;
-          this.isListening = true;
+          this.updateLiveIndicator();
+          if (this.isListening) {
+            this.mapLoadError = '';
+          }
           this.updateMarkers();
           this.scheduleRouteRefresh();
         });
       },
       () => {
         this.ngZone.run(() => {
-          this.mapLoadError = 'Unable to subscribe to responder updates.';
-          this.isListening = false;
+          this.reportsStreamOnline = false;
+          this.updateLiveIndicator();
+          this.mapLoadError = 'Connection interrupted. Reconnecting report updates...';
           this.isLoading = false;
+          this.scheduleRealtimeRetry('reports');
         });
       },
     );
   }
 
   private startResponderRoster(): void {
+    if (this.respondersUnsubscribe) {
+      this.respondersUnsubscribe();
+      this.respondersUnsubscribe = undefined;
+    }
     const respondersRef = collection(db, 'semi_admins');
     this.respondersUnsubscribe = onSnapshot(
       respondersRef,
@@ -698,34 +729,92 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
             typeof data?.isLoggedIn === 'boolean'
               ? data.isLoggedIn
               : false;
+          const explicitAvailability =
+            typeof data?.isAvailable === 'boolean' ? data.isAvailable : null;
 
           const activityStatus: 'available' | 'busy' | 'offline' =
-            !isLoggedIn ? 'offline' : statusRaw === 'busy' ? 'busy' : 'available';
+            !isLoggedIn || statusRaw === 'offline'
+              ? 'offline'
+              : statusRaw === 'busy' ||
+                  statusRaw === 'unavailable' ||
+                  explicitAvailability === false
+                ? 'busy'
+                : 'available';
 
           return {
             id: snapshotDoc.id,
             fullName:
               (data?.fullName ?? data?.username ?? data?.name ?? snapshotDoc.id).toString(),
             contactNumber:
-              typeof data?.contactNumber === 'string' ? data.contactNumber : null,
+              typeof data?.contactNumber === 'string'
+                ? data.contactNumber
+                : typeof data?.phoneNumber === 'string'
+                  ? data.phoneNumber
+                  : null,
             role: typeof data?.role === 'string' ? data.role : null,
             isLoggedIn,
             activityStatus,
-            isAvailable: isLoggedIn && activityStatus === 'available',
+            isAvailable: activityStatus === 'available',
           };
         });
 
         this.ngZone.run(() => {
+          if (this.respondersRetryTimer) {
+            clearTimeout(this.respondersRetryTimer);
+            this.respondersRetryTimer = undefined;
+          }
+          this.respondersRetryAttempt = 0;
+          this.respondersStreamOnline = true;
+          this.updateLiveIndicator();
           this.respondersRaw = nextResponders;
           this.syncDerivedState();
+          if (this.isListening) {
+            this.mapLoadError = '';
+          }
         });
       },
       () => {
         this.ngZone.run(() => {
-          this.mapLoadError = 'Unable to load responder roster.';
+          this.respondersStreamOnline = false;
+          this.updateLiveIndicator();
+          this.mapLoadError = 'Connection interrupted. Reconnecting responder roster...';
+          this.scheduleRealtimeRetry('responders');
         });
       },
     );
+  }
+
+  private updateLiveIndicator(): void {
+    this.isListening = this.reportsStreamOnline && this.respondersStreamOnline;
+  }
+
+  private scheduleRealtimeRetry(stream: 'reports' | 'responders'): void {
+    const isReports = stream === 'reports';
+    const existingTimer = isReports ? this.reportsRetryTimer : this.respondersRetryTimer;
+    if (existingTimer) {
+      return;
+    }
+
+    const attempt = isReports ? this.reportsRetryAttempt : this.respondersRetryAttempt;
+    const delayMs = Math.min(15000, 1000 * Math.pow(2, attempt));
+
+    const timer = setTimeout(() => {
+      if (isReports) {
+        this.reportsRetryTimer = undefined;
+        this.reportsRetryAttempt += 1;
+        this.startRealtimeTracking();
+      } else {
+        this.respondersRetryTimer = undefined;
+        this.respondersRetryAttempt += 1;
+        this.startResponderRoster();
+      }
+    }, delayMs);
+
+    if (isReports) {
+      this.reportsRetryTimer = timer;
+    } else {
+      this.respondersRetryTimer = timer;
+    }
   }
 
   private syncDerivedState(): void {
@@ -738,7 +827,14 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       return bTime - aTime;
     });
 
-    this.pendingReports.sort((a, b) => a.reportId.localeCompare(b.reportId));
+    this.pendingReports.sort((a, b) => {
+      const aTime = a.reportedAt?.getTime() ?? 0;
+      const bTime = b.reportedAt?.getTime() ?? 0;
+      if (aTime !== bTime) {
+        return bTime - aTime;
+      }
+      return b.reportId.localeCompare(a.reportId);
+    });
 
     this.recomputeResponderAvailability();
 
@@ -778,11 +874,12 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
         const assignment = this.activeDeployments.find((track) =>
           this.isTrackAssignedToResponder(track, responder),
         );
-        const activityStatus: 'available' | 'busy' | 'offline' = !responder.isLoggedIn
-          ? 'offline'
-          : assignment
-            ? 'busy'
-            : 'available';
+        const activityStatus: 'available' | 'busy' | 'offline' =
+          !responder.isLoggedIn || responder.activityStatus === 'offline'
+            ? 'offline'
+            : assignment || responder.activityStatus === 'busy'
+              ? 'busy'
+              : 'available';
 
         return {
           ...responder,

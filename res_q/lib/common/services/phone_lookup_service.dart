@@ -9,21 +9,27 @@ class PhoneLookupResult {
     required this.hasSemiAdminAccount,
     required this.hasApprovedAccount,
     required this.isPendingAccount,
+    this.isBannedAccount = false,
+    this.isPermanentBan = false,
+    this.bannedUntil,
+    this.banReasons = const <String>[],
   });
 
   final bool hasSemiAdminAccount;
   final bool hasApprovedAccount;
   final bool isPendingAccount;
+  final bool isBannedAccount;
+  final bool isPermanentBan;
+  final DateTime? bannedUntil;
+  final List<String> banReasons;
 
   bool get hasAnyAccount => hasSemiAdminAccount || hasApprovedAccount;
   bool get hasRegistrationConflict => hasApprovedAccount || isPendingAccount;
+  bool get isTemporaryBan => isBannedAccount && !isPermanentBan;
 }
 
 class _PhoneLookupCacheEntry {
-  const _PhoneLookupCacheEntry({
-    required this.result,
-    required this.checkedAt,
-  });
+  const _PhoneLookupCacheEntry({required this.result, required this.checkedAt});
 
   final PhoneLookupResult result;
   final DateTime checkedAt;
@@ -43,6 +49,48 @@ class PhoneLookupService {
   final Map<String, Timer> _debounceTimers = {};
   final Map<String, Completer<PhoneLookupResult?>> _debounceCompleters = {};
   final Map<String, int> _debounceTokens = {};
+
+  bool _isBannedStatus(dynamic accountStatus) {
+    return accountStatus is String &&
+        accountStatus.trim().toUpperCase() == 'BANNED';
+  }
+
+  bool _isPermanentBan(Map<String, dynamic> data, bool isBanned) {
+    if (!isBanned) {
+      return false;
+    }
+    if (data['isPermanent'] == true) {
+      return true;
+    }
+    final banType = (data['banType'] ?? '').toString().trim().toLowerCase();
+    if (banType == 'permanent') {
+      return true;
+    }
+    return data['bannedUntil'] == null;
+  }
+
+  DateTime? _toDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value);
+    }
+    if (value is Map<String, dynamic>) {
+      final seconds = value['seconds'] ?? value['_seconds'];
+      final nanoseconds = value['nanoseconds'] ?? value['_nanoseconds'] ?? 0;
+      if (seconds is int) {
+        final nanos = nanoseconds is int
+            ? nanoseconds
+            : (nanoseconds is num ? nanoseconds.toInt() : 0);
+        return DateTime.fromMillisecondsSinceEpoch(
+          (seconds * 1000) + (nanos ~/ 1000000),
+        );
+      }
+    }
+    return null;
+  }
 
   Future<QuerySnapshot<Map<String, dynamic>>> _queryCollectionByPhone({
     required String collection,
@@ -113,10 +161,26 @@ class PhoneLookupService {
       _queryCollectionByPhone(collection: 'pending_users', phone: phone),
     ]);
 
+    final approvedQuery = queries[1];
+    Map<String, dynamic> approvedData = const <String, dynamic>{};
+    if (approvedQuery.docs.isNotEmpty) {
+      approvedData = approvedQuery.docs.first.data();
+    }
+    final isBanned = _isBannedStatus(approvedData['accountStatus']);
+    final isPermanentBan = _isPermanentBan(approvedData, isBanned);
+    final banReasons = (approvedData['banReasons'] as List<dynamic>? ?? [])
+        .map((reason) => reason.toString().trim())
+        .where((reason) => reason.isNotEmpty)
+        .toList(growable: false);
+
     return PhoneLookupResult(
       hasSemiAdminAccount: queries[0].docs.isNotEmpty,
-      hasApprovedAccount: queries[1].docs.isNotEmpty,
+      hasApprovedAccount: approvedQuery.docs.isNotEmpty,
       isPendingAccount: queries[2].docs.isNotEmpty,
+      isBannedAccount: isBanned,
+      isPermanentBan: isPermanentBan,
+      bannedUntil: _toDateTime(approvedData['bannedUntil']),
+      banReasons: banReasons,
     );
   }
 

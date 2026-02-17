@@ -37,11 +37,23 @@ class NotificationService {
     playSound: true,
   );
 
+  static const AndroidNotificationChannel _alertChannel =
+      AndroidNotificationChannel(
+        'resq_emergency_alerts',
+        'RES-Q Emergency Alerts',
+        description: 'Critical responder deployment notifications',
+        importance: Importance.max,
+        playSound: true,
+      );
+
   // Default vicinity radius in meters (5km)
   static const double defaultVicinityRadius = 5000;
 
   /// Initialize the notification service
-  Future<void> initialize({String? userId}) async {
+  Future<void> initialize({
+    String? userId,
+    bool requestPermissionsAtInit = false,
+  }) async {
     if (_isInitialized) {
       if (userId != null) {
         setUserId(userId);
@@ -51,8 +63,9 @@ class NotificationService {
 
     _currentUserId = userId;
 
-    // Request notification permissions
-    await _requestPermissions();
+    if (requestPermissionsAtInit) {
+      await _requestPermissions();
+    }
 
     // Initialize local notifications
     await _initializeLocalNotifications();
@@ -60,9 +73,12 @@ class NotificationService {
     // Set up FCM handlers
     _setupFCMHandlers();
 
-    // Subscribe to FCM topic for announcements
-    await _messaging.subscribeToTopic('announcements');
-    debugPrint('Subscribed to announcements topic');
+    // Subscribe to FCM topics for announcements and incident reports.
+    await Future.wait([
+      _messaging.subscribeToTopic('announcements'),
+      _messaging.subscribeToTopic('reports'),
+    ]);
+    debugPrint('Subscribed to FCM topics: announcements, reports');
 
     // Get and save FCM token
     await _saveFCMToken();
@@ -71,6 +87,11 @@ class NotificationService {
     await _startNearbyReportsListener();
 
     _isInitialized = true;
+  }
+
+  /// Request notification permissions explicitly (e.g., during splash).
+  Future<void> requestPermissions() async {
+    await _requestPermissions();
   }
 
   /// Request notification permissions
@@ -109,11 +130,12 @@ class NotificationService {
     );
 
     // Create notification channel for Android
-    await _localNotifications
+    final androidPlugin = _localNotifications
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(_channel);
+        >();
+    await androidPlugin?.createNotificationChannel(_channel);
+    await androidPlugin?.createNotificationChannel(_alertChannel);
   }
 
   /// Handle notification tap
@@ -173,15 +195,20 @@ class NotificationService {
     final notification = message.notification;
     if (notification == null) return;
 
-    const androidDetails = AndroidNotificationDetails(
-      'resq_notifications',
-      'RES-Q Notifications',
-      channelDescription:
-          'Notifications for nearby incidents and announcements',
-      importance: Importance.high,
-      priority: Priority.high,
+    final payloadType = (message.data['type'] ?? '').toString().trim();
+    final isResponderAssignment = payloadType == 'responder_assignment';
+
+    final androidDetails = AndroidNotificationDetails(
+      isResponderAssignment ? 'resq_emergency_alerts' : 'resq_notifications',
+      isResponderAssignment ? 'RES-Q Emergency Alerts' : 'RES-Q Notifications',
+      channelDescription: isResponderAssignment
+          ? 'Critical responder deployment notifications'
+          : 'Notifications for nearby incidents and announcements',
+      importance: isResponderAssignment ? Importance.max : Importance.high,
+      priority: isResponderAssignment ? Priority.max : Priority.high,
       playSound: true,
       icon: '@mipmap/ic_launcher',
+      color: isResponderAssignment ? const Color(0xFFAC1B22) : null,
     );
 
     const iosDetails = DarwinNotificationDetails(
@@ -190,7 +217,7 @@ class NotificationService {
       presentSound: true,
     );
 
-    const details = NotificationDetails(
+    final details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
@@ -200,7 +227,7 @@ class NotificationService {
       notification.title,
       notification.body,
       details,
-      payload: message.data['type'] ?? 'general',
+      payload: payloadType.isEmpty ? 'general' : payloadType,
     );
   }
 

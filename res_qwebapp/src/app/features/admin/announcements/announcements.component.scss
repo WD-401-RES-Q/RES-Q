@@ -156,6 +156,19 @@
   .badge.important { background: var(--resq-yellow, #FFC806); color: var(--text-dark, #212121); }
   .badge.critical { background: var(--resq-red, var(--resq-red, #AC1B22)); color: #fff; }
   .notif-title { margin: 0; font-size: 15px; font-weight: 800; font-family: 'Roboto', sans-serif; word-break: break-word; flex: 1; min-width: 0; }
+  .btn-delete-post {
+    background: #111827;
+    color: #fff;
+    margin-left: auto;
+    padding: 7px 12px;
+    font-size: 12px;
+    border-radius: 8px;
+  }
+  .btn-delete-post:hover {
+    background: #000;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 16px rgba(15, 23, 42, 0.22);
+  }
   .notif-time { margin: 0 0 8px 0; font-size: 12px; color: #6b7280; font-family: 'Roboto Condensed', sans-serif; }
   .notif-content { margin: 0; font-size: 13px; line-height: 1.6; color: #374151; font-family: 'Roboto Condensed', sans-serif; word-break: break-word; overflow-wrap: break-word; }
 
@@ -192,6 +205,12 @@
   .modal-footer { padding: 16px 20px; display: flex; justify-content: flex-end; }
   .btn-modal { padding: 8px 16px; border-radius: 10px; border: none; font-weight: 700; cursor: pointer; font-family: 'Roboto', sans-serif; }
   .btn-yes { background: linear-gradient(135deg, #ac1b22, #d12c35); color: #fff; }
+  .btn-danger { background: #ac1b22; color: #fff; }
+  .btn-danger:hover {
+    background: #8f161c;
+    box-shadow: 0 8px 16px rgba(172, 27, 34, 0.25);
+  }
+  .btn-modal[disabled] { opacity: 0.6; cursor: default; box-shadow: none; }
 
   .image-modal {
     position: fixed;

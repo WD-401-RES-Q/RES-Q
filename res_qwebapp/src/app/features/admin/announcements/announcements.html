@@ -80,6 +80,12 @@
           <div class="notif-header">
             <span class="badge" [class.important]="post.priority === 'Important'" [class.critical]="post.priority === 'Critical'">{{ post.priority }}</span>
             <h3 class="notif-title">{{ post.title }}</h3>
+            <button
+              type="button"
+              class="btn btn-delete-post"
+              (click)="requestDeleteAnnouncement(post)">
+              Delete
+            </button>
           </div>
           <p class="notif-time">{{ post.createdAt | date:'MMM d, y — h:mm a' }}</p>
           <p class="notif-content">{{ post.content }}</p>
@@ -107,6 +113,34 @@
     </div>
     <div class="modal-footer">
       <button type="button" class="btn-modal btn-yes" (click)="closeSuccessModal()">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" *ngIf="showDeleteModal" (click)="cancelDeleteAnnouncement()">
+  <div class="modal-content" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h3>Delete Announcement</h3>
+      <button class="modal-close" (click)="cancelDeleteAnnouncement()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p>This will permanently delete this announcement and its image.</p>
+    </div>
+    <div class="modal-footer">
+      <button
+        type="button"
+        class="btn-modal btn-no"
+        [disabled]="isDeletingAnnouncement"
+        (click)="cancelDeleteAnnouncement()">
+        Cancel
+      </button>
+      <button
+        type="button"
+        class="btn-modal btn-danger"
+        [disabled]="isDeletingAnnouncement"
+        (click)="confirmDeleteAnnouncement()">
+        {{ isDeletingAnnouncement ? 'Deleting...' : 'Delete' }}
+      </button>
     </div>
   </div>
 </div>

@@ -11,6 +11,9 @@ test('functions module exports expected handlers', () => {
     'getDecryptedUsers',
     'syncApprovedUsersEncryption',
     'cleanupOldReports',
+    'sendPushOnAnnouncementCreate',
+    'sendPushOnReportCreate',
+    'sendPushOnResponderDeployment',
   ];
 
   for (const name of expectedExports) {

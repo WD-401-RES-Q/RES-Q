@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../common/services/shell_navigation_service.dart';
+import '../../../common/services/user_session.dart';
 import '../../../common/widgets/auth_widgets.dart';
 
 class NotificationsPage extends StatefulWidget {
@@ -20,7 +21,52 @@ class _NotificationsPageState extends State<NotificationsPage> {
   static const appRed = Color(0xFFFFC806);
   static const appBlack = Color(0xFF212121);
   static const appWhite = Color(0xFFF7F8F3);
-  final Set<String> _optimisticallyReadIds = <String>{};
+  static const _badgeAnnouncementTextStyle = TextStyle(
+    fontSize: 9,
+    fontWeight: FontWeight.w700,
+    color: appBlack,
+    fontFamily: 'RobotoCondensed',
+    letterSpacing: 0.5,
+  );
+  static const _badgeIncidentTextStyle = TextStyle(
+    fontSize: 9,
+    fontWeight: FontWeight.w700,
+    color: Colors.white,
+    fontFamily: 'RobotoCondensed',
+    letterSpacing: 0.5,
+  );
+  static const _feedTitleNewTextStyle = TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w600,
+    color: appBlack,
+    height: 1.3,
+  );
+  static const _feedTitleReadTextStyle = TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w500,
+    color: appBlack,
+    height: 1.3,
+  );
+  static const _dialogBadgeAnnouncementTextStyle = TextStyle(
+    fontSize: 11,
+    fontWeight: FontWeight.w700,
+    color: appBlack,
+    fontFamily: 'RobotoCondensed',
+  );
+  static const _dialogBadgeIncidentTextStyle = TextStyle(
+    fontSize: 11,
+    fontWeight: FontWeight.w700,
+    color: Colors.white,
+    fontFamily: 'RobotoCondensed',
+  );
+  final ValueNotifier<Set<String>> _optimisticallyReadIdsNotifier =
+      ValueNotifier<Set<String>>(<String>{});
+
+  @override
+  void dispose() {
+    _optimisticallyReadIdsNotifier.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,6 +93,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Widget _buildUnifiedNotificationFeed() {
+    final isSemiAdmin = _isSemiAdminUser();
+    final reportFetchLimit = isSemiAdmin ? 150 : 30;
     final announcementsStream = FirebaseFirestore.instance
         .collection('announcements')
         .orderBy('createdAt', descending: true)
@@ -55,7 +103,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final reportsStream = FirebaseFirestore.instance
         .collection('reports')
         .orderBy('reportedAt', descending: true)
-        .limit(30)
+        .limit(reportFetchLimit)
         .snapshots();
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -141,32 +189,38 @@ class _NotificationsPageState extends State<NotificationsPage> {
               );
             }
 
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.08),
-                    blurRadius: 10,
-                    offset: const Offset(0, 3),
-                  ),
-                ],
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: ListView.separated(
-                padding: EdgeInsets.zero,
-                itemCount: notifications.length,
-                separatorBuilder: (_, __) => Divider(
-                  height: 1,
-                  thickness: 1,
-                  color: appBlack.withValues(alpha: 0.08),
+            return ValueListenableBuilder<Set<String>>(
+              valueListenable: _optimisticallyReadIdsNotifier,
+              builder: (context, optimisticallyReadIds, _) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
                 ),
-                itemBuilder: (context, index) {
-                  final notification = notifications[index];
-                  return _buildNotificationCard(notification);
-                },
+                clipBehavior: Clip.antiAlias,
+                child: ListView.separated(
+                  padding: EdgeInsets.zero,
+                  itemCount: notifications.length,
+                  separatorBuilder: (_, __) => Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: appBlack.withValues(alpha: 0.08),
+                  ),
+                  itemBuilder: (context, index) {
+                    final notification = notifications[index];
+                    return _buildNotificationCard(
+                      notification,
+                      optimisticallyReadIds,
+                    );
+                  },
+                ),
               ),
             );
           },
@@ -179,6 +233,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     QuerySnapshot<Map<String, dynamic>>? announcementsSnapshot,
     QuerySnapshot<Map<String, dynamic>>? reportsSnapshot,
   ) {
+    final isSemiAdmin = _isSemiAdminUser();
     final announcements = (announcementsSnapshot?.docs ?? const [])
         .where((doc) {
           final data = doc.data();
@@ -190,9 +245,17 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final reports = (reportsSnapshot?.docs ?? const [])
         .where((doc) {
           final data = doc.data();
-          return data['location'] != null;
+          if (data['location'] == null) {
+            return false;
+          }
+          if (!isSemiAdmin) {
+            return true;
+          }
+          return _isReportAssignedToCurrentResponder(data);
         })
-        .map((doc) => _NotificationItem.fromReport(doc))
+        .map(
+          (doc) => _NotificationItem.fromReport(doc, forResponder: isSemiAdmin),
+        )
         .toList();
 
     final combined = [...announcements, ...reports];
@@ -200,10 +263,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
     return combined;
   }
 
-  Widget _buildNotificationCard(_NotificationItem notification) {
+  Widget _buildNotificationCard(
+    _NotificationItem notification,
+    Set<String> optimisticallyReadIds,
+  ) {
     final isAnnouncement = notification.type == _NotificationType.announcement;
     final isNew =
-        notification.isNew && !_optimisticallyReadIds.contains(notification.id);
+        notification.isNew && !optimisticallyReadIds.contains(notification.id);
     final timeAgo = _getTimeAgo(notification.timestamp);
 
     return GestureDetector(
@@ -261,13 +327,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
                               ? 'ANNOUNCEMENT'
                               : notification.incidentType?.toUpperCase() ??
                                     'INCIDENT',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            color: isAnnouncement ? appBlack : Colors.white,
-                            fontFamily: 'RobotoCondensed',
-                            letterSpacing: 0.5,
-                          ),
+                          style: isAnnouncement
+                              ? _badgeAnnouncementTextStyle
+                              : _badgeIncidentTextStyle,
                         ),
                       ),
                       const Spacer(),
@@ -286,12 +348,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
                   // Main text
                   Text(
                     notification.title,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: isNew ? FontWeight.w600 : FontWeight.w500,
-                      color: appBlack,
-                      height: 1.3,
-                    ),
+                    style: isNew
+                        ? _feedTitleNewTextStyle
+                        : _feedTitleReadTextStyle,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -379,11 +438,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
 
   void _markNotificationAsReadOptimistically(_NotificationItem notification) {
     if (!notification.isNew) return;
-    if (_optimisticallyReadIds.contains(notification.id)) return;
+    final current = _optimisticallyReadIdsNotifier.value;
+    if (current.contains(notification.id)) return;
     if (!mounted) return;
-    setState(() {
-      _optimisticallyReadIds.add(notification.id);
-    });
+    _optimisticallyReadIdsNotifier.value = <String>{
+      ...current,
+      notification.id,
+    };
   }
 
   Future<void> _markNotificationAsRead(_NotificationItem notification) async {
@@ -418,7 +479,57 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   void _openIncidentReport(_NotificationItem notification) {
+    if (_isSemiAdminUser()) {
+      SemiAdminShellNavigationService.openTab(0, reportId: notification.id);
+      return;
+    }
     MainShellNavigationService.openTab(1, communityReportId: notification.id);
+  }
+
+  bool _isSemiAdminUser() {
+    final role = (UserSession.currentUserData?['role'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    return role == 'semi-admin' || role == 'semi_admin' || role == 'responder';
+  }
+
+  String _normalizePhoneValue(Object? raw) {
+    return (raw?.toString() ?? '').replaceAll(RegExp(r'\D'), '');
+  }
+
+  bool _isReportAssignedToCurrentResponder(Map<String, dynamic> data) {
+    final userData = UserSession.currentUserData;
+    final responderDocId = (userData?['id'] ?? '').toString().trim();
+    final responderPhone = _normalizePhoneValue(
+      userData?['contactNumber'] ?? userData?['phoneNumber'],
+    );
+    final responderName = (userData?['fullName'] ?? userData?['username'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+
+    final assignedId = (data['responderId'] as String? ?? '').trim();
+    final assignedIdPhone = _normalizePhoneValue(assignedId);
+    final assignedContactPhone = _normalizePhoneValue(
+      data['responderContactNumber'] ?? data['responderPhone'],
+    );
+    final assignedName = (data['responderName'] as String? ?? '')
+        .trim()
+        .toLowerCase();
+
+    final matchesPhone =
+        responderPhone.isNotEmpty &&
+        (assignedIdPhone == responderPhone ||
+            assignedContactPhone == responderPhone);
+    final matchesDocId =
+        responderDocId.isNotEmpty && assignedId == responderDocId;
+    final matchesName =
+        responderName.isNotEmpty &&
+        assignedName.isNotEmpty &&
+        assignedName == responderName;
+
+    return matchesPhone || matchesDocId || matchesName;
   }
 
   void _showNotificationDetail(_NotificationItem notification) {
@@ -460,12 +571,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
                               ? 'ANNOUNCEMENT'
                               : notification.incidentType?.toUpperCase() ??
                                     'INCIDENT',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: isAnnouncement ? appBlack : Colors.white,
-                            fontFamily: 'RobotoCondensed',
-                          ),
+                          style: isAnnouncement
+                              ? _dialogBadgeAnnouncementTextStyle
+                              : _dialogBadgeIncidentTextStyle,
                         ),
                       ),
                       const Spacer(),
@@ -557,7 +665,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.location_on, color: appBlue, size: 20),
+                          const Icon(
+                            Icons.location_on,
+                            color: appBlue,
+                            size: 20,
+                          ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -623,7 +735,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            'Status: ${notification.status!.toUpperCase()}',
+                            'Status: ${_normalizeStatusLabel(notification.status!)}',
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
@@ -698,7 +810,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Color _getStatusColor(String status) {
-    switch (status.toLowerCase()) {
+    switch (_normalizeStatusKey(status)) {
       case 'pending':
         return const Color(0xFF3B82F6);
       case 'responding':
@@ -711,6 +823,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
         return const Color(0xFF22C55E);
       case 'flagged':
       case 'unverified':
+      case 'admin flagged':
         return const Color(0xFFEF4444);
       default:
         return appBlue;
@@ -718,7 +831,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   IconData _getStatusIcon(String status) {
-    switch (status.toLowerCase()) {
+    switch (_normalizeStatusKey(status)) {
       case 'pending':
         return Icons.hourglass_empty;
       case 'responding':
@@ -731,10 +844,32 @@ class _NotificationsPageState extends State<NotificationsPage> {
         return Icons.check_circle;
       case 'flagged':
       case 'unverified':
+      case 'admin flagged':
         return Icons.flag;
       default:
         return Icons.info_outline;
     }
+  }
+
+  String _normalizeStatusKey(String status) {
+    return status
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[_-]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  String _normalizeStatusLabel(String status) {
+    final normalized = _normalizeStatusKey(status);
+    if (normalized == 'flagged' ||
+        normalized == 'unverified' ||
+        normalized == 'admin flagged') {
+      return 'FLAGGED';
+    }
+    if (normalized == 'incident resolved') {
+      return 'RESOLVED';
+    }
+    return status.trim().toUpperCase().replaceAll('_', ' ');
   }
 }
 
@@ -797,33 +932,49 @@ class _NotificationItem {
   }
 
   factory _NotificationItem.fromReport(
-    DocumentSnapshot<Map<String, dynamic>> doc,
-  ) {
+    DocumentSnapshot<Map<String, dynamic>> doc, {
+    bool forResponder = false,
+  }) {
     final data = doc.data()!;
-    final ts = data['reportedAt'];
-    DateTime timestamp = DateTime.now();
-    if (ts is Timestamp) {
-      timestamp = ts.toDate();
-    }
+    final reportedAtRaw = data['reportedAt'];
+    final assignedAtRaw =
+        data['responderAssignedAt'] ??
+        data['deployedAt'] ??
+        data['respondingAt'] ??
+        reportedAtRaw;
+    final timestamp = _parseTimestamp(
+      forResponder ? assignedAtRaw : reportedAtRaw,
+    );
 
     final incidentType = data['incidentType'] as String? ?? 'Incident';
     final reporter = data['name'] as String?;
     final barangay = data['barangay'] as String?;
-    final status = data['status'] as String?;
+    final status =
+        (data['responderStatus'] as String?) ?? (data['status'] as String?);
+    final deployedBy = (data['deployedBy'] as String? ?? '').trim();
+    final title = forResponder
+        ? '$incidentType assigned to you'
+        : '$incidentType incident reported';
+    final subtitle = forResponder
+        ? (deployedBy.isNotEmpty
+              ? 'Deployed by $deployedBy'
+              : 'Tap to open assigned incident')
+        : null;
 
-    // Check if explicitly marked as new, otherwise use time-based logic (6 hours)
+    // Check if explicitly marked as new, otherwise use time-based logic.
     bool isNew;
     if (data['isNew'] != null) {
       isNew = data['isNew'] as bool;
     } else {
-      isNew = DateTime.now().difference(timestamp).inHours < 6;
+      final freshnessHours = forResponder ? 12 : 6;
+      isNew = DateTime.now().difference(timestamp).inHours < freshnessHours;
     }
 
     return _NotificationItem(
       id: doc.id,
       type: _NotificationType.incident,
-      title: '$incidentType incident reported',
-      subtitle: null,
+      title: title,
+      subtitle: subtitle,
       timestamp: timestamp,
       incidentType: incidentType,
       location: barangay ?? 'Location not specified',
@@ -831,5 +982,15 @@ class _NotificationItem {
       status: status,
       isNew: isNew,
     );
+  }
+
+  static DateTime _parseTimestamp(Object? raw) {
+    if (raw is Timestamp) {
+      return raw.toDate();
+    }
+    if (raw is DateTime) {
+      return raw;
+    }
+    return DateTime.now();
   }
 }

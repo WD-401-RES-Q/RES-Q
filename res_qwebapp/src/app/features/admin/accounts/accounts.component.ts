@@ -24,7 +24,11 @@ interface Account {
   accountStatus: string;
   approvedAt?: any;
   approvedBy?: string;
+  bannedAt?: any;
   bannedUntil?: any;
+  banType?: string;
+  isPermanent?: boolean;
+  banReasons?: string[];
 }
 
 interface BanReason {
@@ -50,6 +54,12 @@ export class AccountsComponent implements OnInit, OnDestroy {
   readonly cardsPerPage = 6;
   currentPage = 1;
   searchQuery: string = '';
+  accountStatusFilter:
+    | 'active'
+    | 'all'
+    | 'banned'
+    | 'temporary'
+    | 'permanent' = 'active';
   showBanReasonsModal = false;
   showBanConfirmationModal = false;
   showUnbanConfirmationModal = false;
@@ -164,14 +174,15 @@ export class AccountsComponent implements OnInit, OnDestroy {
   }
 
   filterAccounts() {
-    // First, exclude banned accounts from the list
-    const activeAccounts = this.accounts.filter(acc => acc.accountStatus !== 'BANNED');
+    const statusFilteredAccounts = this.accounts.filter((acc) =>
+      this.matchesStatusFilter(acc),
+    );
 
     if (!this.searchQuery.trim()) {
-      this.filteredAccounts = activeAccounts;
+      this.filteredAccounts = statusFilteredAccounts;
     } else {
       const query = this.searchQuery.toLowerCase();
-      this.filteredAccounts = activeAccounts.filter(acc =>
+      this.filteredAccounts = statusFilteredAccounts.filter(acc =>
         (acc.fullName?.toLowerCase().includes(query) || false) ||
         (acc.email?.toLowerCase().includes(query) || false) ||
         (acc.contactNumber?.toLowerCase().includes(query) || false) ||
@@ -298,7 +309,15 @@ export class AccountsComponent implements OnInit, OnDestroy {
       accountStatus: typeof raw?.accountStatus === 'string' ? raw.accountStatus : 'N/A',
       approvedAt: raw?.approvedAt ?? null,
       approvedBy: typeof raw?.approvedBy === 'string' ? raw.approvedBy : undefined,
+      bannedAt: raw?.bannedAt ?? null,
       bannedUntil: raw?.bannedUntil ?? null,
+      banType: typeof raw?.banType === 'string' ? raw.banType : undefined,
+      isPermanent: raw?.isPermanent == true,
+      banReasons: Array.isArray(raw?.banReasons)
+        ? (raw.banReasons as unknown[])
+            .map((reason) => (typeof reason === 'string' ? reason.trim() : ''))
+            .filter((reason) => reason.length > 0)
+        : [],
     };
 
     const encryptedFields = ['email', 'address', 'dateOfBirth', 'contactNumber'];
@@ -313,6 +332,11 @@ export class AccountsComponent implements OnInit, OnDestroy {
   }
 
   onSearchChange() {
+    this.currentPage = 1;
+    this.filterAccounts();
+  }
+
+  onStatusFilterChange() {
     this.currentPage = 1;
     this.filterAccounts();
   }
@@ -427,6 +451,8 @@ export class AccountsComponent implements OnInit, OnDestroy {
         bannedUntil: null,
         banReasons: [],
         bannedAt: null,
+        banType: null,
+        isPermanent: false,
       });
       
       this.ngZone.run(() => {
@@ -494,23 +520,27 @@ export class AccountsComponent implements OnInit, OnDestroy {
     const accountId = this.accountToBan.id;
 
     try {
-      if (this.banDuration === 'permanent') {
-        // Permanent ban: Delete the account from Firebase
-        await this.firestoreService.deleteDocument('approved_users', accountId);
-      } else {
-        // Temporary ban: Update status with ban expiry date
-        const banUntil = new Date();
+      let banUntil: Date | null = null;
+      const isPermanent = this.banDuration === 'permanent';
+      if (!isPermanent) {
+        banUntil = new Date();
         banUntil.setDate(banUntil.getDate() + 7);
-
-        const updateData: any = {
-          accountStatus: 'BANNED',
-          banReasons: this.selectedBanReasons,
-          bannedAt: new Date(),
-          bannedUntil: banUntil
-        };
-
-        await this.firestoreService.updateDocument('approved_users', accountId, updateData);
       }
+
+      const updateData: any = {
+        accountStatus: 'BANNED',
+        banReasons: this.selectedBanReasons,
+        bannedAt: new Date(),
+        bannedUntil: banUntil,
+        banType: isPermanent ? 'permanent' : 'temporary',
+        isPermanent,
+      };
+
+      await this.firestoreService.updateDocument(
+        'approved_users',
+        accountId,
+        updateData,
+      );
 
       this.ngZone.run(() => {
         this.showBanConfirmationModal = false;
@@ -754,9 +784,48 @@ export class AccountsComponent implements OnInit, OnDestroy {
     return this.filteredAccounts.some((account) => !this.isAccountUnlocked(account.id));
   }
 
-  // Check if account has a temporary ban (has bannedUntil date)
+  private normalizeAccountStatus(value: unknown): string {
+    return (value ?? '').toString().trim().toUpperCase();
+  }
+
+  private matchesStatusFilter(account: Account): boolean {
+    switch (this.accountStatusFilter) {
+      case 'active':
+        return !this.isBanned(account);
+      case 'all':
+        return true;
+      case 'banned':
+        return this.isBanned(account);
+      case 'temporary':
+        return this.isTemporaryBan(account);
+      case 'permanent':
+        return this.isPermanentBan(account);
+      default:
+        return !this.isBanned(account);
+    }
+  }
+
+  private isBanned(account: Account): boolean {
+    return this.normalizeAccountStatus(account.accountStatus) === 'BANNED';
+  }
+
+  // Check if account has a temporary ban
   isTemporaryBan(account: Account): boolean {
-    return account.accountStatus === 'BANNED' && account.bannedUntil != null;
+    return this.isBanned(account) && !this.isPermanentBan(account) && account.bannedUntil != null;
+  }
+
+  isPermanentBan(account: Account): boolean {
+    if (!this.isBanned(account)) {
+      return false;
+    }
+    if (account.isPermanent == true) {
+      return true;
+    }
+    const normalizedBanType = (account.banType ?? '').trim().toLowerCase();
+    if (normalizedBanType == 'permanent') {
+      return true;
+    }
+    return account.bannedUntil == null;
   }
 }
 

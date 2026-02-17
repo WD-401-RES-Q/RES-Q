@@ -23,6 +23,19 @@
       [(ngModel)]="searchQuery"
       (input)="onSearchChange()"
     />
+    <select
+      class="status-filter"
+      [disabled]="showPasswordModal"
+      [(ngModel)]="accountStatusFilter"
+      (change)="onStatusFilterChange()"
+      aria-label="Filter accounts by status"
+    >
+      <option value="active">Active</option>
+      <option value="all">All Accounts</option>
+      <option value="banned">Banned</option>
+      <option value="temporary">Temporary Ban</option>
+      <option value="permanent">Permanent Ban</option>
+    </select>
   </header>
 
   <div *ngIf="isLoading$ | async" class="empty-state">

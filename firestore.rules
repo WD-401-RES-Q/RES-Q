@@ -54,6 +54,19 @@ service cloud.firestore {
           request.resource.data.timestamp is timestamp;
     }
 
+    // Responder comments from semi-admin flow may not have Firebase Auth session.
+    // Allow only responder/admin-typed comment payloads.
+    function isValidResponderCommentCreate() {
+      return request.resource.data.author is string &&
+          request.resource.data.author.size() > 0 &&
+          request.resource.data.text is string &&
+          request.resource.data.text.size() > 0 &&
+          request.resource.data.text.size() <= 256 &&
+          request.resource.data.timestamp is timestamp &&
+          request.resource.data.role == 'responder' &&
+          request.resource.data.type == 'admin';
+    }
+
     // Basic reply payload checks for authored content
     function isValidReplyCreate() {
       return request.resource.data.author is string &&
@@ -126,7 +139,8 @@ service cloud.firestore {
       // Nested comments subcollection
       match /comments/{commentId} {
         allow read: if true;
-        allow create: if isAuthenticated() && isValidCommentCreate();
+        allow create: if (isAuthenticated() && isValidCommentCreate()) ||
+          isValidResponderCommentCreate();
         allow update: if isAuthenticated();
         allow delete: if false;
 
@@ -169,6 +183,12 @@ service cloud.firestore {
       // Vote records are immutable once created
       allow update: if false;
       allow delete: if false;
+    }
+
+    // FCM tokens used by Cloud Functions to send device push notifications.
+    match /user_tokens/{docId} {
+      allow read: if false;
+      allow create, update, delete: if isAuthenticated();
     }
 
     // Deny all other access

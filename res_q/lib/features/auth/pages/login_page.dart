@@ -47,6 +47,7 @@ class _LoginPageState extends State<LoginPage>
   bool _showPhoneError = false;
   String _phoneErrorMessage = '';
   bool _isPendingApprovalPhone = false;
+  bool _isBanDialogVisible = false;
   bool _showSavedPhoneCard = false;
   bool _isPhoneVerifiedForPin = false;
 
@@ -217,6 +218,21 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
+  Future<void> _ensureFirebaseSession() async {
+    try {
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        return;
+      }
+      final userCredential = await FirebaseAuth.instance.signInAnonymously();
+      debugPrint(
+        'Firebase anonymous sign-in ready: ${userCredential.user?.uid}',
+      );
+    } catch (authError) {
+      debugPrint('Firebase anonymous sign-in failed: $authError');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -328,6 +344,7 @@ class _LoginPageState extends State<LoginPage>
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin biometric login successful!');
+        await _ensureFirebaseSession();
         // Persist phone locally for faster next login.
         await _saveApprovedLoginState(phoneInput);
         // Set user session data for semi-admin
@@ -356,7 +373,13 @@ class _LoginPageState extends State<LoginPage>
           phone,
         );
         setState(() => _loading = false);
-        if (accountStatus.isPendingAccount) {
+        if (accountStatus.isBannedAccount) {
+          await _showBannedAccountDialog(
+            isPermanentBan: accountStatus.isPermanentBan,
+            bannedUntil: accountStatus.bannedUntil,
+            banReasons: accountStatus.banReasons,
+          );
+        } else if (accountStatus.isPendingAccount) {
           _showPendingApprovalDialog();
         } else {
           _showError('No account found with this phone number.');
@@ -369,6 +392,16 @@ class _LoginPageState extends State<LoginPage>
         contactNumber: phone,
       );
       final accountStatus = userData['accountStatus'] as String?;
+      final isBanned = _isBannedStatus(accountStatus);
+      if (isBanned) {
+        setState(() => _loading = false);
+        await _showBannedAccountDialog(
+          isPermanentBan: _isPermanentBanData(userData, isBanned),
+          bannedUntil: _parseBanUntil(userData['bannedUntil']),
+          banReasons: _parseBanReasons(userData['banReasons']),
+        );
+        return;
+      }
 
       if (accountStatus != 'approved') {
         setState(() => _loading = false);
@@ -430,6 +463,27 @@ class _LoginPageState extends State<LoginPage>
     if (!mounted) return;
     final currentDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
     if (currentDigits != phoneDigits) return;
+
+    if (validationResult.isBannedAccount) {
+      final isPermanentBan = validationResult.isPermanentBan;
+      setState(() {
+        _isPhoneVerifiedForPin = false;
+        _isPendingApprovalPhone = false;
+        _showPhoneError = true;
+        _phoneErrorMessage = isPermanentBan
+            ? 'This account is permanently banned.'
+            : 'This account is temporarily banned.';
+        _pinCtl.clear();
+        _showPinError = false;
+        _pinErrorMessage = '';
+      });
+      await _showBannedAccountDialog(
+        isPermanentBan: isPermanentBan,
+        bannedUntil: validationResult.bannedUntil,
+        banReasons: validationResult.banReasons,
+      );
+      return;
+    }
 
     if (validationResult.isPendingAccount) {
       setState(() {
@@ -793,6 +847,7 @@ class _LoginPageState extends State<LoginPage>
 
       if (semiAdminQuery.docs.isNotEmpty) {
         debugPrint('✅ Semi-admin login successful via PIN!');
+        await _ensureFirebaseSession();
         // Persist phone locally for faster next login.
         await _saveApprovedLoginState(phoneInput);
         // Set user session data for semi-admin
@@ -824,6 +879,14 @@ class _LoginPageState extends State<LoginPage>
           _pinErrorMessage = '';
         });
         final cachedValidation = _readCachedPhoneValidation(phoneInput);
+        if (cachedValidation != null && cachedValidation.isBannedAccount) {
+          await _showBannedAccountDialog(
+            isPermanentBan: cachedValidation.isPermanentBan,
+            bannedUntil: cachedValidation.bannedUntil,
+            banReasons: cachedValidation.banReasons,
+          );
+          return;
+        }
         if (cachedValidation != null && !cachedValidation.hasAnyAccount) {
           _resetPinWithError('No account found with this phone number.');
           return;
@@ -840,6 +903,21 @@ class _LoginPageState extends State<LoginPage>
         userDoc: userDoc,
         contactNumber: phone,
       );
+      final isBanned = _isBannedStatus(userData['accountStatus']);
+      if (isBanned) {
+        setState(() {
+          _loading = false;
+          _pinCtl.clear();
+          _showPinError = false;
+          _pinErrorMessage = '';
+        });
+        await _showBannedAccountDialog(
+          isPermanentBan: _isPermanentBanData(userData, isBanned),
+          bannedUntil: _parseBanUntil(userData['bannedUntil']),
+          banReasons: _parseBanReasons(userData['banReasons']),
+        );
+        return;
+      }
 
       if (!_isPinMatch(userData, pin)) {
         setState(() {
@@ -1029,6 +1107,201 @@ class _LoginPageState extends State<LoginPage>
       }
     } catch (e) {
       debugPrint('Failed to backfill semi-admin presence defaults: $e');
+    }
+  }
+
+  bool _isBannedStatus(dynamic rawStatus) {
+    return rawStatus is String && rawStatus.trim().toUpperCase() == 'BANNED';
+  }
+
+  bool _isPermanentBanData(Map<String, dynamic> data, bool isBanned) {
+    if (!isBanned) {
+      return false;
+    }
+    if (data['isPermanent'] == true) {
+      return true;
+    }
+    final banType = (data['banType'] ?? '').toString().trim().toLowerCase();
+    if (banType == 'permanent') {
+      return true;
+    }
+    return data['bannedUntil'] == null;
+  }
+
+  DateTime? _parseBanUntil(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is Map<String, dynamic>) {
+      final seconds = value['seconds'] ?? value['_seconds'];
+      final nanoseconds = value['nanoseconds'] ?? value['_nanoseconds'] ?? 0;
+      if (seconds is int) {
+        final nanos = nanoseconds is int
+            ? nanoseconds
+            : (nanoseconds is num ? nanoseconds.toInt() : 0);
+        return DateTime.fromMillisecondsSinceEpoch(
+          (seconds * 1000) + (nanos ~/ 1000000),
+        );
+      }
+    }
+    return null;
+  }
+
+  List<String> _parseBanReasons(dynamic rawReasons) {
+    if (rawReasons is! List) return const <String>[];
+    return rawReasons
+        .map((reason) => reason.toString().trim())
+        .where((reason) => reason.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  String _formatBanUntil(DateTime? bannedUntil) {
+    if (bannedUntil == null) {
+      return '';
+    }
+    final date = DateTime(
+      bannedUntil.year,
+      bannedUntil.month,
+      bannedUntil.day,
+      bannedUntil.hour,
+      bannedUntil.minute,
+    );
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    final year = date.year.toString();
+    final hour24 = date.hour;
+    final hour12 = hour24 == 0 ? 12 : (hour24 > 12 ? hour24 - 12 : hour24);
+    final minute = date.minute.toString().padLeft(2, '0');
+    final meridiem = hour24 >= 12 ? 'PM' : 'AM';
+    return '$month/$day/$year $hour12:$minute $meridiem';
+  }
+
+  Future<void> _showBannedAccountDialog({
+    required bool isPermanentBan,
+    DateTime? bannedUntil,
+    List<String> banReasons = const <String>[],
+  }) async {
+    if (!mounted || _isBanDialogVisible) return;
+
+    _isBanDialogVisible = true;
+    final reasonText = banReasons.isEmpty ? '' : banReasons.join(', ');
+    final formattedUntil = _formatBanUntil(bannedUntil);
+    final title = isPermanentBan
+        ? 'ACCOUNT PERMANENTLY BANNED'
+        : 'ACCOUNT TEMPORARILY BANNED';
+    final subtitle = isPermanentBan
+        ? 'Your account is permanently banned and cannot access RES-Q.'
+        : 'Your account is temporarily banned and cannot access RES-Q right now.';
+    final untilText = isPermanentBan || formattedUntil.isEmpty
+        ? ''
+        : 'Ban ends on: $formattedUntil';
+
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: appBlue.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: appBlue, width: 2),
+                  ),
+                  child: const Icon(Icons.block, size: 48, color: appBlue),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: appBlue,
+                    letterSpacing: 1.0,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: appBlack.withValues(alpha: 0.85),
+                    height: 1.35,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                if (untilText.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    untilText,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: appBlack,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+                if (reasonText.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Reason(s): $reasonText',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: appBlack.withValues(alpha: 0.8),
+                      height: 1.3,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: appBlue,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text(
+                      'OK',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                        fontSize: 16,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBanDialogVisible = false;
+        });
+      } else {
+        _isBanDialogVisible = false;
+      }
     }
   }
 
