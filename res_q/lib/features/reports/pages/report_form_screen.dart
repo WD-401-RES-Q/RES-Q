@@ -769,6 +769,20 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       }
       await auth.signInAnonymously();
       _debugLog('Firebase anonymous auth restored for report upload.');
+    } on FirebaseAuthException catch (e) {
+      final code = e.code.toLowerCase().trim();
+      // Project has anonymous auth disabled; continue and rely on Storage rules.
+      if (code == 'admin-restricted-operation' ||
+          code == 'operation-not-allowed') {
+        _debugLog(
+          'Anonymous Firebase auth is disabled ($code). Continuing upload with Storage rules.',
+        );
+        return;
+      }
+      _debugLog(
+        'Failed to establish Firebase auth session for upload (${e.code}): ${e.message}',
+      );
+      rethrow;
     } catch (e) {
       _debugLog('Failed to establish Firebase auth session for upload: $e');
       rethrow;
