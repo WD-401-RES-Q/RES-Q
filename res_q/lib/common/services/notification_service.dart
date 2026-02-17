@@ -169,20 +169,26 @@ class NotificationService {
     try {
       final token = await _messaging.getToken();
       if (token != null && _currentUserId != null) {
-        await _firestore.collection('user_tokens').doc(_currentUserId).set({
-          'fcmToken': token,
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+        final tokenDocIds = _buildTokenDocIds(_currentUserId!);
+        for (final docId in tokenDocIds) {
+          await _firestore.collection('user_tokens').doc(docId).set({
+            'fcmToken': token,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
         debugPrint('FCM token saved: ${token.substring(0, 20)}...');
       }
 
       // Listen for token refresh
       _messaging.onTokenRefresh.listen((newToken) async {
         if (_currentUserId != null) {
-          await _firestore.collection('user_tokens').doc(_currentUserId).set({
-            'fcmToken': newToken,
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
+          final tokenDocIds = _buildTokenDocIds(_currentUserId!);
+          for (final docId in tokenDocIds) {
+            await _firestore.collection('user_tokens').doc(docId).set({
+              'fcmToken': newToken,
+              'updatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+          }
         }
       });
     } catch (e) {
@@ -438,6 +444,49 @@ class NotificationService {
   }
 
   double _toRadians(double degrees) => degrees * pi / 180;
+
+  Set<String> _buildTokenDocIds(String rawUserId) {
+    final ids = <String>{};
+    final trimmed = rawUserId.trim();
+    if (trimmed.isEmpty) {
+      return ids;
+    }
+
+    ids.add(trimmed);
+    final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length < 10) {
+      return ids;
+    }
+
+    ids.add(digits);
+    if (digits.startsWith('63')) {
+      ids.add('+$digits');
+      final local = digits.substring(2);
+      if (local.length == 10) {
+        ids.add(local);
+        ids.add('0$local');
+      }
+      return ids;
+    }
+
+    if (digits.length == 11 && digits.startsWith('0')) {
+      final local = digits.substring(1);
+      if (local.length == 10) {
+        ids.add(local);
+        ids.add('63$local');
+        ids.add('+63$local');
+      }
+      return ids;
+    }
+
+    if (digits.length == 10 && digits.startsWith('9')) {
+      ids.add('0$digits');
+      ids.add('63$digits');
+      ids.add('+63$digits');
+    }
+
+    return ids;
+  }
 
   /// Update current user ID (call after login)
   void setUserId(String? userId) {

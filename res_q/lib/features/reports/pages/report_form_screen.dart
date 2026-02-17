@@ -13,6 +13,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:async';
 import 'dart:io';
+import '../../../common/services/angeles_geofence_service.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/location_service.dart';
 import '../../../common/services/shell_navigation_service.dart';
@@ -32,6 +33,13 @@ void _debugLog(Object? message) {
 enum LocationSelectionMode { current, pin }
 
 enum CapturedMediaType { photo, video }
+
+class _PinPickerResult {
+  const _PinPickerResult({this.location, this.clearSelection = false});
+
+  final LatLng? location;
+  final bool clearSelection;
+}
 
 Future<void> _showReportThemedDialog({
   required BuildContext context,
@@ -205,6 +213,7 @@ class ReportFormScreen extends StatefulWidget {
 }
 
 class _ReportFormScreenState extends State<ReportFormScreen> {
+  static const int _maxCapturedMediaBytes = 25 * 1024 * 1024; // 25 MB
   final TextEditingController _informationController = TextEditingController();
   final TextEditingController _barangayController = TextEditingController();
   final TextEditingController _otherIncidentController =
@@ -294,6 +303,56 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     return segments.isEmpty ? path : segments.last;
   }
 
+  Future<int?> _readCapturedMediaBytes(XFile file) async {
+    try {
+      return await file.length();
+    } catch (_) {
+      try {
+        return (await file.readAsBytes()).length;
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  String _formatMediaMb(int bytes) {
+    final sizeMb = bytes / (1024 * 1024);
+    return sizeMb.toStringAsFixed(1);
+  }
+
+  Future<bool> _validateCapturedMediaLimit(
+    XFile media, {
+    required String mediaLabel,
+  }) async {
+    final bytes = await _readCapturedMediaBytes(media);
+    if (bytes == null) {
+      if (!mounted) return false;
+      AppSnackBar.show(
+        context,
+        'Unable to read captured $mediaLabel size. Please capture again.',
+        type: AppSnackBarType.error,
+      );
+      return false;
+    }
+    if (bytes > _maxCapturedMediaBytes) {
+      if (!mounted) return false;
+      final currentMb = _formatMediaMb(bytes);
+      setState(() {
+        _capturedMedia = null;
+        _capturedMediaType = null;
+        _mediaError =
+            '$mediaLabel is too large ($currentMb MB). Maximum allowed is 25 MB.';
+      });
+      AppSnackBar.show(
+        context,
+        'Captured $mediaLabel is $currentMb MB. Maximum allowed is 25 MB.',
+        type: AppSnackBarType.error,
+      );
+      return false;
+    }
+    return true;
+  }
+
   Future<void> _capturePhoto() async {
     try {
       final XFile? photo = await _picker.pickImage(
@@ -303,6 +362,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         maxHeight: 1024,
       );
       if (photo != null) {
+        if (!mounted) return;
+        final isWithinLimit = await _validateCapturedMediaLimit(
+          photo,
+          mediaLabel: 'photo',
+        );
+        if (!isWithinLimit || !mounted) return;
         setState(() {
           _capturedMedia = photo;
           _capturedMediaType = CapturedMediaType.photo;
@@ -326,6 +391,12 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
         maxDuration: const Duration(seconds: 10),
       );
       if (video != null) {
+        if (!mounted) return;
+        final isWithinLimit = await _validateCapturedMediaLimit(
+          video,
+          mediaLabel: 'video',
+        );
+        if (!isWithinLimit || !mounted) return;
         setState(() {
           _capturedMedia = video;
           _capturedMediaType = CapturedMediaType.video;
@@ -391,7 +462,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                               elevation: 2,
                             ),
                             child: const Text(
-                              'CAPTURE AN IMAGE',
+                              'CAPTURE AN IMAGE (25MB max)',
                               style: TextStyle(
                                 fontFamily: 'RobotoCondensed',
                                 fontSize: 12,
@@ -419,7 +490,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                               elevation: 2,
                             ),
                             child: const Text(
-                              'CAPTURE A VIDEO (10s max)',
+                              'CAPTURE A VIDEO (10s / 25MB max)',
                               style: TextStyle(
                                 fontFamily: 'RobotoCondensed',
                                 fontSize: 12,
@@ -438,6 +509,22 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  void _showHoldToCallHint() {
+    if (!mounted) return;
+    AppSnackBar.show(
+      context,
+      'Press and hold the emergency button to call.',
+      type: AppSnackBarType.warning,
+    );
+  }
+
+  void _openEmergencyCallScreen() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const EmergencyCallScreen()),
     );
   }
 
@@ -488,16 +575,10 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       );
       return;
     }
-    final barangay = _barangayController.text.trim();
-    if (barangay.isEmpty) {
-      setState(() => _barangayError = 'Barangay is required');
-      AppSnackBar.show(
-        context,
-        'Please enter the barangay.',
-        type: AppSnackBarType.error,
-      );
-      return;
-    }
+    final rawBarangay = _barangayController.text.trim();
+    final normalizedBarangay = rawBarangay.isEmpty
+        ? 'Not specified'
+        : rawBarangay;
     if (_isOthersIncident()) {
       final otherIncident = _otherIncidentController.text.trim();
       if (otherIncident.isEmpty) {
@@ -510,6 +591,19 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     // Validate required media
     if (_capturedMedia == null) {
       setState(() => _mediaError = 'Photo or video is required');
+      return;
+    }
+    final mediaForValidation = _capturedMedia!;
+    final mediaLabel =
+        (_capturedMediaType == CapturedMediaType.video ||
+            _isLikelyVideoPath(mediaForValidation.path))
+        ? 'video'
+        : 'photo';
+    final withinLimit = await _validateCapturedMediaLimit(
+      mediaForValidation,
+      mediaLabel: mediaLabel,
+    );
+    if (!withinLimit) {
       return;
     }
 
@@ -655,7 +749,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
               'vehicles': vehiclesPayload,
             },
             if (_isFireIncident()) 'fireType': _fireType,
-            'barangay': _barangayController.text.trim(),
+            'barangay': normalizedBarangay,
             'injuredCount': _injuredCount,
             'needsAmbulance': _isFloodIncident() ? false : _needsAmbulance,
             if (_isOthersIncident()) ...{
@@ -712,7 +806,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
               'vehicles': vehiclesPayload,
             },
             if (_isFireIncident()) 'fireType': _fireType,
-            'barangay': _barangayController.text.trim(),
+            'barangay': normalizedBarangay,
             'injuredCount': _injuredCount,
             'needsAmbulance': _isFloodIncident() ? false : _needsAmbulance,
             if (_isOthersIncident()) ...{
@@ -868,26 +962,30 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   Future<LatLng?> _resolveReportLocation() async {
     setState(() => _locationLoading = true);
     try {
+      final currentPosition = await LocationService.getCurrentPosition();
+      if (currentPosition == null) {
+        await _showLocationError('Unable to get current location');
+        return null;
+      }
+      final currentPoint = LatLng(
+        currentPosition.latitude,
+        currentPosition.longitude,
+      );
+      if (!_isWithinAngeles(currentPoint)) {
+        await _showOutsideCoverageError();
+        return null;
+      }
+
       if (_locationMode == LocationSelectionMode.current) {
-        final position = await LocationService.getCurrentPosition();
-        if (position == null) {
-          _showLocationError('Unable to get current location');
-          return null;
-        }
-        final point = LatLng(position.latitude, position.longitude);
-        if (!_isWithinAngeles(point)) {
-          _showLocationError('Location must be inside Angeles City coverage');
-          return null;
-        }
-        _selectedLocation = point;
-        return point;
+        _selectedLocation = currentPoint;
+        return currentPoint;
       }
       if (_selectedLocation == null) {
-        _showLocationError('Please pin a location to continue');
+        await _showLocationError('Please pin a location to continue');
         return null;
       }
       if (!_isWithinAngeles(_selectedLocation!)) {
-        _showLocationError(
+        await _showLocationError(
           'Pinned location must be inside Angeles City coverage',
         );
         return null;
@@ -901,28 +999,45 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   bool _isWithinAngeles(LatLng point) {
-    const center = LatLng(15.1450, 120.5887);
-    const radiusMeters = 6000.0;
-    final distance = const Distance().as(LengthUnit.Meter, center, point);
-    return distance <= radiusMeters;
+    return AngelesGeofenceService.isInsideAngeles(point);
   }
 
-  void _showLocationError(String message) {
-    unawaited(
-      _showReportThemedDialog(
-        context: context,
-        title: 'Location Issue',
-        message: message,
-        icon: Icons.location_on_rounded,
-        primaryLabel: 'OK',
-      ),
+  Future<void> _showLocationError(String message) async {
+    await _showReportThemedDialog(
+      context: context,
+      title: 'Location Issue',
+      message: message,
+      icon: Icons.location_on_rounded,
+      primaryLabel: 'OK',
+    );
+  }
+
+  Future<void> _showOutsideCoverageError() async {
+    await _showReportThemedDialog(
+      context: context,
+      title: 'Outside Coverage Area',
+      message:
+          'You cannot report outside the coverage of Angeles City. '
+          'Please move inside the city boundary and try again.',
+      icon: Icons.location_off_rounded,
+      primaryLabel: 'OK',
     );
   }
 
   Future<void> _openPinPicker() async {
-    final picked = await Navigator.of(
-      context,
-    ).push<LatLng>(MaterialPageRoute(builder: (_) => const _PinPickerPage()));
+    final result = await Navigator.of(context).push<_PinPickerResult>(
+      MaterialPageRoute(builder: (_) => const _PinPickerPage()),
+    );
+    if (!mounted || result == null) return;
+
+    if (result.clearSelection) {
+      setState(() {
+        _selectedLocation = null;
+      });
+      return;
+    }
+
+    final picked = result.location;
     if (picked == null) return;
     setState(() {
       _selectedLocation = picked;
@@ -1363,7 +1478,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
                   const SizedBox(height: 20),
 
-                  // Emergency Call Button - Circular with yellow border and drop shadow
+                  // Emergency Call Button - hold to call
                   Container(
                     width: 110,
                     height: 110,
@@ -1378,14 +1493,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                       ],
                     ),
                     child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const EmergencyCallScreen(),
-                          ),
-                        );
-                      },
+                      onPressed: _showHoldToCallHint,
+                      onLongPress: _openEmergencyCallScreen,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFAC1B22),
                         shape: const CircleBorder(
@@ -2036,6 +2145,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   }
 
   Widget _buildBarangayField() {
+    const noBarangayValue = '__none__';
     const barangays = [
       'Agapito del Rosario',
       'Amsic',
@@ -2073,128 +2183,67 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
       'Tabun',
       'Virgen delos Remedios',
     ];
+    final currentValue = _barangayController.text.trim();
+    final selectedBarangay = barangays.contains(currentValue)
+        ? currentValue
+        : null;
+
     return _buildLabeledField(
-      label: 'Barangay *',
+      label: 'Barangay (Optional)',
       borderColor: _barangayError != null ? Colors.red : Colors.black,
-      child: Autocomplete<String>(
-        initialValue: TextEditingValue(text: _barangayController.text),
-        optionsBuilder: (TextEditingValue value) {
-          final query = value.text.trim().toLowerCase();
-          if (query.isEmpty) {
-            return const Iterable<String>.empty();
-          }
-          return barangays.where(
-            (option) => option.toLowerCase().contains(query),
-          );
-        },
-        onSelected: (selection) {
-          _barangayController.text = selection;
-          if (_barangayError != null) {
-            setState(() => _barangayError = null);
-          }
-        },
-        fieldViewBuilder:
-            (context, textEditingController, focusNode, onFieldSubmitted) {
-              return TextField(
-                controller: textEditingController,
-                focusNode: focusNode,
-                textCapitalization: TextCapitalization.words,
-                onChanged: (value) {
-                  _barangayController.text = value;
-                  if (_barangayError != null && value.trim().isNotEmpty) {
-                    setState(() => _barangayError = null);
-                  }
-                },
-                style: const TextStyle(
-                  fontFamily: 'RobotoCondensed',
-                  fontSize: 12,
-                  fontWeight: FontWeight.w400,
-                  color: Colors.black,
-                ),
-                decoration: const InputDecoration(
-                  hintText: 'Enter barangay',
-                  hintStyle: TextStyle(
-                    fontFamily: 'RobotoCondensed',
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
-                    color: Colors.black54,
-                  ),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 12,
-                  ),
-                ),
-              );
-            },
-        optionsViewBuilder: (context, onSelected, options) {
-          final filteredOptions = options.toList(growable: false);
-          return Align(
-            alignment: Alignment.topLeft,
-            child: Material(
-              color: Colors.transparent,
-              surfaceTintColor: Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
-              shadowColor: Colors.black.withValues(alpha: 0.18),
-              child: Container(
-                margin: const EdgeInsets.only(top: 6),
-                decoration: BoxDecoration(
-                  color: AppTheme.appOffWhite,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: AppTheme.appRed.withValues(alpha: 0.28),
-                    width: 1.2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.14),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 220),
-                  child: ListView.separated(
-                    padding: EdgeInsets.zero,
-                    shrinkWrap: true,
-                    itemBuilder: (context, index) {
-                      final option = filteredOptions[index];
-                      return InkWell(
-                        splashColor: AppTheme.appRed.withValues(alpha: 0.08),
-                        highlightColor: AppTheme.appRed.withValues(alpha: 0.05),
-                        hoverColor: AppTheme.appRed.withValues(alpha: 0.05),
-                        onTap: () => onSelected(option),
-                        child: Container(
-                          color: AppTheme.appOffWhite,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 12,
-                          ),
-                          child: Text(
-                            option,
-                            style: const TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              color: AppTheme.appBlack,
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                    separatorBuilder: (_, index) => Divider(
-                      height: 1,
-                      color: AppTheme.appBlack.withValues(alpha: 0.1),
-                    ),
-                    itemCount: filteredOptions.length,
-                  ),
-                ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: selectedBarangay,
+            isExpanded: true,
+            dropdownColor: AppTheme.appOffWhite,
+            borderRadius: BorderRadius.circular(12),
+            icon: const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: AppTheme.appBlack,
+            ),
+            style: const TextStyle(
+              fontFamily: 'RobotoCondensed',
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: AppTheme.appBlack,
+            ),
+            hint: const Text(
+              'Select barangay (optional)',
+              style: TextStyle(
+                fontFamily: 'RobotoCondensed',
+                fontSize: 12,
+                fontWeight: FontWeight.w400,
+                color: Colors.black54,
               ),
             ),
-          );
-        },
+            items: <DropdownMenuItem<String>>[
+              const DropdownMenuItem<String>(
+                value: noBarangayValue,
+                child: Text('Not specified'),
+              ),
+              ...barangays.map(
+                (barangay) => DropdownMenuItem<String>(
+                  value: barangay,
+                  child: Text(barangay, overflow: TextOverflow.ellipsis),
+                ),
+              ),
+            ],
+            onChanged: (value) {
+              setState(() {
+                if (value == null || value == noBarangayValue) {
+                  _barangayController.clear();
+                } else {
+                  _barangayController.text = value;
+                }
+                if (_barangayError != null) {
+                  _barangayError = null;
+                }
+              });
+            },
+          ),
+        ),
       ),
     );
   }
@@ -2239,13 +2288,15 @@ class _PinPickerPage extends StatefulWidget {
 }
 
 class _PinPickerPageState extends State<_PinPickerPage> {
-  static const LatLng _center = LatLng(15.1450, 120.5887);
-  static const double _radiusMeters = 6000;
+  static const LatLng _center = AngelesGeofenceService.mapCenter;
   static const double _reporterRadiusMeters = 500;
+  static const Duration _confirmLocationTimeout = Duration(seconds: 4);
+  static const Duration _trackedLocationFreshForConfirm = Duration(seconds: 12);
 
   final MapController _mapController = MapController();
   LatLng? _selected;
   LatLng? _currentLocation;
+  DateTime? _lastLocationUpdateAt;
   bool _locationChecked = false;
   StreamSubscription<Position>? _locationSubscription;
 
@@ -2269,12 +2320,13 @@ class _PinPickerPageState extends State<_PinPickerPage> {
         final currentPos = LatLng(position.latitude, position.longitude);
         setState(() {
           _currentLocation = currentPos;
+          _lastLocationUpdateAt = DateTime.now();
         });
 
         // Check if user is outside Angeles City (only show once)
         if (!_locationChecked && !_isWithinAngeles(currentPos)) {
           _locationChecked = true;
-          _showOutsideAreaError();
+          unawaited(_showOutsideAreaError());
         }
       }
 
@@ -2285,12 +2337,13 @@ class _PinPickerPageState extends State<_PinPickerPage> {
             final newPos = LatLng(position.latitude, position.longitude);
             setState(() {
               _currentLocation = newPos;
+              _lastLocationUpdateAt = DateTime.now();
             });
 
             // Check if user moved outside Angeles City
             if (!_locationChecked && !_isWithinAngeles(newPos)) {
               _locationChecked = true;
-              _showOutsideAreaError();
+              unawaited(_showOutsideAreaError());
             }
           }
         },
@@ -2303,23 +2356,21 @@ class _PinPickerPageState extends State<_PinPickerPage> {
     }
   }
 
-  void _showOutsideAreaError() {
-    unawaited(
-      _showReportThemedDialog(
-        context: context,
-        barrierDismissible: false,
-        title: 'Outside Coverage Area',
-        message:
-            'Your current location is outside the Angeles City area. You can still pin a location within the coverage area to submit your report.',
-        icon: Icons.warning_amber_rounded,
-        primaryLabel: 'I Understand',
-      ),
+  Future<void> _showOutsideAreaError() async {
+    await _showReportThemedDialog(
+      context: context,
+      barrierDismissible: false,
+      title: 'Outside Coverage Area',
+      message:
+          'Your current location is outside the Angeles City coverage area. '
+          'You cannot submit a report until you are inside Angeles City.',
+      icon: Icons.warning_amber_rounded,
+      primaryLabel: 'I Understand',
     );
   }
 
   bool _isWithinAngeles(LatLng point) {
-    final distance = const Distance().as(LengthUnit.Meter, _center, point);
-    return distance <= _radiusMeters;
+    return AngelesGeofenceService.isInsideAngeles(point);
   }
 
   double? _distanceFromReporterMeters() {
@@ -2329,14 +2380,83 @@ class _PinPickerPageState extends State<_PinPickerPage> {
     return const Distance().as(LengthUnit.Meter, _currentLocation!, _selected!);
   }
 
-  void _confirmSelection() {
+  bool _isTrackedLocationFreshForConfirm() {
+    final lastUpdate = _lastLocationUpdateAt;
+    if (lastUpdate == null) {
+      return false;
+    }
+    return DateTime.now().difference(lastUpdate) <=
+        _trackedLocationFreshForConfirm;
+  }
+
+  Future<LatLng?> _resolveReporterPointForConfirm() async {
+    final trackedPoint = _currentLocation;
+
+    // Fast path: if current tracked point is already outside, fail immediately.
+    if (trackedPoint != null && !_isWithinAngeles(trackedPoint)) {
+      return trackedPoint;
+    }
+
+    try {
+      final latestPosition = await LocationService.getCurrentPosition().timeout(
+        _confirmLocationTimeout,
+      );
+      if (latestPosition != null) {
+        return LatLng(latestPosition.latitude, latestPosition.longitude);
+      }
+    } on TimeoutException {
+      _debugLog('Confirm location refresh timed out; using tracked fallback.');
+    } catch (error) {
+      _debugLog('Confirm location refresh failed: $error');
+    }
+
+    // Fallback only if tracked point is recent; otherwise force user to retry.
+    if (trackedPoint != null && _isTrackedLocationFreshForConfirm()) {
+      return trackedPoint;
+    }
+    return null;
+  }
+
+  Future<void> _confirmSelection() async {
     // Validate both incident location AND user's current location
     // Incident location: Must be within Angeles City coverage
     // User location: Must be within Angeles City (ensures firsthand reporting with captured media)
     if (_selected == null) {
-      _showPinPickerError(
+      await _showPinPickerError(
         'Please tap on the map to select the incident location',
       );
+      return;
+    }
+
+    // Validate reporter location at confirm-time, with fast-path outside check.
+    final reporterPoint = await _resolveReporterPointForConfirm();
+    if (reporterPoint == null) {
+      await _showPinPickerError(
+        'Unable to validate your current location. Please wait for GPS and try again.',
+      );
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _currentLocation = reporterPoint;
+        _lastLocationUpdateAt = DateTime.now();
+      });
+    }
+
+    // Reporter must be physically inside Angeles polygon coverage.
+    if (!_isWithinAngeles(reporterPoint)) {
+      FirebaseAnalytics.instance.logEvent(
+        name: 'report_user_location_invalid',
+        parameters: {
+          'user_lat': reporterPoint.latitude,
+          'user_lng': reporterPoint.longitude,
+          'has_location': true,
+        },
+      );
+      await _showOutsideAreaError();
+      if (!mounted) return;
+      Navigator.pop(context, const _PinPickerResult(clearSelection: true));
       return;
     }
 
@@ -2349,81 +2469,47 @@ class _PinPickerPageState extends State<_PinPickerPage> {
           'incident_lng': _selected!.longitude,
         },
       );
-      _showPinPickerError(
+      await _showPinPickerError(
         'The incident location must be within Angeles City coverage area.',
       );
       return;
     }
 
-    // Check if the user's current location is within Angeles City
-    // Required to ensure users are physically present in coverage area
-    // to prevent fraud and ensure timely, firsthand reports with captured media
-    if (_currentLocation == null || !_isWithinAngeles(_currentLocation!)) {
-      FirebaseAnalytics.instance.logEvent(
-        name: 'report_user_location_invalid',
-        parameters: {
-          'user_lat': _currentLocation?.latitude ?? 0,
-          'user_lng': _currentLocation?.longitude ?? 0,
-          'has_location': _currentLocation != null,
-        },
-      );
-      _showUserLocationError();
-      return;
-    }
-
-    final reporterDistanceMeters = _distanceFromReporterMeters();
-    if (reporterDistanceMeters == null ||
-        reporterDistanceMeters > _reporterRadiusMeters) {
+    final reporterDistanceMeters = const Distance().as(
+      LengthUnit.Meter,
+      reporterPoint,
+      _selected!,
+    );
+    if (reporterDistanceMeters > _reporterRadiusMeters) {
       FirebaseAnalytics.instance.logEvent(
         name: 'report_pin_outside_reporter_radius',
         parameters: {
-          'distance_meters': reporterDistanceMeters?.round() ?? -1,
+          'distance_meters': reporterDistanceMeters.round(),
           'max_distance_meters': _reporterRadiusMeters.toInt(),
           'incident_lat': _selected!.latitude,
           'incident_lng': _selected!.longitude,
-          'user_lat': _currentLocation!.latitude,
-          'user_lng': _currentLocation!.longitude,
+          'user_lat': reporterPoint.latitude,
+          'user_lng': reporterPoint.longitude,
         },
       );
-      _showPinPickerError(
+      await _showPinPickerError(
         'Pinned location must be within 500 meters of your current location. '
         'Move closer to the incident or pin inside the blue radius.',
       );
       return;
     }
 
-    Navigator.pop(context, _selected);
+    if (!mounted) return;
+    Navigator.pop(context, _PinPickerResult(location: _selected));
   }
 
-  // RESTORED: Show error when user is outside Angeles City
-  void _showUserLocationError() {
-    unawaited(
-      _showReportThemedDialog(
-        context: context,
-        barrierDismissible: false,
-        title: 'Location Issue',
-        message:
-            'You cannot submit a report because your current location appears to be outside Angeles City. '
-            'To submit a report, you must be physically present within the Angeles City coverage area.\n\n'
-            'If you believe this is a GPS error, please:\n'
-            '- Ensure location services are enabled\n'
-            '- Move to an open area for better GPS signal\n'
-            '- Wait a moment for GPS to stabilize',
-        icon: Icons.location_off_rounded,
-        primaryLabel: 'OK',
-      ),
-    );
-  }
-
-  void _showPinPickerError(String message) {
-    unawaited(
-      _showReportThemedDialog(
-        context: context,
-        title: 'Location Issue',
-        message: message,
-        icon: Icons.location_on_rounded,
-        primaryLabel: 'OK',
-      ),
+  Future<void> _showPinPickerError(String message) async {
+    await _showReportThemedDialog(
+      context: context,
+      title: 'Location Issue',
+      message: message,
+      icon: Icons.location_on_rounded,
+      primaryLabel: 'OK',
     );
   }
 
@@ -2451,14 +2537,14 @@ class _PinPickerPageState extends State<_PinPickerPage> {
                 userAgentPackageName: 'com.resq.emergency_app',
                 maxZoom: 19,
               ),
-              CircleLayer(
-                circles: [
-                  CircleMarker(
-                    point: _center,
-                    radius: _radiusMeters,
-                    useRadiusInMeter: true,
-                    color: const Color(0xFF4CAF50).withOpacity(0.08),
-                    borderColor: const Color(0xFF4CAF50).withOpacity(0.55),
+              PolygonLayer(
+                polygons: [
+                  Polygon(
+                    points: AngelesGeofenceService.angelesCityPolygon,
+                    color: const Color(0xFF4CAF50).withValues(alpha: 0.08),
+                    borderColor: const Color(
+                      0xFF4CAF50,
+                    ).withValues(alpha: 0.55),
                     borderStrokeWidth: 2.0,
                   ),
                 ],
@@ -2617,7 +2703,7 @@ class _PinPickerPageState extends State<_PinPickerPage> {
                       child: Text(
                         _currentLocation == null
                             ? 'Locating you... Pin selection is limited to a 500m radius from your location.'
-                            : 'Blue radius = your 500m allowed pin area. Pin inside this circle.',
+                            : 'Blue radius = your 500m allowed pin area. Pin inside this circle and within the green city boundary.',
                         style: const TextStyle(
                           fontFamily: 'RobotoCondensed',
                           fontSize: 12,

@@ -9,6 +9,7 @@ import '../../../common/theme/app_text_styles.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/services/phone_lookup_service.dart';
 import '../../../common/services/registration_prefs.dart';
+import '../../../common/utils/security_hash.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
@@ -91,7 +92,7 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
       if (!mounted) return;
       AppSnackBar.show(
         context,
-        '✓ Phone verified! Please enter your new 4-digit PIN.',
+        'Phone verified! Please enter your new 4-digit PIN.',
         type: AppSnackBarType.success,
       );
     } catch (e) {
@@ -257,25 +258,26 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
     String? phoneNumber,
   ) async {
     try {
+      final cleanPhone = phoneNumber?.replaceAll(RegExp(r'[^0-9+]'), '');
+
       // Save to SharedPreferences for local/quick access
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('biometrics_enabled', enabled);
-      if (phoneNumber != null) {
-        await prefs.setString('biometrics_phone', phoneNumber);
+      if (cleanPhone != null && cleanPhone.isNotEmpty) {
+        await prefs.setString('biometrics_phone', cleanPhone);
       }
 
       // Save to Firestore for persistence across devices (like votes)
-      if (phoneNumber != null) {
-        final cleanPhone = phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+      if (cleanPhone != null && cleanPhone.isNotEmpty) {
         await _firestore.collection('userPreferences').doc(cleanPhone).set({
           'biometricsEnabled': enabled,
           'biometricsUpdatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
-        debugPrint('✅ Biometrics preference saved to Firestore: $enabled');
+        debugPrint('Biometrics preference saved to Firestore: $enabled');
       }
 
       debugPrint(
-        '✅ Biometrics preference saved locally: $enabled for phone: $phoneNumber',
+        'Biometrics preference saved locally: $enabled for phone: $phoneNumber',
       );
     } catch (e) {
       debugPrint('Error saving biometrics preference: $e');
@@ -309,6 +311,7 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
       // Update the user document with the PIN
       await _firestore.collection('approved_users').doc(_userId).update({
         'pin': pin,
+        'pin_hash': SecurityHash.sha256Hex(pin),
         'pinCreatedAt': FieldValue.serverTimestamp(),
       });
 
@@ -347,11 +350,11 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
   void _handlePinKey(String value) {
     if (_loading) return;
     setState(() {
-      if (value == 'C') {
+      if (value == PinNumpad.clearKey || value == 'C') {
         _pinCtl.clear();
         return;
       }
-      if (value == '⌫') {
+      if (value == PinNumpad.backspaceKey || value == '\u232b') {
         if (_pinCtl.text.isNotEmpty) {
           _pinCtl.text = _pinCtl.text.substring(0, _pinCtl.text.length - 1);
         }

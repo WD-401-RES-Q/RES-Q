@@ -248,6 +248,8 @@ class ResqBackButton extends StatelessWidget {
 }
 
 class PinNumpad extends StatelessWidget {
+  static const String clearKey = 'PIN_CLEAR';
+  static const String backspaceKey = 'PIN_BACKSPACE';
   final ValueChanged<String> onKeyTap;
   final bool enabled;
   final double buttonSize;
@@ -281,6 +283,8 @@ class PinNumpad extends StatelessWidget {
     String value, {
     bool isAction = false,
     bool isBiometrics = false,
+    String? keyValue,
+    Widget? child,
   }) {
     final resolvedBorderColor = borderColor ?? textColor.withOpacity(0.3);
     final resolvedStyle = isAction
@@ -304,7 +308,9 @@ class PinNumpad extends StatelessWidget {
       height: buttonSize,
       child: ElevatedButton(
         onPressed: enabled
-            ? (isBiometrics ? onBiometricsTap : () => onKeyTap(value))
+            ? (isBiometrics
+                  ? onBiometricsTap
+                  : () => onKeyTap(keyValue ?? value))
             : null,
         style: ElevatedButton.styleFrom(
           backgroundColor: isAction ? actionBackgroundColor : backgroundColor,
@@ -318,7 +324,7 @@ class PinNumpad extends StatelessWidget {
         ),
         child: isBiometrics
             ? Icon(Icons.fingerprint, size: 32, color: textColor)
-            : Text(value, style: resolvedStyle),
+            : (child ?? Text(value, style: resolvedStyle)),
       ),
     );
   }
@@ -365,11 +371,16 @@ class PinNumpad extends StatelessWidget {
           children: [
             showBiometrics
                 ? _buildButton('', isAction: true, isBiometrics: true)
-                : _buildButton('C', isAction: true),
+                : _buildButton('C', isAction: true, keyValue: clearKey),
             SizedBox(width: gap),
             _buildButton('0'),
             SizedBox(width: gap),
-            _buildButton('⌫', isAction: true),
+            _buildButton(
+              '',
+              isAction: true,
+              keyValue: backspaceKey,
+              child: Icon(Icons.backspace_outlined, size: 30, color: textColor),
+            ),
           ],
         ),
       ],

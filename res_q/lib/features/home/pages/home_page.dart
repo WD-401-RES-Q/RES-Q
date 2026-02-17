@@ -421,7 +421,18 @@ class _MainPageState extends State<MainPage> {
         _currentCommunityReportId = communityReportId;
         _loadedTabs.add(1);
         _markTabForReset(1);
+      } else if (nextIndex != 1) {
+        _currentCommunityReportId = null;
       }
+    });
+  }
+
+  void _consumeInitialCommunityReportTarget() {
+    if (!mounted || _currentCommunityReportId == null) {
+      return;
+    }
+    setState(() {
+      _currentCommunityReportId = null;
     });
   }
 
@@ -430,6 +441,9 @@ class _MainPageState extends State<MainPage> {
       _markTabForReset(index);
       _currentIndex = index;
       _loadedTabs.add(index);
+      if (index != 1) {
+        _currentCommunityReportId = null;
+      }
     });
   }
 
@@ -444,8 +458,9 @@ class _MainPageState extends State<MainPage> {
             ? 'none'
             : normalizedReportId;
         return CommunityPage(
-          key: ValueKey('community-tab-$token-$reloadToken'),
+          key: ValueKey('community-tab-$reloadToken'),
           initialReportId: token == 'none' ? null : token,
+          onInitialReportConsumed: _consumeInitialCommunityReportTarget,
         );
       case 2:
         final activeReport = UserSession.latestActiveReport;

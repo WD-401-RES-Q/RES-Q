@@ -10,6 +10,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import '../../../common/services/angeles_geofence_service.dart';
 import '../../../common/services/frame_timing_service.dart';
 import '../../../common/services/route_weather_cache_service.dart';
 import '../../../common/theme/app_theme.dart';
@@ -97,8 +98,6 @@ class _ReportMapPageState extends State<ReportMapPage>
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
   final double _initialZoom = 14.0;
-  static const LatLng _angelesCityCenter = LatLng(15.1450, 120.5887);
-  static const double _angelesCityRadiusMeters = 6000;
 
   LatLng? _incidentLocation;
   LatLng? _userLocation;
@@ -1246,6 +1245,45 @@ class _ReportMapPageState extends State<ReportMapPage>
     );
   }
 
+  String _activeIncidentType() {
+    final source = _liveReportData ?? widget.reportData;
+    return (source['incidentType'] ?? 'OTHERS').toString();
+  }
+
+  Widget _buildReporterLocationPin({required String assetPath}) {
+    return SizedBox(
+      width: 56,
+      height: 56,
+      child: Stack(
+        alignment: Alignment.center,
+        clipBehavior: Clip.none,
+        children: [
+          _buildIncidentAsset(assetPath, width: 56, height: 56),
+          Positioned(
+            top: 11,
+            child: Container(
+              width: 20,
+              height: 20,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF4F8FF),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: const Color(0xFF2563EB).withValues(alpha: 0.75),
+                  width: 1.1,
+                ),
+              ),
+              child: const Icon(
+                Icons.person_rounded,
+                color: Color(0xFF2563EB),
+                size: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildResponderCommentsSection() {
     if (_isResponderCommentsLoading) {
       return const Padding(
@@ -2258,14 +2296,12 @@ class _ReportMapPageState extends State<ReportMapPage>
                   },
                 ),
 
-                CircleLayer(
-                  circles: [
-                    CircleMarker(
-                      point: _angelesCityCenter,
-                      radius: _angelesCityRadiusMeters,
-                      useRadiusInMeter: true,
-                      color: AppColors.appGreen.withOpacity(0.07),
-                      borderColor: AppColors.appGreen.withOpacity(0.45),
+                PolygonLayer(
+                  polygons: [
+                    Polygon(
+                      points: AngelesGeofenceService.angelesCityPolygon,
+                      color: AppColors.appGreen.withValues(alpha: 0.07),
+                      borderColor: AppColors.appGreen.withValues(alpha: 0.45),
                       borderStrokeWidth: 2.0,
                     ),
                   ],
@@ -2290,10 +2326,7 @@ class _ReportMapPageState extends State<ReportMapPage>
                             ),
                             child: _buildIncidentAsset(
                               _getMarkerAssetForIncidentType(
-                                (_liveReportData?['incidentType'] ??
-                                        widget.reportData['incidentType'] ??
-                                        'OTHERS')
-                                    .toString(),
+                                _activeIncidentType(),
                               ),
                               width: 64,
                               height: 64,
@@ -2310,13 +2343,13 @@ class _ReportMapPageState extends State<ReportMapPage>
                     markers: [
                       Marker(
                         point: _userLocation!,
-                        width: 54,
-                        height: 54,
+                        width: 56,
+                        height: 56,
                         child: _buildBouncyPin(
-                          child: const Icon(
-                            Icons.person_pin_circle,
-                            color: Color(0xFF2563EB),
-                            size: 36,
+                          child: _buildReporterLocationPin(
+                            assetPath: _getMarkerAssetForIncidentType(
+                              _activeIncidentType(),
+                            ),
                           ),
                         ),
                       ),

@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:latlong2/latlong.dart';
+import '../../../common/services/angeles_geofence_service.dart';
 import '../../../common/services/frame_timing_service.dart';
 import '../../../common/services/route_weather_cache_service.dart';
 import '../../../common/theme/app_theme.dart';
@@ -41,8 +42,6 @@ class _MapPageState extends State<MapPage> {
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
   final double _initialZoom = 14.0;
-  static const LatLng _angelesCityCenter = LatLng(15.1450, 120.5887);
-  static const double _angelesCityRadiusMeters = 6000;
 
   // Sample incident markers
   final List<Marker> _incidentMarkers = [];
@@ -1472,14 +1471,12 @@ class _MapPageState extends State<MapPage> {
                   maxZoom: 19,
                 ),
 
-                CircleLayer(
-                  circles: [
-                    CircleMarker(
-                      point: _angelesCityCenter,
-                      radius: _angelesCityRadiusMeters,
-                      useRadiusInMeter: true,
-                      color: AppColors.appGreen.withOpacity(0.07),
-                      borderColor: AppColors.appGreen.withOpacity(0.45),
+                PolygonLayer(
+                  polygons: [
+                    Polygon(
+                      points: AngelesGeofenceService.angelesCityPolygon,
+                      color: AppColors.appGreen.withValues(alpha: 0.07),
+                      borderColor: AppColors.appGreen.withValues(alpha: 0.45),
                       borderStrokeWidth: 2.0,
                     ),
                   ],

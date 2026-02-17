@@ -8,6 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../../common/services/frame_timing_service.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/utils/security_hash.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
@@ -18,10 +19,178 @@ void _debugLog(Object? message) {
   }
 }
 
+int _nonNegativeInt(dynamic value) {
+  final int parsed;
+  if (value is int) {
+    parsed = value;
+  } else if (value is num) {
+    parsed = value.toInt();
+  } else {
+    parsed = int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+  return parsed < 0 ? 0 : parsed;
+}
+
+class _VoteStorageBackend {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  bool _useApprovedUsersFallback = false;
+  DocumentReference<Map<String, dynamic>>? _cachedApprovedUsersDocRef;
+
+  bool get usingApprovedUsersFallback => _useApprovedUsersFallback;
+
+  void _cacheResolvedDocId(Map<String, dynamic>? userData, String docId) {
+    if (userData == null || docId.isEmpty) return;
+    try {
+      userData['docId'] = docId;
+    } catch (_) {
+      // Some user maps are read-only; cache stays in-memory via _cachedApprovedUsersDocRef.
+    }
+  }
+
+  Iterable<String> _contactCandidates(
+    String userPhone,
+    Map<String, dynamic>? userData,
+  ) sync* {
+    final rawContact = (userData?['contactNumber'] ?? userData?['phoneNumber'])
+        .toString()
+        .trim();
+    if (rawContact.isNotEmpty) {
+      yield rawContact;
+    }
+    if (userPhone.isNotEmpty) {
+      yield userPhone;
+      if (!userPhone.startsWith('+')) {
+        yield '+$userPhone';
+      }
+    }
+  }
+
+  Future<DocumentReference<Map<String, dynamic>>?> _resolveApprovedUsersDocRef({
+    required String userPhone,
+    required Map<String, dynamic>? userData,
+  }) async {
+    if (_cachedApprovedUsersDocRef != null) {
+      return _cachedApprovedUsersDocRef;
+    }
+
+    final docId = (userData?['docId'] ?? userData?['id'] ?? '')
+        .toString()
+        .trim();
+    if (docId.isNotEmpty) {
+      _cachedApprovedUsersDocRef = _firestore
+          .collection('approved_users')
+          .doc(docId);
+      return _cachedApprovedUsersDocRef;
+    }
+
+    final candidates = _contactCandidates(userPhone, userData).toList();
+
+    for (final candidate in candidates) {
+      final query = await _firestore
+          .collection('approved_users')
+          .where(
+            'contactNumber_hash',
+            isEqualTo: SecurityHash.sha256Hex(candidate),
+          )
+          .limit(1)
+          .get();
+      if (query.docs.isNotEmpty) {
+        _cachedApprovedUsersDocRef = query.docs.first.reference;
+        _cacheResolvedDocId(userData, query.docs.first.id);
+        return _cachedApprovedUsersDocRef;
+      }
+    }
+
+    for (final candidate in candidates) {
+      final query = await _firestore
+          .collection('approved_users')
+          .where('contactNumber', isEqualTo: candidate)
+          .limit(1)
+          .get();
+      if (query.docs.isNotEmpty) {
+        _cachedApprovedUsersDocRef = query.docs.first.reference;
+        _cacheResolvedDocId(userData, query.docs.first.id);
+        return _cachedApprovedUsersDocRef;
+      }
+    }
+
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> readVotePayload({
+    required String userPhone,
+    required Map<String, dynamic>? userData,
+  }) async {
+    if (!_useApprovedUsersFallback) {
+      try {
+        final snapshot = await _firestore
+            .collection('userVotes')
+            .doc(userPhone)
+            .get();
+        return snapshot.data();
+      } on FirebaseException catch (e) {
+        if (e.code != 'permission-denied') {
+          rethrow;
+        }
+        _useApprovedUsersFallback = true;
+      }
+    }
+
+    final approvedRef = await _resolveApprovedUsersDocRef(
+      userPhone: userPhone,
+      userData: userData,
+    );
+    if (approvedRef == null) {
+      return null;
+    }
+    final approvedSnapshot = await approvedRef.get();
+    return approvedSnapshot.data();
+  }
+
+  Future<void> writeVotePayload({
+    required String userPhone,
+    required Map<String, dynamic>? userData,
+    required Map<String, dynamic> payload,
+  }) async {
+    if (!_useApprovedUsersFallback) {
+      try {
+        await _firestore
+            .collection('userVotes')
+            .doc(userPhone)
+            .set(payload, SetOptions(merge: true));
+        return;
+      } on FirebaseException catch (e) {
+        if (e.code != 'permission-denied') {
+          rethrow;
+        }
+        _useApprovedUsersFallback = true;
+      }
+    }
+
+    final approvedRef = await _resolveApprovedUsersDocRef(
+      userPhone: userPhone,
+      userData: userData,
+    );
+    if (approvedRef == null) {
+      throw FirebaseException(
+        plugin: 'cloud_firestore',
+        code: 'permission-denied',
+        message: 'Unable to resolve approved_users vote fallback target.',
+      );
+    }
+    await approvedRef.set(payload, SetOptions(merge: true));
+  }
+}
+
 class CommunityPage extends StatefulWidget {
   final String? initialReportId;
+  final VoidCallback? onInitialReportConsumed;
 
-  const CommunityPage({super.key, this.initialReportId});
+  const CommunityPage({
+    super.key,
+    this.initialReportId,
+    this.onInitialReportConsumed,
+  });
 
   @override
   State<CommunityPage> createState() => _CommunityPageState();
@@ -52,12 +221,14 @@ class _CommunityPageState extends State<CommunityPage>
   bool _hasLoggedVotesPermissionIssue = false;
   String? _pendingInitialReportId;
   bool _initialReportDialogOpened = false;
+  bool _isResolvingInitialReport = false;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _reportsSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _announcementsSubscription;
   Map<String, int> _reportIndexById = const {};
   final ValueNotifier<List<Map<String, dynamic>>> _visibleReportsNotifier =
       ValueNotifier<List<Map<String, dynamic>>>(const []);
+  final _VoteStorageBackend _voteStorageBackend = _VoteStorageBackend();
 
   @override
   void initState() {
@@ -95,12 +266,17 @@ class _CommunityPageState extends State<CommunityPage>
   String? _getLoggedInUserPhone() {
     final userData = UserSession.currentUserData;
     if (userData == null) {
-      _debugLog('âš ï¸ No user data available');
+      try {
+        final fallbackUserId = UserSession.getUserId();
+        if (fallbackUserId.isNotEmpty) {
+          return fallbackUserId.replaceAll(RegExp(r'[^0-9]'), '');
+        }
+      } catch (_) {}
+      _debugLog('No user data available');
       return null;
     }
 
-    // Try different possible field names for phone number
-    // Note: Firestore uses 'contactNumber' as the primary field
+    // Try different possible field names for phone number.
     String? phone =
         userData['contactNumber']?.toString() ??
         userData['phoneNumber']?.toString() ??
@@ -108,12 +284,27 @@ class _CommunityPageState extends State<CommunityPage>
         userData['mobileNumber']?.toString();
 
     if (phone != null) {
-      // Remove all non-numeric characters
       phone = phone.replaceAll(RegExp(r'[^0-9]'), '');
     }
 
-    _debugLog('ðŸ“± Found logged-in user phone: $phone');
-    return phone;
+    if (phone != null && phone.isNotEmpty) {
+      _debugLog('Found logged-in user phone: $phone');
+      return phone;
+    }
+
+    try {
+      final fallbackUserId = UserSession.getUserId();
+      if (fallbackUserId.isNotEmpty) {
+        final normalized = fallbackUserId.replaceAll(RegExp(r'[^0-9]'), '');
+        if (normalized.isNotEmpty) {
+          _debugLog('Using fallback session userId for votes: $normalized');
+          return normalized;
+        }
+      }
+    } catch (_) {}
+
+    _debugLog('No phone number found for vote sync');
+    return null;
   }
 
   @override
@@ -162,7 +353,7 @@ class _CommunityPageState extends State<CommunityPage>
             });
           },
           onError: (e) {
-            _debugLog('âŒ Failed to load announcements: $e');
+            _debugLog('ÃƒÂ¢Ã‚ÂÃ…â€™ Failed to load announcements: $e');
           },
         );
   }
@@ -179,22 +370,20 @@ class _CommunityPageState extends State<CommunityPage>
     try {
       _debugLog('Loading votes for phone: $userPhone');
       await _migrateLegacyVotesIfNeeded(userPhone);
-      // Load votes from userVotes collection using phone number as document ID
-      final doc = await FirebaseFirestore.instance
-          .collection('userVotes')
-          .doc(userPhone)
-          .get();
+      final data = await _voteStorageBackend.readVotePayload(
+        userPhone: userPhone,
+        userData: UserSession.currentUserData,
+      );
+      final rawVotes = data?['votes'];
+      final loadedVotes = rawVotes is Map
+          ? rawVotes.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            )
+          : <String, String>{};
       if (mounted) {
-        if (doc.exists) {
-          final data = doc.data() ?? {};
-          final loadedVotes = Map<String, String>.from(data['votes'] ?? {});
-          _debugLog('Loaded ${loadedVotes.length} votes from Firestore');
-          _debugLog('Votes: $loadedVotes');
-          _userVotes = loadedVotes;
-        } else {
-          _debugLog('No votes document found for phone: $userPhone');
-          _userVotes = {};
-        }
+        _debugLog('Loaded ${loadedVotes.length} votes from Firestore');
+        _debugLog('Votes: $loadedVotes');
+        _userVotes = loadedVotes;
         // Update reports with user votes
         _applyUserVotesToReports();
       }
@@ -203,7 +392,7 @@ class _CommunityPageState extends State<CommunityPage>
         if (!_hasLoggedVotesPermissionIssue) {
           _hasLoggedVotesPermissionIssue = true;
           _debugLog(
-            'Vote sync disabled: missing Firestore permission for userVotes.',
+            'Vote sync disabled: missing Firestore permission for vote storage.',
           );
         }
         _canSyncVotesWithFirestore = false;
@@ -251,11 +440,11 @@ class _CommunityPageState extends State<CommunityPage>
       } else {
         _userVotes[reportId] = vote;
       }
-      // Save to userVotes collection with phone number as document ID
-      await FirebaseFirestore.instance
-          .collection('userVotes')
-          .doc(userPhone)
-          .set({'votes': _userVotes});
+      await _voteStorageBackend.writeVotePayload(
+        userPhone: userPhone,
+        userData: UserSession.currentUserData,
+        payload: {'votes': _userVotes},
+      );
       // Also save individual vote record for better tracking
       await _saveVoteRecord(reportId, vote, userPhone);
     } on FirebaseException catch (e) {
@@ -263,7 +452,7 @@ class _CommunityPageState extends State<CommunityPage>
         if (!_hasLoggedVotesPermissionIssue) {
           _hasLoggedVotesPermissionIssue = true;
           _debugLog(
-            'Vote sync disabled: missing Firestore permission for userVotes.',
+            'Vote sync disabled: missing Firestore permission for vote storage.',
           );
         }
         _canSyncVotesWithFirestore = false;
@@ -313,15 +502,21 @@ class _CommunityPageState extends State<CommunityPage>
             vote, // 'green' (verify) or 'red' (report) or 'none' (removed)
         'timestamp': FieldValue.serverTimestamp(),
       });
-      _debugLog('ðŸ“ Vote record saved to voteRecords collection');
+      _debugLog(
+        'ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â Vote record saved to voteRecords collection',
+      );
     } catch (e) {
-      _debugLog('âš ï¸ Could not save vote record: $e');
+      _debugLog('ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Could not save vote record: $e');
       // Don't fail the main operation if this fails
     }
   }
 
   Future<void> _migrateLegacyVotesIfNeeded(String userId) async {
-    if (_checkedLegacyVotes || !_canSyncVotesWithFirestore) return;
+    if (_checkedLegacyVotes ||
+        !_canSyncVotesWithFirestore ||
+        _voteStorageBackend.usingApprovedUsersFallback) {
+      return;
+    }
     _checkedLegacyVotes = true;
     final legacyUsername = UserSession.currentUserData?['username']
         ?.toString()
@@ -352,7 +547,7 @@ class _CommunityPageState extends State<CommunityPage>
             'Vote migration skipped: missing Firestore permission for userVotes.',
           );
         }
-        _canSyncVotesWithFirestore = false;
+        // Keep vote sync enabled so fallback storage can still work.
         return;
       }
       _debugLog('Failed to migrate legacy votes: $e');
@@ -384,10 +579,12 @@ class _CommunityPageState extends State<CommunityPage>
             _reports = reports;
             _recomputeDerivedReportState();
             _tryOpenPendingInitialReport();
-            _debugLog('âœ… Loaded ${reports.length} reports from Firestore');
+            _debugLog(
+              'ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Loaded ${reports.length} reports from Firestore',
+            );
           },
           onError: (e) {
-            _debugLog('âŒ Failed to load reports: $e');
+            _debugLog('ÃƒÂ¢Ã‚ÂÃ…â€™ Failed to load reports: $e');
           },
         );
   }
@@ -410,12 +607,18 @@ class _CommunityPageState extends State<CommunityPage>
     final targetId = _pendingInitialReportId!;
     final reportIndex = _reportIndexById[targetId] ?? -1;
     if (reportIndex < 0) {
+      if (_isResolvingInitialReport) {
+        return;
+      }
+      _isResolvingInitialReport = true;
+      unawaited(_openPendingInitialReportById(targetId));
       return;
     }
 
     final report = Map<String, dynamic>.from(_reports[reportIndex]);
     _initialReportDialogOpened = true;
     _pendingInitialReportId = null;
+    widget.onInitialReportConsumed?.call();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -423,10 +626,45 @@ class _CommunityPageState extends State<CommunityPage>
     });
   }
 
+  Future<void> _openPendingInitialReportById(String reportId) async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .get();
+      if (!mounted) {
+        return;
+      }
+      final data = doc.data();
+      if (!doc.exists || data == null) {
+        _pendingInitialReportId = null;
+        _initialReportDialogOpened = false;
+        widget.onInitialReportConsumed?.call();
+        return;
+      }
+
+      final report = _mapReportFromDoc(doc);
+      _initialReportDialogOpened = true;
+      _pendingInitialReportId = null;
+      widget.onInitialReportConsumed?.call();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _showReportDetailsDialog(report);
+      });
+    } catch (error) {
+      _debugLog('Failed to open initial report by ID: $error');
+      _pendingInitialReportId = null;
+      _initialReportDialogOpened = false;
+      widget.onInitialReportConsumed?.call();
+    } finally {
+      _isResolvingInitialReport = false;
+    }
+  }
+
   Map<String, dynamic> _mapReportFromDoc(
-    QueryDocumentSnapshot<Map<String, dynamic>> doc,
+    DocumentSnapshot<Map<String, dynamic>> doc,
   ) {
-    final data = doc.data();
+    final data = doc.data() ?? <String, dynamic>{};
     final reportedAtRaw = data['reportedAt'];
     final reportedAt = reportedAtRaw is Timestamp
         ? reportedAtRaw.toDate()
@@ -456,8 +694,8 @@ class _CommunityPageState extends State<CommunityPage>
       'location': locationText.isNotEmpty ? locationText : 'Not provided',
       'title': data['incidentType'] ?? 'Unknown',
       'desc': data['details'] ?? 'No description provided.',
-      'greenFlags': data['greenFlags'] ?? 0,
-      'redFlags': data['redFlags'] ?? 0,
+      'greenFlags': _nonNegativeInt(data['greenFlags']),
+      'redFlags': _nonNegativeInt(data['redFlags']),
       'status': _normalizeStatusLabel((data['status'] ?? 'Pending').toString()),
       'resolvedAt': resolvedAt,
       'comments': data['comments'] ?? 0,
@@ -628,7 +866,7 @@ class _CommunityPageState extends State<CommunityPage>
     return status.trim().toUpperCase().replaceAll('_', ' ');
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ DIALOG HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ DIALOG HELPERS ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
   // Add this method to replace the existing _showReasonDialog in community_page.dart
 
@@ -1206,7 +1444,7 @@ class _CommunityPageState extends State<CommunityPage>
     return result;
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ MEDIA BUILDER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ MEDIA BUILDER ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
   Widget _buildMediaWidget(
     Map<String, dynamic> report, {
@@ -1217,7 +1455,10 @@ class _CommunityPageState extends State<CommunityPage>
 
     // Debug: log what we're trying to load
     _debugLog(
-      'ðŸ–¼ï¸ Media load -> type: ' + mediaType + ', url: ' + mediaUrl,
+      'ÃƒÂ°Ã…Â¸Ã¢â‚¬â€œÃ‚Â¼ÃƒÂ¯Ã‚Â¸Ã‚Â Media load -> type: ' +
+          mediaType +
+          ', url: ' +
+          mediaUrl,
     );
 
     // Handle empty URL
@@ -1235,7 +1476,9 @@ class _CommunityPageState extends State<CommunityPage>
       final bucket = 'res-q-93ca6.firebasestorage.app';
       downloadUrl =
           'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(mediaUrl)}?alt=media';
-      _debugLog('ðŸ”— Converted storage path to download URL: $downloadUrl');
+      _debugLog(
+        'ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ¢â‚¬â€ Converted storage path to download URL: $downloadUrl',
+      );
     }
 
     final dpr = MediaQuery.of(context).devicePixelRatio.clamp(1.0, 3.0);
@@ -1262,7 +1505,7 @@ class _CommunityPageState extends State<CommunityPage>
     return 'https://firebasestorage.googleapis.com/v0/b/$bucket/o/${Uri.encodeComponent(mediaUrl)}?alt=media';
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ IMAGE ZOOM DIALOG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ IMAGE ZOOM DIALOG ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
   void _showImageZoom(String imageUrl) {
     showDialog(
@@ -1455,13 +1698,13 @@ class _CommunityPageState extends State<CommunityPage>
                                   child: Row(
                                     children: [
                                       Icon(
-                                        Icons.flag,
+                                        Icons.check_circle_outline,
                                         size: 18,
                                         color: greenIconColor,
                                       ),
                                       const SizedBox(width: 4),
                                       Text(
-                                        '${report['greenFlags']}',
+                                        '${_nonNegativeInt(report['greenFlags'])}',
                                         style: const TextStyle(
                                           fontFamily: 'RobotoCondensed',
                                           fontSize: 12,
@@ -1489,7 +1732,7 @@ class _CommunityPageState extends State<CommunityPage>
                                       ),
                                       const SizedBox(width: 4),
                                       Text(
-                                        '${report['redFlags']}',
+                                        '${_nonNegativeInt(report['redFlags'])}',
                                         style: const TextStyle(
                                           fontFamily: 'RobotoCondensed',
                                           fontSize: 12,
@@ -1565,14 +1808,16 @@ class _CommunityPageState extends State<CommunityPage>
     );
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ FLAG LOGIC (WITH DIALOG) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ FLAG LOGIC (WITH DIALOG) ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
   Future<void> _onGreenFlagPressed(int index) async {
     final report = _reports[index];
     final String vote = report['userVote'];
     final reportId = report['id']?.toString() ?? '';
+    int greenCount = _nonNegativeInt(report['greenFlags']);
+    int redCount = _nonNegativeInt(report['redFlags']);
 
-    // Already green â†’ quick unverify
+    // Already green ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ quick unverify
     if (vote == 'green') {
       final shouldUndo = await _showUndoConfirmDialog(
         title: 'UNDO VERIFY',
@@ -1585,7 +1830,8 @@ class _CommunityPageState extends State<CommunityPage>
       // Update _userVotes immediately so Firestore listener uses correct value
       _userVotes.remove(reportId);
 
-      if (report['greenFlags'] > 0) report['greenFlags']--;
+      greenCount = _nonNegativeInt(greenCount - 1);
+      report['greenFlags'] = greenCount;
       report['userVote'] = 'none';
       _recomputeDerivedReportState();
       await _updateReportFlags(reportId, greenDelta: -1);
@@ -1611,7 +1857,6 @@ class _CommunityPageState extends State<CommunityPage>
         'Witnessed the event',
         'Heard from neighbors',
         'Consistent with other reports',
-        'Other...',
       ],
     );
 
@@ -1620,10 +1865,12 @@ class _CommunityPageState extends State<CommunityPage>
     // Update _userVotes immediately so Firestore listener uses correct value
     _userVotes[reportId] = 'green';
 
-    if (vote == 'red' && report['redFlags'] > 0) {
-      report['redFlags']--;
+    if (vote == 'red') {
+      redCount = _nonNegativeInt(redCount - 1);
     }
-    report['greenFlags']++;
+    greenCount = _nonNegativeInt(greenCount + 1);
+    report['greenFlags'] = greenCount;
+    report['redFlags'] = redCount;
     report['userVote'] = 'green';
     _recomputeDerivedReportState();
     await _updateReportFlags(
@@ -1638,8 +1885,10 @@ class _CommunityPageState extends State<CommunityPage>
     final report = _reports[index];
     final String vote = report['userVote'];
     final reportId = report['id']?.toString() ?? '';
+    int greenCount = _nonNegativeInt(report['greenFlags']);
+    int redCount = _nonNegativeInt(report['redFlags']);
 
-    // Already red â†’ quick unflag
+    // Already red ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ quick unflag
     if (vote == 'red') {
       final shouldUndo = await _showUndoConfirmDialog(
         title: 'UNDO REPORT',
@@ -1652,7 +1901,8 @@ class _CommunityPageState extends State<CommunityPage>
       // Update _userVotes immediately so Firestore listener uses correct value
       _userVotes.remove(reportId);
 
-      if (report['redFlags'] > 0) report['redFlags']--;
+      redCount = _nonNegativeInt(redCount - 1);
+      report['redFlags'] = redCount;
       report['userVote'] = 'none';
       _recomputeDerivedReportState();
       await _updateReportFlags(reportId, redDelta: -1);
@@ -1675,11 +1925,9 @@ class _CommunityPageState extends State<CommunityPage>
       headerText: 'REPORT INCIDENT',
       question: 'Why are you flagging this report?',
       reasons: const [
-        'False/Misleading Information',
         'Inappropriate Content',
         'Flagged/Lack of Evidence',
         'Spam/Irrelevant Content',
-        'Other...',
       ],
     );
 
@@ -1688,10 +1936,12 @@ class _CommunityPageState extends State<CommunityPage>
     // Update _userVotes immediately so Firestore listener uses correct value
     _userVotes[reportId] = 'red';
 
-    if (vote == 'green' && report['greenFlags'] > 0) {
-      report['greenFlags']--;
+    if (vote == 'green') {
+      greenCount = _nonNegativeInt(greenCount - 1);
     }
-    report['redFlags']++;
+    redCount = _nonNegativeInt(redCount + 1);
+    report['greenFlags'] = greenCount;
+    report['redFlags'] = redCount;
     report['userVote'] = 'red';
     _recomputeDerivedReportState();
     await _updateReportFlags(
@@ -1708,25 +1958,34 @@ class _CommunityPageState extends State<CommunityPage>
     int redDelta = 0,
   }) async {
     if (reportId.isEmpty) return;
-    final updates = <String, dynamic>{};
-    if (greenDelta != 0) {
-      updates['greenFlags'] = FieldValue.increment(greenDelta);
-    }
-    if (redDelta != 0) {
-      updates['redFlags'] = FieldValue.increment(redDelta);
-    }
-    if (updates.isEmpty) return;
+    if (greenDelta == 0 && redDelta == 0) return;
     try {
-      await FirebaseFirestore.instance
+      final reportRef = FirebaseFirestore.instance
           .collection('reports')
-          .doc(reportId)
-          .update(updates);
+          .doc(reportId);
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        final snapshot = await transaction.get(reportRef);
+        if (!snapshot.exists) return;
+        final data = snapshot.data() ?? <String, dynamic>{};
+        final currentGreen = _nonNegativeInt(data['greenFlags']);
+        final currentRed = _nonNegativeInt(data['redFlags']);
+        final updates = <String, dynamic>{};
+        if (greenDelta != 0) {
+          updates['greenFlags'] = _nonNegativeInt(currentGreen + greenDelta);
+        }
+        if (redDelta != 0) {
+          updates['redFlags'] = _nonNegativeInt(currentRed + redDelta);
+        }
+        if (updates.isNotEmpty) {
+          transaction.update(reportRef, updates);
+        }
+      });
     } catch (e) {
-      _debugLog('âš ï¸ Failed to update report flags: $e');
+      _debugLog('Failed to update report flags: $e');
     }
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ COMMENTS BOTTOM SHEET â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ COMMENTS BOTTOM SHEET ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
   void _openComments(int index) {
     final report = _reports[index];
@@ -1745,7 +2004,7 @@ class _CommunityPageState extends State<CommunityPage>
     );
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ TIME FORMATTER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ TIME FORMATTER ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
   String _formatTimeAgo(DateTime timestamp) {
     final now = DateTime.now();
@@ -1764,7 +2023,7 @@ class _CommunityPageState extends State<CommunityPage>
     }
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ FILTER & ANNOUNCEMENT HELPERS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ FILTER & ANNOUNCEMENT HELPERS ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
   int _getActiveFilterCount() {
     int count = 0;
@@ -1864,9 +2123,22 @@ class _CommunityPageState extends State<CommunityPage>
                               _recomputeDerivedReportState();
                             });
                           },
+                          showCheckmark: false,
+                          backgroundColor: appOffWhite,
                           selectedColor: appBlue,
+                          surfaceTintColor: Colors.transparent,
+                          side: BorderSide(
+                            color: _selectedFilter == status
+                                ? appBlue
+                                : appBlue.withValues(alpha: 0.35),
+                            width: 1.2,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(22),
+                          ),
                           labelStyle: TextStyle(
                             fontFamily: 'RobotoCondensed',
+                            fontWeight: FontWeight.w600,
                             color: _selectedFilter == status
                                 ? Colors.white
                                 : appBlack,
@@ -1902,9 +2174,22 @@ class _CommunityPageState extends State<CommunityPage>
                               _recomputeDerivedReportState();
                             });
                           },
+                          showCheckmark: false,
+                          backgroundColor: appOffWhite,
                           selectedColor: appBlue,
+                          surfaceTintColor: Colors.transparent,
+                          side: BorderSide(
+                            color: _selectedCategory == category
+                                ? appBlue
+                                : appBlue.withValues(alpha: 0.35),
+                            width: 1.2,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(22),
+                          ),
                           labelStyle: TextStyle(
                             fontFamily: 'RobotoCondensed',
+                            fontWeight: FontWeight.w600,
                             color: _selectedCategory == category
                                 ? Colors.white
                                 : appBlack,
@@ -1940,9 +2225,22 @@ class _CommunityPageState extends State<CommunityPage>
                               _recomputeDerivedReportState();
                             });
                           },
+                          showCheckmark: false,
+                          backgroundColor: appOffWhite,
                           selectedColor: appBlue,
+                          surfaceTintColor: Colors.transparent,
+                          side: BorderSide(
+                            color: _selectedTimeFilter == time
+                                ? appBlue
+                                : appBlue.withValues(alpha: 0.35),
+                            width: 1.2,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(22),
+                          ),
                           labelStyle: TextStyle(
                             fontFamily: 'RobotoCondensed',
+                            fontWeight: FontWeight.w600,
                             color: _selectedTimeFilter == time
                                 ? Colors.white
                                 : appBlack,
@@ -2081,7 +2379,7 @@ class _CommunityPageState extends State<CommunityPage>
     );
   }
 
-  // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ UI â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ UI ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
 
   @override
   Widget build(BuildContext context) {
@@ -2588,7 +2886,7 @@ class _CommunityPageState extends State<CommunityPage>
                                                 ),
                                                 const SizedBox(width: 4),
                                                 Text(
-                                                  'Verify ${report['greenFlags']}',
+                                                  'Verify ${_nonNegativeInt(report['greenFlags'])}',
                                                   style: TextStyle(
                                                     fontFamily:
                                                         'RobotoCondensed',
@@ -2628,7 +2926,7 @@ class _CommunityPageState extends State<CommunityPage>
                                                 ),
                                                 const SizedBox(width: 4),
                                                 Text(
-                                                  'Report ${report['redFlags']}',
+                                                  'Report ${_nonNegativeInt(report['redFlags'])}',
                                                   style: TextStyle(
                                                     fontFamily:
                                                         'RobotoCondensed',
@@ -2702,9 +3000,9 @@ class _CommunityPageState extends State<CommunityPage>
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 // COMMENTS BOTTOM SHEET (Draggable)
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
 class _CommentsBottomSheet extends StatefulWidget {
   final Map<String, dynamic> report;
@@ -2737,6 +3035,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   final Set<String> _expandedNestedReplies = <String>{};
   bool _loading = true;
   bool _isPostingComment = false;
+  final _VoteStorageBackend _voteStorageBackend = _VoteStorageBackend();
 
   @override
   void initState() {
@@ -2776,8 +3075,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               'text': data['text'] ?? '',
               'author': data['author'] ?? 'Anonymous',
               'timestamp': timestamp,
-              'greenFlags': data['greenFlags'] ?? 0,
-              'redFlags': data['redFlags'] ?? 0,
+              'greenFlags': _nonNegativeInt(data['greenFlags']),
+              'redFlags': _nonNegativeInt(data['redFlags']),
               'replyCount': data['replyCount'] ?? 0,
               'userVote': _commentVotes[_commentVoteKey(doc.id)] ?? 'none',
             };
@@ -2828,12 +3127,16 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     if (userPhone == null || userPhone.isEmpty) return;
 
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('userVotes')
-          .doc(userPhone)
-          .get();
-      final data = doc.data() ?? {};
-      final loadedVotes = Map<String, String>.from(data['commentVotes'] ?? {});
+      final data = await _voteStorageBackend.readVotePayload(
+        userPhone: userPhone,
+        userData: UserSession.currentUserData,
+      );
+      final rawVotes = data?['commentVotes'];
+      final loadedVotes = rawVotes is Map
+          ? rawVotes.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            )
+          : <String, String>{};
 
       if (!mounted) return;
       setState(() {
@@ -2852,7 +3155,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
           }
         }
       });
-    } catch (_) {}
+    } catch (e) {
+      _debugLog('Failed to load comment votes: $e');
+    }
   }
 
   Future<void> _saveCommentVote(String commentId, String vote) async {
@@ -2867,11 +3172,14 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     }
 
     try {
-      await FirebaseFirestore.instance
-          .collection('userVotes')
-          .doc(userPhone)
-          .set({'commentVotes': _commentVotes}, SetOptions(merge: true));
-    } catch (_) {}
+      await _voteStorageBackend.writeVotePayload(
+        userPhone: userPhone,
+        userData: UserSession.currentUserData,
+        payload: {'commentVotes': _commentVotes},
+      );
+    } catch (e) {
+      _debugLog('Failed to save comment vote: $e');
+    }
   }
 
   Future<void> _saveReplyVote(
@@ -2890,11 +3198,14 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     }
 
     try {
-      await FirebaseFirestore.instance
-          .collection('userVotes')
-          .doc(userPhone)
-          .set({'commentVotes': _commentVotes}, SetOptions(merge: true));
-    } catch (_) {}
+      await _voteStorageBackend.writeVotePayload(
+        userPhone: userPhone,
+        userData: UserSession.currentUserData,
+        payload: {'commentVotes': _commentVotes},
+      );
+    } catch (e) {
+      _debugLog('Failed to save reply vote: $e');
+    }
   }
 
   Future<void> _postComment() async {
@@ -2991,8 +3302,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     final comment = _comments[commentIndex];
     final vote = comment['userVote'] as String? ?? 'none';
 
-    var newGreenCount = comment['greenFlags'] as int? ?? 0;
-    var newRedCount = comment['redFlags'] as int? ?? 0;
+    var newGreenCount = _nonNegativeInt(comment['greenFlags']);
+    var newRedCount = _nonNegativeInt(comment['redFlags']);
     var newVote = vote;
 
     if (vote == 'green') {
@@ -3003,6 +3314,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       newGreenCount++;
       newVote = 'green';
     }
+
+    newGreenCount = _nonNegativeInt(newGreenCount);
+    newRedCount = _nonNegativeInt(newRedCount);
 
     try {
       final commentId = comment['id'] as String;
@@ -3037,8 +3351,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     final comment = _comments[commentIndex];
     final vote = comment['userVote'] as String? ?? 'none';
 
-    var newGreenCount = comment['greenFlags'] as int? ?? 0;
-    var newRedCount = comment['redFlags'] as int? ?? 0;
+    var newGreenCount = _nonNegativeInt(comment['greenFlags']);
+    var newRedCount = _nonNegativeInt(comment['redFlags']);
     var newVote = vote;
 
     if (vote == 'red') {
@@ -3049,6 +3363,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       newRedCount++;
       newVote = 'red';
     }
+
+    newGreenCount = _nonNegativeInt(newGreenCount);
+    newRedCount = _nonNegativeInt(newRedCount);
 
     try {
       final commentId = comment['id'] as String;
@@ -3109,8 +3426,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     if (reply == null) return;
 
     final vote = reply['userVote'] as String? ?? 'none';
-    var newGreenCount = reply['greenFlags'] as int? ?? 0;
-    var newRedCount = reply['redFlags'] as int? ?? 0;
+    var newGreenCount = _nonNegativeInt(reply['greenFlags']);
+    var newRedCount = _nonNegativeInt(reply['redFlags']);
     var newVote = vote;
 
     if (vote == 'green') {
@@ -3121,6 +3438,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       newGreenCount++;
       newVote = 'green';
     }
+
+    newGreenCount = _nonNegativeInt(newGreenCount);
+    newRedCount = _nonNegativeInt(newRedCount);
 
     try {
       await FirebaseFirestore.instance
@@ -3158,8 +3478,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
     if (reply == null) return;
 
     final vote = reply['userVote'] as String? ?? 'none';
-    var newGreenCount = reply['greenFlags'] as int? ?? 0;
-    var newRedCount = reply['redFlags'] as int? ?? 0;
+    var newGreenCount = _nonNegativeInt(reply['greenFlags']);
+    var newRedCount = _nonNegativeInt(reply['redFlags']);
     var newVote = vote;
 
     if (vote == 'red') {
@@ -3170,6 +3490,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
       newRedCount++;
       newVote = 'red';
     }
+
+    newGreenCount = _nonNegativeInt(newGreenCount);
+    newRedCount = _nonNegativeInt(newRedCount);
 
     try {
       await FirebaseFirestore.instance
@@ -3233,8 +3556,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
           'text': data['text'] ?? '',
           'author': data['author'] ?? 'Anonymous',
           'timestamp': timestamp,
-          'greenFlags': data['greenFlags'] ?? 0,
-          'redFlags': data['redFlags'] ?? 0,
+          'greenFlags': _nonNegativeInt(data['greenFlags']),
+          'redFlags': _nonNegativeInt(data['redFlags']),
           'replyCount': data['replyCount'] ?? 0,
           'parentReplyId': parentReplyId,
           'userVote': _commentVotes[_replyVoteKey(commentId, doc.id)] ?? 'none',
@@ -3698,14 +4021,14 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                   children: [
                     _buildCommentAction(
                       icon: Icons.verified,
-                      label: 'Verify ${reply['greenFlags'] ?? 0}',
+                      label: 'Verify ${_nonNegativeInt(reply['greenFlags'])}',
                       color: appGreen,
                       selected: verifySelected,
                       onTap: () => _onReplyVerify(commentId, replyId),
                     ),
                     _buildCommentAction(
                       icon: Icons.flag,
-                      label: 'Report ${reply['redFlags'] ?? 0}',
+                      label: 'Report ${_nonNegativeInt(reply['redFlags'])}',
                       color: appRed,
                       selected: reportSelected,
                       onTap: () => _onReplyReport(commentId, replyId),
@@ -4014,7 +4337,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                                           _buildCommentAction(
                                             icon: Icons.verified,
                                             label:
-                                                'Verify ${comment['greenFlags']}',
+                                                'Verify ${_nonNegativeInt(comment['greenFlags'])}',
                                             color: appGreen,
                                             selected: verifySelected,
                                             onTap: () =>
@@ -4023,7 +4346,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                                           _buildCommentAction(
                                             icon: Icons.flag,
                                             label:
-                                                'Report ${comment['redFlags']}',
+                                                'Report ${_nonNegativeInt(comment['redFlags'])}',
                                             color: appRed,
                                             selected: reportSelected,
                                             onTap: () =>
@@ -4218,6 +4541,13 @@ class _CommentsPageState extends State<_CommentsPage> {
   List<Map<String, dynamic>> _comments = [];
   bool _loading = true;
   bool _isPostingComment = false;
+  static const Duration _commentPostCooldown = Duration(seconds: 5);
+  static const Duration _duplicateCommentWindow = Duration(seconds: 25);
+  Timer? _commentCooldownTimer;
+  DateTime? _commentCooldownUntil;
+  int _commentCooldownSeconds = 0;
+  String? _lastPostedCommentSignature;
+  DateTime? _lastPostedCommentAt;
 
   @override
   void initState() {
@@ -4227,8 +4557,60 @@ class _CommentsPageState extends State<_CommentsPage> {
 
   @override
   void dispose() {
+    _commentCooldownTimer?.cancel();
     _commentController.dispose();
     super.dispose();
+  }
+
+  bool get _isCommentSendLocked =>
+      _isPostingComment || _commentCooldownSeconds > 0;
+
+  void _startCommentCooldown([Duration duration = _commentPostCooldown]) {
+    _commentCooldownTimer?.cancel();
+    final cooldownUntil = DateTime.now().add(duration);
+    if (mounted) {
+      setState(() {
+        _commentCooldownUntil = cooldownUntil;
+        _commentCooldownSeconds = duration.inSeconds;
+      });
+    } else {
+      _commentCooldownUntil = cooldownUntil;
+      _commentCooldownSeconds = duration.inSeconds;
+    }
+
+    _commentCooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      final until = _commentCooldownUntil;
+      if (until == null) {
+        timer.cancel();
+        return;
+      }
+      final remaining = until.difference(DateTime.now()).inSeconds;
+      if (remaining <= 0) {
+        timer.cancel();
+        setState(() {
+          _commentCooldownSeconds = 0;
+          _commentCooldownUntil = null;
+        });
+        return;
+      }
+      setState(() => _commentCooldownSeconds = remaining);
+    });
+  }
+
+  bool _isDuplicateCommentBurst(String signature) {
+    final lastSignature = _lastPostedCommentSignature;
+    final lastPostedAt = _lastPostedCommentAt;
+    if (lastSignature == null || lastPostedAt == null) {
+      return false;
+    }
+    if (lastSignature != signature) {
+      return false;
+    }
+    return DateTime.now().difference(lastPostedAt) < _duplicateCommentWindow;
   }
 
   Future<void> _loadComments() async {
@@ -4236,7 +4618,7 @@ class _CommentsPageState extends State<_CommentsPage> {
       final reportId = widget.report['id']?.toString() ?? '';
 
       _debugLog(
-        'ðŸ“¥ Loading comments from nested collection for reportId: $reportId',
+        'ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â¥ Loading comments from nested collection for reportId: $reportId',
       );
 
       // Load from nested comments collection
@@ -4248,7 +4630,7 @@ class _CommentsPageState extends State<_CommentsPage> {
           .get();
 
       _debugLog(
-        'âœ… Loaded ${snapshot.docs.length} comments from nested collection',
+        'ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Loaded ${snapshot.docs.length} comments from nested collection',
       );
 
       final comments = snapshot.docs
@@ -4265,8 +4647,8 @@ class _CommentsPageState extends State<_CommentsPage> {
               'text': data['text'] ?? '',
               'author': data['author'] ?? 'Anonymous',
               'timestamp': timestamp,
-              'greenFlags': data['greenFlags'] ?? 0,
-              'redFlags': data['redFlags'] ?? 0,
+              'greenFlags': _nonNegativeInt(data['greenFlags']),
+              'redFlags': _nonNegativeInt(data['redFlags']),
               'userVote': 'none',
               // Report credentials
               'reportId': data['reportId'] ?? '',
@@ -4286,15 +4668,26 @@ class _CommentsPageState extends State<_CommentsPage> {
         _loading = false;
       });
 
-      _debugLog('âœ… Loaded ${comments.length} comments from Firestore');
+      _debugLog(
+        'ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Loaded ${comments.length} comments from Firestore',
+      );
     } catch (e) {
-      _debugLog('âŒ Failed to load comments: $e');
+      _debugLog('ÃƒÂ¢Ã‚ÂÃ…â€™ Failed to load comments: $e');
       setState(() => _loading = false);
     }
   }
 
   Future<void> _postComment() async {
     if (_isPostingComment) return;
+    if (_commentCooldownSeconds > 0) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Please wait $_commentCooldownSeconds seconds before posting again.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
     final commentText = _commentController.text.trim();
     if (commentText.isEmpty) return;
     if (commentText.length > 256) {
@@ -4322,7 +4715,9 @@ class _CommentsPageState extends State<_CommentsPage> {
       final reportedBy = widget.report['name']?.toString() ?? '';
 
       if (reportId.isEmpty) {
-        _debugLog('âŒ ERROR: reportId is empty! Cannot post comment.');
+        _debugLog(
+          'ÃƒÂ¢Ã‚ÂÃ…â€™ ERROR: reportId is empty! Cannot post comment.',
+        );
         if (mounted) {
           AppSnackBar.show(
             context,
@@ -4333,7 +4728,7 @@ class _CommentsPageState extends State<_CommentsPage> {
         return;
       }
 
-      _debugLog('ðŸ“ Posting comment with report credentials:');
+      _debugLog('ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â Posting comment with report credentials:');
       _debugLog('  - reportId: $reportId');
       _debugLog('  - reportTitle: $reportTitle');
       _debugLog('  - reportStatus: $reportStatus');
@@ -4342,6 +4737,18 @@ class _CommentsPageState extends State<_CommentsPage> {
       // Get the current user's name from UserSession
       final userName =
           UserSession.currentUserData?['fullName'] as String? ?? 'Anonymous';
+      final commentSignature =
+          '${reportId.trim().toLowerCase()}|${userName.trim().toLowerCase()}|${commentText.toLowerCase()}';
+      if (_isDuplicateCommentBurst(commentSignature)) {
+        if (!mounted) return;
+        _startCommentCooldown(const Duration(seconds: 3));
+        AppSnackBar.show(
+          context,
+          'Duplicate comment blocked. Please edit your comment.',
+          type: AppSnackBarType.warning,
+        );
+        return;
+      }
 
       final newComment = {
         'text': commentText,
@@ -4361,8 +4768,8 @@ class _CommentsPageState extends State<_CommentsPage> {
         'reportedBy': reportedBy,
       };
 
-      _debugLog('ðŸ“¤ Comment data structure: $newComment');
-      _debugLog('ðŸ” Saving to nested comments collection...');
+      _debugLog('ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â¤ Comment data structure: $newComment');
+      _debugLog('ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ‚Â Saving to nested comments collection...');
 
       // Save to nested comments collection (for display in UI)
       final savedDocRef = await FirebaseFirestore.instance
@@ -4372,7 +4779,7 @@ class _CommentsPageState extends State<_CommentsPage> {
           .add(newComment);
 
       _debugLog(
-        'âœ… Comment saved to nested collection with ID: ${savedDocRef.id}',
+        'ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Comment saved to nested collection with ID: ${savedDocRef.id}',
       );
 
       // Try to update report document with new comment count
@@ -4382,7 +4789,7 @@ class _CommentsPageState extends State<_CommentsPage> {
             .collection('reports')
             .doc(reportId)
             .update({'comments': FieldValue.increment(1)});
-        _debugLog('âœ… Report comment count incremented');
+        _debugLog('ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Report comment count incremented');
         if (mounted) {
           setState(() {
             final currentCount = widget.report['comments'] as int? ?? 0;
@@ -4391,12 +4798,15 @@ class _CommentsPageState extends State<_CommentsPage> {
         }
       } catch (updateError) {
         _debugLog(
-          'âš ï¸ Warning: Could not update comment count: $updateError',
+          'ÃƒÂ¢Ã…Â¡Ã‚Â ÃƒÂ¯Ã‚Â¸Ã‚Â Warning: Could not update comment count: $updateError',
         );
         // Don't fail the entire operation if count update fails
       }
 
       _commentController.clear();
+      _lastPostedCommentSignature = commentSignature;
+      _lastPostedCommentAt = DateTime.now();
+      _startCommentCooldown();
 
       // Reload comments
       await _loadComments();
@@ -4410,9 +4820,10 @@ class _CommentsPageState extends State<_CommentsPage> {
         );
       }
     } catch (e) {
-      _debugLog('âŒ Failed to post comment: $e');
+      _debugLog('ÃƒÂ¢Ã‚ÂÃ…â€™ Failed to post comment: $e');
       _debugLog('Stack trace: ${StackTrace.current}');
       _debugLog('Error type: ${e.runtimeType}');
+      _startCommentCooldown(const Duration(seconds: 2));
       if (mounted) {
         // Show detailed error in dialog
         showDialog(
@@ -4443,8 +4854,8 @@ class _CommentsPageState extends State<_CommentsPage> {
     final vote = comment['userVote'] as String;
 
     try {
-      int newGreenCount = comment['greenFlags'] as int;
-      int newRedCount = comment['redFlags'] as int;
+      int newGreenCount = _nonNegativeInt(comment['greenFlags']);
+      int newRedCount = _nonNegativeInt(comment['redFlags']);
       String newVote = vote;
 
       if (vote == 'green') {
@@ -4460,6 +4871,9 @@ class _CommentsPageState extends State<_CommentsPage> {
         newVote = 'green';
       }
 
+      newGreenCount = _nonNegativeInt(newGreenCount);
+      newRedCount = _nonNegativeInt(newRedCount);
+
       await FirebaseFirestore.instance
           .collection('reports')
           .doc(widget.report['id'] as String)
@@ -4473,7 +4887,7 @@ class _CommentsPageState extends State<_CommentsPage> {
         comment['userVote'] = newVote;
       });
     } catch (e) {
-      _debugLog('âŒ Failed to update comment vote: $e');
+      _debugLog('ÃƒÂ¢Ã‚ÂÃ…â€™ Failed to update comment vote: $e');
     }
   }
 
@@ -4482,8 +4896,8 @@ class _CommentsPageState extends State<_CommentsPage> {
     final vote = comment['userVote'] as String;
 
     try {
-      int newGreenCount = comment['greenFlags'] as int;
-      int newRedCount = comment['redFlags'] as int;
+      int newGreenCount = _nonNegativeInt(comment['greenFlags']);
+      int newRedCount = _nonNegativeInt(comment['redFlags']);
       String newVote = vote;
 
       if (vote == 'red') {
@@ -4499,6 +4913,9 @@ class _CommentsPageState extends State<_CommentsPage> {
         newVote = 'red';
       }
 
+      newGreenCount = _nonNegativeInt(newGreenCount);
+      newRedCount = _nonNegativeInt(newRedCount);
+
       await FirebaseFirestore.instance
           .collection('reports')
           .doc(widget.report['id'] as String)
@@ -4512,7 +4929,7 @@ class _CommentsPageState extends State<_CommentsPage> {
         comment['userVote'] = newVote;
       });
     } catch (e) {
-      _debugLog('âŒ Failed to update comment vote: $e');
+      _debugLog('ÃƒÂ¢Ã‚ÂÃ…â€™ Failed to update comment vote: $e');
     }
   }
 
@@ -4630,13 +5047,19 @@ class _CommentsPageState extends State<_CommentsPage> {
                   height: 36,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
-                    color: Colors.grey[200],
+                    color: appOffWhite,
                     borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: appBlue.withValues(alpha: 0.35),
+                      width: 1,
+                    ),
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       value: _commentFilter,
                       dropdownColor: Colors.white,
+                      iconEnabledColor: appBlue,
+                      focusColor: Colors.transparent,
                       style: const TextStyle(
                         fontFamily: 'RobotoCondensed',
                         fontSize: 12,
@@ -4797,13 +5220,13 @@ class _CommentsPageState extends State<_CommentsPage> {
                                     child: Row(
                                       children: [
                                         Icon(
-                                          Icons.flag,
+                                          Icons.check_circle_outline,
                                           size: 18,
                                           color: greenColor,
                                         ),
                                         const SizedBox(width: 4),
                                         Text(
-                                          '${comment['greenFlags']}',
+                                          '${_nonNegativeInt(comment['greenFlags'])}',
                                           style: const TextStyle(
                                             fontFamily: 'RobotoCondensed',
                                             fontSize: 12,
@@ -4842,7 +5265,7 @@ class _CommentsPageState extends State<_CommentsPage> {
                                         ),
                                         const SizedBox(width: 4),
                                         Text(
-                                          '${comment['redFlags']}',
+                                          '${_nonNegativeInt(comment['redFlags'])}',
                                           style: const TextStyle(
                                             fontFamily: 'RobotoCondensed',
                                             fontSize: 12,
@@ -4908,10 +5331,10 @@ class _CommentsPageState extends State<_CommentsPage> {
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: _isPostingComment ? null : _postComment,
+                  onPressed: _isCommentSendLocked ? null : _postComment,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: _isPostingComment
-                        ? appBlue.withOpacity(0.6)
+                    backgroundColor: _isCommentSendLocked
+                        ? appBlue.withValues(alpha: 0.6)
                         : appBlue,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -4930,6 +5353,16 @@ class _CommentsPageState extends State<_CommentsPage> {
                             valueColor: AlwaysStoppedAnimation<Color>(
                               Colors.white,
                             ),
+                          ),
+                        )
+                      : _commentCooldownSeconds > 0
+                      ? Text(
+                          '${_commentCooldownSeconds}s',
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
                           ),
                         )
                       : Text(
@@ -4968,10 +5401,10 @@ class _CommentsPageState extends State<_CommentsPage> {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 // IMAGE ZOOM DIALOG
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
 class _ImageZoomDialog extends StatelessWidget {
   final String imageUrl;
@@ -5042,10 +5475,10 @@ class _ImageZoomDialog extends StatelessWidget {
   }
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 // FIREBASE STORAGE IMAGE LOADER
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 /// Loads images directly from Firebase Storage using the download URL
 /// Uses Image.memory for better control and error handling
 
