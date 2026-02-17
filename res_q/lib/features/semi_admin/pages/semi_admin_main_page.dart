@@ -137,15 +137,27 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
     super.dispose();
   }
 
+  String? _resolveNotificationUserId() {
+    try {
+      final userId = UserSession.getUserId();
+      if (userId.isNotEmpty) {
+        return userId;
+      }
+    } catch (_) {
+      // Fall back to session document id for semi-admin profiles
+      // that do not yet have a normalized phone field.
+    }
+
+    final sessionData = UserSession.currentUserData;
+    final fallbackId =
+        (sessionData?['id'] ?? sessionData?['docId'])?.toString().trim() ?? '';
+    return fallbackId.isEmpty ? null : fallbackId;
+  }
+
   Future<void> _initializePostLoginServices() async {
     unawaited(AppAssetPrecacheService.warmUpPostLoginAssets(context));
 
-    String? userId;
-    try {
-      userId = UserSession.getUserId();
-    } catch (_) {
-      userId = null;
-    }
+    final userId = _resolveNotificationUserId();
 
     if (userId == null || userId.isEmpty) {
       debugPrint('Skipping notification init: missing post-login user ID');

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/theme/app_text_styles.dart';
 import '../../../common/constants/app_dimensions.dart';
+import '../../../common/utils/security_hash.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
@@ -83,11 +86,11 @@ class _PINCreationPageState extends State<PINCreationPage> {
     if (_loading) return;
     setState(() {
       _showError = false;
-      if (value == 'C') {
+      if (value == PinNumpad.clearKey || value == 'C') {
         _pin = '';
         return;
       }
-      if (value == '⌫') {
+      if (value == PinNumpad.backspaceKey || value == '\u232b') {
         if (_pin.isNotEmpty) {
           _pin = _pin.substring(0, _pin.length - 1);
         }
@@ -120,7 +123,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
   Future<bool?> _showBiometricsOptInDialog() async {
     final canUseBiometrics = await _checkBiometricsAvailable();
 
-    if (!canUseBiometrics || !mounted) {
+    if (!mounted) {
       return null;
     }
 
@@ -167,6 +170,19 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 ),
                 textAlign: TextAlign.center,
               ),
+              if (!canUseBiometrics) ...[
+                const SizedBox(height: AppDimensions.paddingSmall),
+                Text(
+                  'Biometrics is not available on this device yet. You can continue now and enable it later in app settings.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.appBlack.withValues(alpha: 0.7),
+                    fontFamily: 'RobotoCondensed',
+                    height: 1.35,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
               const SizedBox(height: AppDimensions.paddingSmall),
               Text(
                 'You can change this later in settings.',
@@ -207,9 +223,16 @@ class _PINCreationPageState extends State<PINCreationPage> {
                   const SizedBox(width: AppDimensions.paddingMedium),
                   Expanded(
                     child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
+                      onPressed: canUseBiometrics
+                          ? () => Navigator.pop(context, true)
+                          : null,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.appRed,
+                        backgroundColor: canUseBiometrics
+                            ? AppTheme.appRed
+                            : AppTheme.appBlack.withValues(alpha: 0.35),
+                        disabledBackgroundColor: AppTheme.appBlack.withValues(
+                          alpha: 0.35,
+                        ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(
                             AppDimensions.radiusMedium,
@@ -251,26 +274,35 @@ class _PINCreationPageState extends State<PINCreationPage> {
     String? phoneNumber,
   ) async {
     try {
+      final cleanPhone = phoneNumber?.replaceAll(RegExp(r'[^0-9+]'), '');
+
       // Save to SharedPreferences for local/quick access
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('biometrics_enabled', enabled);
-      if (phoneNumber != null) {
-        await prefs.setString('biometrics_phone', phoneNumber);
+      if (cleanPhone != null && cleanPhone.isNotEmpty) {
+        await prefs.setString('biometrics_phone', cleanPhone);
       }
 
       // Save to Firestore for persistence across devices (like votes)
-      if (phoneNumber != null) {
-        final cleanPhone = phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
+      if (cleanPhone != null && cleanPhone.isNotEmpty) {
         await _firestore.collection('userPreferences').doc(cleanPhone).set({
           'biometricsEnabled': enabled,
           'biometricsUpdatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
-        debugPrint('✅ Biometrics preference saved to Firestore: $enabled');
+        debugPrint('Biometrics preference saved to Firestore: $enabled');
       }
 
-      debugPrint('✅ Biometrics preference saved locally: $enabled');
+      debugPrint('Biometrics preference saved locally: $enabled');
     } catch (e) {
       debugPrint('Error saving biometrics preference: $e');
+    }
+  }
+
+  Future<void> _endTemporaryAuthSession() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (e) {
+      debugPrint('Sign-out after registration failed: $e');
     }
   }
 
@@ -315,6 +347,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
 
       final userData = _userData ?? {};
       userData['pin'] = _pin;
+      userData['pin_hash'] = SecurityHash.sha256Hex(_pin);
       userData['accountStatus'] = 'pending';
       userData['contactNumber'] = _phoneNumber;
 
@@ -341,13 +374,6 @@ class _PINCreationPageState extends State<PINCreationPage> {
             .collection('pending_users')
             .doc(uid)
             .set(userData, SetOptions(merge: true));
-      }
-
-      // End temporary phone-auth session; pending accounts should still use login.
-      try {
-        await FirebaseAuth.instance.signOut();
-      } catch (e) {
-        debugPrint('Sign-out after registration failed: $e');
       }
 
       if (!mounted) return;
@@ -443,7 +469,7 @@ class _PINCreationPageState extends State<PINCreationPage> {
               ),
               const SizedBox(height: AppDimensions.paddingMedium),
               Text(
-                'Your account is currently pending admin approval. This usually takes up to 48 hours.\n\nYou will receive a text message once approved and can then log in with your PIN.',
+                'Your account is currently pending admin approval. This usually takes up to 48 hours.\n.',
                 style: TextStyle(
                   fontSize: 13.5,
                   color: AppTheme.appBlack.withValues(alpha: 0.85),
@@ -457,10 +483,16 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: () {
-                    Navigator.pushNamedAndRemoveUntil(
-                      context,
-                      '/login',
-                      (_) => false,
+                    Navigator.pop(context);
+                    unawaited(
+                      _endTemporaryAuthSession().whenComplete(() {
+                        if (!mounted) return;
+                        Navigator.pushNamedAndRemoveUntil(
+                          this.context,
+                          '/login',
+                          (_) => false,
+                        );
+                      }),
                     );
                   },
                   style: ElevatedButton.styleFrom(

@@ -7,11 +7,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show ValueListenable, kDebugMode;
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../common/services/angeles_geofence_service.dart';
 import '../../../common/services/frame_timing_service.dart';
 import '../../../common/services/route_weather_cache_service.dart';
 import '../../../common/theme/app_theme.dart';
@@ -86,12 +88,18 @@ class _AdminMapPageState extends State<AdminMapPage>
   String? _autoAssignedReportId;
   String? _lastPresenceStatus;
   bool? _lastPresenceAvailability;
+  bool _hasPrimedAssignmentAlert = false;
+  String? _lastAssignmentAlertKey;
+  Timer? _assignmentAlertTimer;
+  bool _showAssignmentAlert = false;
+  String? _assignmentAlertReportId;
+  String _assignmentAlertIncidentType = 'INCIDENT';
+  String _assignmentAlertBarangay = 'Angeles City';
+  String _assignmentAlertDeployedBy = 'admin';
 
   // Default location (Angeles City, Central Luzon, Philippines)
   final LatLng _initialCenter = const LatLng(15.1450, 120.5887);
   final double _initialZoom = 14.0;
-  static const LatLng _angelesCityCenter = LatLng(15.1450, 120.5887);
-  static const double _angelesCityRadiusMeters = 6000;
 
   // Sample incident markers
   final List<Marker> _incidentMarkers = [];
@@ -99,7 +107,7 @@ class _AdminMapPageState extends State<AdminMapPage>
   final Map<String, Map<String, dynamic>> _reportsById = {};
   final Map<String, Marker> _incidentMarkerCache = {};
   final Map<String, Marker> _reporterMarkerCache = {};
-  static const Duration _resolvedRetention = Duration(hours: 1);
+  static const Duration _resolvedRetention = Duration(minutes: 10);
   final Map<String, Timer> _resolvedRemovalTimers = {};
   static const int _reportFetchLimit = 150;
 
@@ -190,6 +198,7 @@ class _AdminMapPageState extends State<AdminMapPage>
     _reportsSubscription?.cancel();
     _responderLocationSub?.cancel();
     _responderLocationFallbackTimer?.cancel();
+    _assignmentAlertTimer?.cancel();
     for (final timer in _resolvedRemovalTimers.values) {
       timer.cancel();
     }
@@ -409,19 +418,14 @@ class _AdminMapPageState extends State<AdminMapPage>
     final incidentType = data['incidentType'] as String? ?? 'Unknown';
     final shouldShowType = _shouldShowIncidentType(incidentType);
     final resolvedAt = _parseResolvedAt(data);
+    final approvedAt = _parseApprovedAt(data);
     final isResolved = _isResolvedStatus(status);
     final isApproved = _isApprovedStatus(status);
     final isFlagged = _isFlaggedStatus(status);
 
-    if (isFlagged || isApproved) {
-      _cancelResolvedRemoval(reportId);
-      _incidentMarkerCache.remove(reportId);
-      _reporterMarkerCache.remove(reportId);
-      return;
-    }
-
-    if (isResolved) {
-      final inactiveAt = resolvedAt ?? _parseReportedAt(data);
+    if (isResolved || isApproved) {
+      final inactiveAt =
+          (isResolved ? resolvedAt : approvedAt) ?? _parseReportedAt(data);
       final shouldKeep = _shouldKeepResolved(reportId, inactiveAt);
       if (!shouldKeep) {
         _incidentMarkerCache.remove(reportId);
@@ -438,7 +442,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       return;
     }
 
-    final isCheckStatus = isResolved || isApproved;
+    final isCheckStatus = isResolved || isApproved || isFlagged;
     final markerSize = isCheckStatus ? 56.0 : 72.0;
     _incidentMarkerCache[reportId] = Marker(
       key: ValueKey('incident-$reportId'),
@@ -580,7 +584,15 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   bool _isClosedIncidentStatus(String status) {
-    return _isResolvedStatus(status) || _isFlaggedStatus(status);
+    return _isResolvedStatus(status) ||
+        _isFlaggedStatus(status) ||
+        _isApprovedStatus(status);
+  }
+
+  bool _isVerdictLockedStatus(String status) {
+    return _isResolvedStatus(status) ||
+        _isFlaggedStatus(status) ||
+        _isApprovedStatus(status);
   }
 
   DateTime _parseSortTimestamp(Object? raw) {
@@ -636,6 +648,7 @@ class _AdminMapPageState extends State<AdminMapPage>
 
     String? matchedReportId;
     LatLng? matchedDestination;
+    Map<String, dynamic>? matchedData;
     DateTime latestAssignedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
     for (final doc in snapshot.docs) {
@@ -673,11 +686,15 @@ class _AdminMapPageState extends State<AdminMapPage>
       latestAssignedAt = assignedAt;
       matchedReportId = doc.id;
       matchedDestination = incidentPoint;
+      matchedData = data;
     }
 
     if (matchedReportId == null || matchedDestination == null) {
       _autoAssignedReportId = null;
       _activeReportId = null;
+      if (!_hasPrimedAssignmentAlert) {
+        _hasPrimedAssignmentAlert = true;
+      }
       if (_destination != null ||
           _routeMarkers.isNotEmpty ||
           _routePolylines.isNotEmpty ||
@@ -718,6 +735,13 @@ class _AdminMapPageState extends State<AdminMapPage>
             20;
 
     _autoAssignedReportId = matchedReportId;
+    if (matchedData != null) {
+      _maybeShowAssignmentAlert(
+        reportId: matchedReportId,
+        data: matchedData,
+        assignedAt: latestAssignedAt,
+      );
+    }
     unawaited(_syncOwnPresence(status: 'busy', isAvailable: false));
     if (!shouldRefreshRoute) {
       return;
@@ -734,6 +758,202 @@ class _AdminMapPageState extends State<AdminMapPage>
     }
 
     _scheduleRouteCalculation();
+  }
+
+  String _buildAssignmentAlertKey({
+    required String reportId,
+    required DateTime assignedAt,
+  }) {
+    return '$reportId|${assignedAt.millisecondsSinceEpoch}';
+  }
+
+  Future<void> _playAssignmentAlertCue() async {
+    try {
+      await SystemSound.play(SystemSoundType.alert);
+    } catch (_) {}
+    try {
+      await HapticFeedback.heavyImpact();
+    } catch (_) {}
+  }
+
+  void _dismissAssignmentAlert() {
+    if (!mounted) {
+      _showAssignmentAlert = false;
+      return;
+    }
+    setState(() {
+      _showAssignmentAlert = false;
+    });
+  }
+
+  void _openAssignmentReportFromBubble() {
+    final reportId = _assignmentAlertReportId;
+    if (reportId == null || reportId.isEmpty) {
+      return;
+    }
+    _pendingFocusReportId = reportId;
+    _dismissAssignmentAlert();
+    unawaited(_tryOpenPendingReport());
+  }
+
+  void _maybeShowAssignmentAlert({
+    required String reportId,
+    required Map<String, dynamic> data,
+    required DateTime assignedAt,
+  }) {
+    final alertKey = _buildAssignmentAlertKey(
+      reportId: reportId,
+      assignedAt: assignedAt,
+    );
+
+    if (!_hasPrimedAssignmentAlert) {
+      _hasPrimedAssignmentAlert = true;
+      _lastAssignmentAlertKey = alertKey;
+      return;
+    }
+    if (_lastAssignmentAlertKey == alertKey) {
+      return;
+    }
+    _lastAssignmentAlertKey = alertKey;
+
+    final incidentType = (data['incidentType'] as String? ?? 'Incident').trim();
+    final barangay = (data['barangay'] as String? ?? 'Angeles City').trim();
+    final deployedBy = (data['deployedBy'] as String? ?? 'Admin').trim();
+
+    _assignmentAlertTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _assignmentAlertReportId = reportId;
+        _assignmentAlertIncidentType = incidentType.toUpperCase();
+        _assignmentAlertBarangay = barangay.isEmpty ? 'Angeles City' : barangay;
+        _assignmentAlertDeployedBy = deployedBy.isEmpty ? 'Admin' : deployedBy;
+        _showAssignmentAlert = true;
+      });
+    } else {
+      _assignmentAlertReportId = reportId;
+      _assignmentAlertIncidentType = incidentType.toUpperCase();
+      _assignmentAlertBarangay = barangay.isEmpty ? 'Angeles City' : barangay;
+      _assignmentAlertDeployedBy = deployedBy.isEmpty ? 'Admin' : deployedBy;
+      _showAssignmentAlert = true;
+    }
+
+    unawaited(_playAssignmentAlertCue());
+    _assignmentAlertTimer = Timer(const Duration(seconds: 9), () {
+      _dismissAssignmentAlert();
+    });
+  }
+
+  Widget _buildAssignmentAlertBubble() {
+    if (!_showAssignmentAlert || _assignmentAlertReportId == null) {
+      return const SizedBox.shrink();
+    }
+
+    return Positioned(
+      top: 84,
+      left: 14,
+      right: 14,
+      child: AnimatedOpacity(
+        opacity: _showAssignmentAlert ? 1 : 0,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: _openAssignmentReportFromBubble,
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.appOffWhite,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.appOffYellow, width: 1.3),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.18),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF4E9EA),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.notifications_active_rounded,
+                      color: AppColors.appRed,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.appRed,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            _assignmentAlertIncidentType,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontFamily: 'Roboto',
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.4,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Assigned report received',
+                          style: TextStyle(
+                            fontFamily: 'Roboto',
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.appBlack,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Deployed by $_assignmentAlertDeployedBy · $_assignmentAlertBarangay',
+                          style: const TextStyle(
+                            fontFamily: 'Roboto',
+                            fontSize: 13,
+                            color: AppColors.appBlack,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _dismissAssignmentAlert,
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      color: AppColors.appBlack,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   bool _shouldShowIncidentType(String incidentType) {
@@ -756,26 +976,39 @@ class _AdminMapPageState extends State<AdminMapPage>
     return _showOthers;
   }
 
-  DateTime? _parseResolvedAt(Map<String, dynamic> data) {
-    final resolvedAtRaw = data['resolvedAt'];
-    if (resolvedAtRaw is Timestamp) {
-      return resolvedAtRaw.toDate();
+  DateTime? _parseDateTimeValue(Object? raw) {
+    if (raw is Timestamp) {
+      return raw.toDate();
     }
-    if (resolvedAtRaw is DateTime) {
-      return resolvedAtRaw;
+    if (raw is DateTime) {
+      return raw;
+    }
+    if (raw is int) {
+      return DateTime.fromMillisecondsSinceEpoch(raw);
+    }
+    if (raw is String) {
+      return DateTime.tryParse(raw);
     }
     return null;
   }
 
+  DateTime? _parseResolvedAt(Map<String, dynamic> data) {
+    return _parseDateTimeValue(data['resolvedAt']) ??
+        _parseDateTimeValue(data['responderStatusUpdatedAt']) ??
+        _parseDateTimeValue(data['statusUpdatedAt']) ??
+        _parseDateTimeValue(data['updatedAt']);
+  }
+
+  DateTime? _parseApprovedAt(Map<String, dynamic> data) {
+    return _parseDateTimeValue(data['approvedAt']) ??
+        _parseDateTimeValue(data['statusUpdatedAt']) ??
+        _parseDateTimeValue(data['updatedAt']) ??
+        _parseDateTimeValue(data['responderStatusUpdatedAt']);
+  }
+
   DateTime? _parseReportedAt(Map<String, dynamic> data) {
-    final reportedAtRaw = data['reportedAt'];
-    if (reportedAtRaw is Timestamp) {
-      return reportedAtRaw.toDate();
-    }
-    if (reportedAtRaw is DateTime) {
-      return reportedAtRaw;
-    }
-    return null;
+    return _parseDateTimeValue(data['reportedAt']) ??
+        _parseDateTimeValue(data['createdAt']);
   }
 
   bool _shouldKeepResolved(String reportId, DateTime? resolvedAt) {
@@ -1307,6 +1540,29 @@ class _AdminMapPageState extends State<AdminMapPage>
   Future<bool> _updateIncidentStatus(String reportId, String status) async {
     try {
       final statusLower = status.trim().toLowerCase();
+      final latestDoc = await FirebaseFirestore.instance
+          .collection('reports')
+          .doc(reportId)
+          .get();
+      final latestData = latestDoc.data();
+      final latestStatusRaw =
+          (latestData?['responderStatus'] ?? latestData?['status'] ?? '')
+              .toString();
+      if (_isVerdictLockedStatus(latestStatusRaw)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              behavior: SnackBarBehavior.floating,
+              content: Text(
+                'Status is locked by final verdict and can no longer be changed.',
+              ),
+              backgroundColor: Color(0xFF6B7280),
+            ),
+          );
+        }
+        return false;
+      }
+
       if (_isDuplicateStatusWrite(reportId, statusLower)) {
         return true;
       }
@@ -1845,6 +2101,7 @@ class _AdminMapPageState extends State<AdminMapPage>
             'FLAGGED',
             'RESOLVED',
           ];
+          final isStatusLocked = _isVerdictLockedStatus(status);
 
           return Dialog(
             backgroundColor: Colors.white,
@@ -1933,32 +2190,51 @@ class _AdminMapPageState extends State<AdminMapPage>
                                 runSpacing: 8,
                                 children: statusOptions.map((option) {
                                   final isActive = status == option;
+                                  final buttonBorder = isStatusLocked
+                                      ? const Color(0xFFD1D5DB)
+                                      : isActive
+                                      ? const Color(0xFFAC1B22)
+                                      : const Color(0xFFE5E7EB);
+                                  final buttonBackground = isStatusLocked
+                                      ? const Color(0xFFF3F4F6)
+                                      : isActive
+                                      ? const Color(0xFFFFF3F3)
+                                      : Colors.white;
+                                  final buttonTextColor = isStatusLocked
+                                      ? const Color(0xFF9CA3AF)
+                                      : isActive
+                                      ? const Color(0xFFAC1B22)
+                                      : const Color(0xFF4B5563);
                                   return SizedBox(
                                     width: 126,
                                     child: OutlinedButton(
-                                      onPressed: () async {
-                                        final confirm =
-                                            await _confirmStatusChange(option);
-                                        if (confirm != true) return;
-                                        final updated =
-                                            await _updateIncidentStatus(
-                                              reportId,
-                                              option,
-                                            );
-                                        if (!updated) return;
-                                        setDialogState(() {
-                                          status = option;
-                                        });
-                                      },
+                                      onPressed: isStatusLocked
+                                          ? null
+                                          : () async {
+                                              final confirm =
+                                                  await _confirmStatusChange(
+                                                    option,
+                                                  );
+                                              if (confirm != true) return;
+                                              final updated =
+                                                  await _updateIncidentStatus(
+                                                    reportId,
+                                                    option,
+                                                  );
+                                              if (!updated) return;
+                                              setDialogState(() {
+                                                status = option;
+                                              });
+                                            },
                                       style: OutlinedButton.styleFrom(
-                                        side: BorderSide(
-                                          color: isActive
-                                              ? const Color(0xFFAC1B22)
-                                              : const Color(0xFFE5E7EB),
+                                        side: BorderSide(color: buttonBorder),
+                                        backgroundColor: buttonBackground,
+                                        disabledForegroundColor: const Color(
+                                          0xFF9CA3AF,
                                         ),
-                                        backgroundColor: isActive
-                                            ? const Color(0xFFFFF3F3)
-                                            : Colors.white,
+                                        disabledBackgroundColor: const Color(
+                                          0xFFF3F4F6,
+                                        ),
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 10,
                                           vertical: 6,
@@ -1975,9 +2251,7 @@ class _AdminMapPageState extends State<AdminMapPage>
                                           fontFamily: 'Roboto',
                                           fontSize: 11,
                                           fontWeight: FontWeight.w700,
-                                          color: isActive
-                                              ? const Color(0xFFAC1B22)
-                                              : const Color(0xFF4B5563),
+                                          color: buttonTextColor,
                                         ),
                                       ),
                                     ),
@@ -1987,6 +2261,19 @@ class _AdminMapPageState extends State<AdminMapPage>
                             ),
                           ),
                         ),
+                        if (isStatusLocked)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 4),
+                            child: Text(
+                              'Status is locked for approved/flagged/resolved reports.',
+                              style: TextStyle(
+                                fontFamily: 'Roboto',
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF9CA3AF),
+                              ),
+                            ),
+                          ),
                         const SizedBox(height: 12),
                         const Text(
                           'Report Details',
@@ -3001,6 +3288,7 @@ class _AdminMapPageState extends State<AdminMapPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final routeCardTop = _showAssignmentAlert ? 186.0 : 80.0;
     return Scaffold(
       body: Stack(
         children: [
@@ -3053,14 +3341,12 @@ class _AdminMapPageState extends State<AdminMapPage>
                   },
                 ),
 
-                CircleLayer(
-                  circles: [
-                    CircleMarker(
-                      point: _angelesCityCenter,
-                      radius: _angelesCityRadiusMeters,
-                      useRadiusInMeter: true,
-                      color: AppColors.appGreen.withOpacity(0.07),
-                      borderColor: AppColors.appGreen.withOpacity(0.45),
+                PolygonLayer(
+                  polygons: [
+                    Polygon(
+                      points: AngelesGeofenceService.angelesCityPolygon,
+                      color: AppColors.appGreen.withValues(alpha: 0.07),
+                      borderColor: AppColors.appGreen.withValues(alpha: 0.45),
                       borderStrokeWidth: 2.0,
                     ),
                   ],
@@ -3210,10 +3496,12 @@ class _AdminMapPageState extends State<AdminMapPage>
             ),
           ),
 
+          _buildAssignmentAlertBubble(),
+
           // Responder route information card
           if (_routeInstructions.isNotEmpty && !_isRouting)
             Positioned(
-              top: 80,
+              top: routeCardTop,
               right: 16,
               left: 16,
               child: Card(

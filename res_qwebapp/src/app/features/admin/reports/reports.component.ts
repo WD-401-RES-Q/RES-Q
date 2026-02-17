@@ -34,6 +34,13 @@ interface Report {
   resolvedBy?: string;
   flaggedAt?: string;
   flaggedBy?: string;
+  barangay?: string;
+  injuredCount?: number;
+  needsAmbulance?: boolean;
+  fireType?: string;
+  otherIncidentType?: string;
+  vehicleCount?: number;
+  vehicleDetailLines?: string[];
 }
 
 interface Comment {
@@ -230,6 +237,11 @@ export class ReportsComponent implements OnInit, OnDestroy {
     return normalized.length > 0 ? normalized : '-';
   }
 
+  private normalizeText(value: unknown): string | undefined {
+    const normalized = (value ?? '').toString().trim();
+    return normalized.length > 0 ? normalized : undefined;
+  }
+
   getActivityResponder(report: Report): string {
     return this.valueOrDash(
       report.respondingBy ??
@@ -332,6 +344,54 @@ export class ReportsComponent implements OnInit, OnDestroy {
       }
     }
 
+    const barangay = this.normalizeText(doc.barangay);
+    const fireType = this.normalizeText(doc.fireType);
+    const otherIncidentType = this.normalizeText(doc.otherIncidentType);
+    const rawInjuredCount = doc.injuredCount;
+    const injuredCount =
+      typeof rawInjuredCount === 'number'
+        ? rawInjuredCount
+        : Number.isFinite(Number(rawInjuredCount))
+        ? Number(rawInjuredCount)
+        : undefined;
+    const needsAmbulance =
+      typeof doc.needsAmbulance === 'boolean' ? doc.needsAmbulance : undefined;
+    const rawVehicles = Array.isArray(doc.vehicles) ? doc.vehicles : [];
+    const normalizedVehicleLines = rawVehicles
+      .map((rawVehicle: any, index: number) => {
+        const plate = this.normalizeText(rawVehicle?.plateNumber);
+        const bodyType = this.normalizeText(rawVehicle?.bodyType);
+        const color = this.normalizeText(rawVehicle?.color);
+        const parts: string[] = [];
+        if (plate) parts.push(`Plate: ${plate}`);
+        if (bodyType) parts.push(`Body: ${bodyType}`);
+        if (color) parts.push(`Color: ${color}`);
+        if (parts.length === 0) return '';
+        return `Vehicle ${index + 1} - ${parts.join(' | ')}`;
+      })
+      .filter((line: string) => line.length > 0);
+    if (normalizedVehicleLines.length === 0) {
+      const legacyPlate = this.normalizeText(doc.vehiclePlateNumber);
+      const legacyBodyType = this.normalizeText(doc.vehicleBodyType);
+      const legacyColor = this.normalizeText(doc.vehicleColor);
+      const legacyParts: string[] = [];
+      if (legacyPlate) legacyParts.push(`Plate: ${legacyPlate}`);
+      if (legacyBodyType) legacyParts.push(`Body: ${legacyBodyType}`);
+      if (legacyColor) legacyParts.push(`Color: ${legacyColor}`);
+      if (legacyParts.length > 0) {
+        normalizedVehicleLines.push(`Vehicle 1 - ${legacyParts.join(' | ')}`);
+      }
+    }
+    const rawVehicleCount = doc.vehicleCount;
+    const vehicleCount =
+      typeof rawVehicleCount === 'number'
+        ? rawVehicleCount
+        : Number.isFinite(Number(rawVehicleCount))
+        ? Number(rawVehicleCount)
+        : normalizedVehicleLines.length > 0
+        ? normalizedVehicleLines.length
+        : undefined;
+
     return {
       id: doc.id ?? '',
       title: doc.incidentType ?? doc.title ?? 'Incident',
@@ -359,7 +419,50 @@ export class ReportsComponent implements OnInit, OnDestroy {
       resolvedBy: doc.resolvedBy ?? undefined,
       flaggedAt: doc.flaggedAt ? this.formatTimestamp(doc.flaggedAt) : undefined,
       flaggedBy: doc.flaggedBy ?? undefined,
+      barangay,
+      injuredCount,
+      needsAmbulance,
+      fireType,
+      otherIncidentType,
+      vehicleCount,
+      vehicleDetailLines: normalizedVehicleLines,
     };
+  }
+
+  hasReportFormDetails(report: Report): boolean {
+    return (
+      this.hasBarangayDetail(report) ||
+      this.hasInjuredCountDetail(report) ||
+      this.hasAmbulanceDetail(report)
+    );
+  }
+
+  hasBarangayDetail(report: Report): boolean {
+    return (report.barangay ?? '').trim().length > 0;
+  }
+
+  hasInjuredCountDetail(report: Report): boolean {
+    return typeof report.injuredCount === 'number' && Number.isFinite(report.injuredCount);
+  }
+
+  hasAmbulanceDetail(report: Report): boolean {
+    return typeof report.needsAmbulance === 'boolean';
+  }
+
+  hasFireTypeDetail(report: Report): boolean {
+    return (report.fireType ?? '').trim().length > 0;
+  }
+
+  hasOtherIncidentTypeDetail(report: Report): boolean {
+    return (report.otherIncidentType ?? '').trim().length > 0;
+  }
+
+  hasVehicleDetails(report: Report): boolean {
+    return (report.vehicleDetailLines ?? []).length > 0;
+  }
+
+  getAmbulanceNeedLabel(report: Report): string {
+    return report.needsAmbulance ? 'Yes' : 'No';
   }
 
   private coerceDate(value: any): Date | null {

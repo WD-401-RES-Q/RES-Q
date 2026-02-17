@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../../common/services/notification_service.dart';
@@ -17,6 +18,7 @@ class LoadingScreen extends StatefulWidget {
 
 class _LoadingScreenState extends State<LoadingScreen> {
   bool _isInitializing = false;
+  bool _webExitRequested = false;
 
   @override
   void initState() {
@@ -42,6 +44,30 @@ class _LoadingScreenState extends State<LoadingScreen> {
       );
     } finally {
       _isInitializing = false;
+    }
+  }
+
+  Future<void> _closeApplication() async {
+    if (kIsWeb) {
+      if (!mounted) return;
+      setState(() {
+        _webExitRequested = true;
+      });
+      return;
+    }
+
+    try {
+      await SystemNavigator.pop();
+    } catch (e) {
+      debugPrint('SystemNavigator.pop failed: $e');
+    }
+
+    // Fallback: retry once through platform channel for emulators/debug shells.
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    try {
+      await SystemChannels.platform.invokeMethod<void>('SystemNavigator.pop');
+    } catch (e) {
+      debugPrint('Platform pop fallback failed: $e');
     }
   }
 
@@ -79,7 +105,7 @@ class _LoadingScreenState extends State<LoadingScreen> {
       if (!mounted) return false;
 
       if (action == _LocationModalAction.exitApp) {
-        await SystemNavigator.pop();
+        await _closeApplication();
         return false;
       }
 
@@ -96,6 +122,47 @@ class _LoadingScreenState extends State<LoadingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_webExitRequested) {
+      return Scaffold(
+        backgroundColor: const Color(0xFFF7F8F3),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SvgPicture.asset(
+                  'assets/icons/logo/RES-Q_LOGO.svg',
+                  height: 96,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'You can now close this browser tab.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.appBlack,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Browser security does not allow apps to force-close web tabs.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontSize: 15,
+                    color: AppTheme.appBlack,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF7F8F3),
       body: const Center(child: _LoadingContent()),
@@ -116,6 +183,7 @@ class _LocationPermissionDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final exitLabel = kIsWeb ? 'CLOSE TAB' : 'EXIT';
     final actionLabel =
         servicesEnabled && permission != LocationPermission.deniedForever
         ? 'ALLOW LOCATION'
@@ -208,8 +276,8 @@ class _LocationPermissionDialog extends StatelessWidget {
                         shape: const StadiumBorder(),
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      child: const Text(
-                        'EXIT',
+                      child: Text(
+                        exitLabel,
                         style: TextStyle(
                           fontFamily: 'RobotoCondensed',
                           fontWeight: FontWeight.w700,
@@ -234,7 +302,7 @@ class _LocationPermissionDialog extends StatelessWidget {
                       child: Text(
                         actionLabel,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'RobotoCondensed',
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.4,

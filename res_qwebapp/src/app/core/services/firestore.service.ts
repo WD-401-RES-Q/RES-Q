@@ -4,6 +4,7 @@ import {
   query, 
   where, 
   getDocs, 
+  getDoc,
   addDoc, 
   updateDoc, 
   deleteDoc, 
@@ -453,13 +454,20 @@ export class FirestoreService {
   // Account approval methods
   async approvePendingUser(user: any, adminUsername: string) {
     try {
-      const { id, ...data } = user;
-      const createdAt = data['createdAt'] || Timestamp.now();
+      const { id } = user;
+      const pendingRef = doc(db, 'pending_users', id);
+      const pendingSnapshot = await getDoc(pendingRef);
+      if (!pendingSnapshot.exists()) {
+        throw new Error('Pending user no longer exists.');
+      }
 
+      const pendingData = pendingSnapshot.data() as Record<string, any>;
+      const createdAt = pendingData['createdAt'] || Timestamp.now();
 
-      // STEP 1: Move pending user into approved_users collection FIRST
+      // STEP 1: Move full pending payload into approved_users FIRST.
+      // Keep auth fields (pin/pin_hash) intact to avoid login regressions.
       await setDoc(doc(db, 'approved_users', id), {
-        ...data,
+        ...pendingData,
         createdAt,
         accountStatus: 'approved',
         approvedAt: Timestamp.now(),
@@ -469,7 +477,7 @@ export class FirestoreService {
 
 
       // STEP 2: Only delete from pending after successful save
-      await deleteDoc(doc(db, 'pending_users', id));
+      await deleteDoc(pendingRef);
       
     } catch (error: any) {
       console.error('FAILED: Error in approvePendingUser:', error);

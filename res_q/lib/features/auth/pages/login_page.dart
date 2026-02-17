@@ -48,6 +48,7 @@ class _LoginPageState extends State<LoginPage>
   String _phoneErrorMessage = '';
   bool _isPendingApprovalPhone = false;
   bool _isBanDialogVisible = false;
+  bool _isPendingDialogVisible = false;
   bool _showSavedPhoneCard = false;
   bool _isPhoneVerifiedForPin = false;
 
@@ -69,11 +70,17 @@ class _LoginPageState extends State<LoginPage>
   bool _isPinMatch(Map<String, dynamic> userData, String pin) {
     final storedPinHash = userData['pin_hash']?.toString();
     if (storedPinHash != null && storedPinHash.isNotEmpty) {
-      return storedPinHash == SecurityHash.sha256Hex(pin);
+      if (storedPinHash == SecurityHash.sha256Hex(pin)) {
+        return true;
+      }
     }
 
     final storedPin = userData['pin']?.toString();
-    return storedPin != null && storedPin == pin;
+    if (storedPin != null && storedPin == pin) {
+      return true;
+    }
+
+    return false;
   }
 
   bool _isLikelyEncryptedField(Map<String, dynamic> userData, String field) {
@@ -171,16 +178,25 @@ class _LoginPageState extends State<LoginPage>
             ?.toString()
             .replaceAll(RegExp(r'[^0-9]'), '') ??
         '';
+    final fallbackId =
+        (userData['id'] ?? userData['docId'])?.toString().trim() ?? '';
+    final resolvedUserId = phoneNumber.isNotEmpty ? phoneNumber : fallbackId;
 
-    if (phoneNumber.isNotEmpty) {
-      UserSession.setUserId(phoneNumber);
-      NotificationService().setUserId(phoneNumber);
-      debugPrint('UserSession userId set to phone number: $phoneNumber');
+    if (resolvedUserId.isEmpty) {
+      debugPrint('No notification userId found in userData');
+      debugPrint('Available fields: ${userData.keys.toList()}');
       return;
     }
 
-    debugPrint('No phone number found in userData');
-    debugPrint('Available fields: ${userData.keys.toList()}');
+    UserSession.setUserId(resolvedUserId);
+    NotificationService().setUserId(resolvedUserId);
+    if (phoneNumber.isNotEmpty) {
+      debugPrint('UserSession userId set to phone number: $resolvedUserId');
+      return;
+    }
+    debugPrint(
+      'UserSession userId set to fallback document id: $resolvedUserId',
+    );
   }
 
   Future<void> _updateSemiAdminPresence({
@@ -343,7 +359,7 @@ class _LoginPageState extends State<LoginPage>
           accountQueries[1] as QueryDocumentSnapshot<Map<String, dynamic>>?;
 
       if (semiAdminQuery.docs.isNotEmpty) {
-        debugPrint('✅ Semi-admin biometric login successful!');
+        debugPrint('Ã¢Å“â€¦ Semi-admin biometric login successful!');
         await _ensureFirebaseSession();
         // Persist phone locally for faster next login.
         await _saveApprovedLoginState(phoneInput);
@@ -380,7 +396,7 @@ class _LoginPageState extends State<LoginPage>
             banReasons: accountStatus.banReasons,
           );
         } else if (accountStatus.isPendingAccount) {
-          _showPendingApprovalDialog();
+          await _showPendingApprovalDialog();
         } else {
           _showError('No account found with this phone number.');
         }
@@ -391,7 +407,9 @@ class _LoginPageState extends State<LoginPage>
         userDoc: userDoc,
         contactNumber: phone,
       );
-      final accountStatus = userData['accountStatus'] as String?;
+      final accountStatus = (userData['accountStatus'] as String?)
+          ?.trim()
+          .toLowerCase();
       final isBanned = _isBannedStatus(accountStatus);
       if (isBanned) {
         setState(() => _loading = false);
@@ -405,7 +423,7 @@ class _LoginPageState extends State<LoginPage>
 
       if (accountStatus != 'approved') {
         setState(() => _loading = false);
-        _showPendingApprovalDialog();
+        await _showPendingApprovalDialog();
         return;
       }
 
@@ -413,10 +431,12 @@ class _LoginPageState extends State<LoginPage>
       try {
         final userCredential = await FirebaseAuth.instance.signInAnonymously();
         debugPrint(
-          '✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}',
+          'Ã¢Å“â€¦ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}',
         );
       } catch (authError) {
-        debugPrint('⚠️ Firebase Anonymous Sign-In failed: $authError');
+        debugPrint(
+          'Ã¢Å¡Â Ã¯Â¸Â Firebase Anonymous Sign-In failed: $authError',
+        );
       }
 
       // Login successful
@@ -495,7 +515,6 @@ class _LoginPageState extends State<LoginPage>
         _showPinError = false;
         _pinErrorMessage = '';
       });
-      _showPendingApprovalDialog();
       return;
     }
 
@@ -522,7 +541,10 @@ class _LoginPageState extends State<LoginPage>
     await RegistrationPrefs.savePhoneNumber(phoneDigits);
   }
 
-  Future<void> _validatePhoneForPinEntry(String phoneDigits) async {
+  Future<void> _validatePhoneForPinEntry(
+    String phoneDigits, {
+    bool useCache = true,
+  }) async {
     if (phoneDigits.length != 10) return;
 
     final phone = '+63$phoneDigits';
@@ -530,6 +552,7 @@ class _LoginPageState extends State<LoginPage>
     try {
       final validationResult = await _phoneLookupService.lookupAccountStatus(
         phone,
+        useCache: useCache,
       );
       await _applyPhoneValidationResult(phoneDigits, validationResult);
     } catch (e) {
@@ -639,7 +662,20 @@ class _LoginPageState extends State<LoginPage>
       // Load biometrics preferences from local cache first.
       final prefs = await SharedPreferences.getInstance();
       _biometricsEnabled = prefs.getBool('biometrics_enabled') ?? false;
-      _biometricsPhone = prefs.getString('biometrics_phone');
+      final cachedBiometricsPhone = _normalizeBiometricsPhone(
+        prefs.getString('biometrics_phone'),
+      );
+      _biometricsPhone = cachedBiometricsPhone.isEmpty
+          ? null
+          : cachedBiometricsPhone;
+      if (_biometricsEnabled && _biometricsPhone == null) {
+        _biometricsEnabled = false;
+        await prefs.setBool('biometrics_enabled', false);
+      }
+      if (_biometricsPhone != null &&
+          _biometricsPhone != prefs.getString('biometrics_phone')) {
+        await prefs.setString('biometrics_phone', _biometricsPhone!);
+      }
       debugPrint(
         'Biometrics enabled: $_biometricsEnabled, phone: $_biometricsPhone',
       );
@@ -674,32 +710,57 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
+  String _normalizeBiometricsPhone(String? phone) {
+    if (phone == null || phone.trim().isEmpty) return '';
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    if (digits.length == 10) return '+63$digits';
+    if (digits.length == 11 && digits.startsWith('0')) {
+      return '+63${digits.substring(1)}';
+    }
+    if (digits.length == 12 && digits.startsWith('63')) return '+$digits';
+    if (phone.trim().startsWith('+')) {
+      return '+${digits.isNotEmpty ? digits : phone.trim().substring(1)}';
+    }
+    return phone.replaceAll(RegExp(r'[^0-9+]'), '');
+  }
+
   Future<void> _loadBiometricsFromFirestore(String phone) async {
     try {
-      final cleanPhone = phone.replaceAll(RegExp(r'[^0-9+]'), '');
+      final cleanPhone = _normalizeBiometricsPhone(phone);
+      if (cleanPhone.isEmpty) return;
       final doc = await _firestore
           .collection('userPreferences')
           .doc(cleanPhone)
           .get();
 
-      if (doc.exists) {
-        final data = doc.data();
-        final firestoreBiometricsEnabled =
-            data?['biometricsEnabled'] as bool? ?? false;
-
-        if (firestoreBiometricsEnabled) {
-          // Update local SharedPreferences with Firestore value
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setBool('biometrics_enabled', true);
-          await prefs.setString('biometrics_phone', cleanPhone);
-
-          _biometricsEnabled = true;
-          _biometricsPhone = cleanPhone;
-          debugPrint(
-            '✅ Loaded biometrics preference from Firestore: enabled for $cleanPhone',
-          );
-        }
+      if (!doc.exists) {
+        return;
       }
+
+      final data = doc.data();
+      final firestoreBiometricsEnabled =
+          data?['biometricsEnabled'] as bool? ?? false;
+
+      // Always sync local cache from Firestore, including "false",
+      // so disable/enable changes persist correctly.
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('biometrics_enabled', firestoreBiometricsEnabled);
+      await prefs.setString('biometrics_phone', cleanPhone);
+
+      if (mounted) {
+        setState(() {
+          _biometricsEnabled = firestoreBiometricsEnabled;
+          _biometricsPhone = cleanPhone;
+        });
+      } else {
+        _biometricsEnabled = firestoreBiometricsEnabled;
+        _biometricsPhone = cleanPhone;
+      }
+
+      debugPrint(
+        'Loaded biometrics preference from Firestore: '
+        '${firestoreBiometricsEnabled ? 'enabled' : 'disabled'} for $cleanPhone',
+      );
     } catch (e) {
       debugPrint('Error loading biometrics from Firestore: $e');
     }
@@ -769,6 +830,11 @@ class _LoginPageState extends State<LoginPage>
         _pinErrorMessage = '';
       });
       return;
+    }
+
+    if (!_isPinUnlocked) {
+      await _validatePhoneForPinEntry(phoneDigits, useCache: false);
+      if (!mounted) return;
     }
 
     if (!_isPinUnlocked) {
@@ -846,7 +912,7 @@ class _LoginPageState extends State<LoginPage>
           authQueries[1] as QueryDocumentSnapshot<Map<String, dynamic>>?;
 
       if (semiAdminQuery.docs.isNotEmpty) {
-        debugPrint('✅ Semi-admin login successful via PIN!');
+        debugPrint('Ã¢Å“â€¦ Semi-admin login successful via PIN!');
         await _ensureFirebaseSession();
         // Persist phone locally for faster next login.
         await _saveApprovedLoginState(phoneInput);
@@ -892,7 +958,7 @@ class _LoginPageState extends State<LoginPage>
           return;
         }
         if (cachedValidation != null && cachedValidation.isPendingAccount) {
-          _showPendingApprovalDialog();
+          await _showPendingApprovalDialog();
           return;
         }
         _resetPinWithError('Wrong PIN');
@@ -930,11 +996,13 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
-      final accountStatus = userData['accountStatus'] as String?;
+      final accountStatus = (userData['accountStatus'] as String?)
+          ?.trim()
+          .toLowerCase();
 
       if (accountStatus != 'approved') {
         setState(() => _loading = false);
-        _showPendingApprovalDialog();
+        await _showPendingApprovalDialog();
         return;
       }
 
@@ -942,10 +1010,12 @@ class _LoginPageState extends State<LoginPage>
       try {
         final userCredential = await FirebaseAuth.instance.signInAnonymously();
         debugPrint(
-          '✅ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}',
+          'Ã¢Å“â€¦ Firebase Anonymous Sign-In successful: ${userCredential.user?.uid}',
         );
       } catch (authError) {
-        debugPrint('⚠️ Firebase Anonymous Sign-In failed: $authError');
+        debugPrint(
+          'Ã¢Å¡Â Ã¯Â¸Â Firebase Anonymous Sign-In failed: $authError',
+        );
       }
 
       // Login successful
@@ -971,7 +1041,7 @@ class _LoginPageState extends State<LoginPage>
 
   /// Seed 5 semi-admin users if collection is empty. Runs on init.
   Future<void> _seedSemiAdminsIfEmpty() async {
-    debugPrint('🔍 Checking if semi_admins collection exists...');
+    debugPrint('Ã°Å¸â€Â Checking if semi_admins collection exists...');
     try {
       final existing = await _firestore
           .collection('semi_admins')
@@ -979,11 +1049,13 @@ class _LoginPageState extends State<LoginPage>
           .get();
 
       if (existing.docs.isNotEmpty) {
-        debugPrint('✓ semi_admins collection already exists. Skipping seed.');
+        debugPrint(
+          'Ã¢Å“â€œ semi_admins collection already exists. Skipping seed.',
+        );
         return;
       }
 
-      debugPrint('📝 semi_admins collection empty. Starting seed...');
+      debugPrint('Ã°Å¸â€œÂ semi_admins collection empty. Starting seed...');
 
       final seedUsers = [
         {
@@ -1046,9 +1118,11 @@ class _LoginPageState extends State<LoginPage>
         batch.set(ref, user);
       }
       await batch.commit();
-      debugPrint('✅ Successfully seeded 5 semi-admin users to Firestore!');
+      debugPrint(
+        'Ã¢Å“â€¦ Successfully seeded 5 semi-admin users to Firestore!',
+      );
     } catch (e) {
-      debugPrint('❌ Failed to seed semi_admins: $e');
+      debugPrint('Ã¢ÂÅ’ Failed to seed semi_admins: $e');
       debugPrint('Stack trace: ${StackTrace.current}');
     }
   }
@@ -1305,86 +1379,96 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
-  void _showPendingApprovalDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: appBlue.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: appBlue, width: 2),
-                ),
-                child: Icon(Icons.hourglass_top, size: 48, color: appBlue),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'ACCOUNT PENDING',
-                style: const TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                  color: appBlue,
-                  letterSpacing: 1.2,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Awaiting Admin Approval',
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: appBlack,
-                  letterSpacing: 0.5,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Your account is currently pending admin approval. This usually takes up to 48 hours.\n\nYou will receive a text message once approved and can then log in with your PIN.',
-                style: TextStyle(
-                  fontSize: 13.5,
-                  color: appBlack.withValues(alpha: 0.85),
-                  height: 1.4,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: appBlue,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+  Future<void> _showPendingApprovalDialog() async {
+    if (!mounted || _isPendingDialogVisible) return;
+
+    _isPendingDialogVisible = true;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => Dialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: appBlue.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: appBlue, width: 2),
                   ),
-                  child: Text(
-                    'GOT IT',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                      fontSize: 16,
-                      letterSpacing: 1.1,
+                  child: Icon(Icons.hourglass_top, size: 48, color: appBlue),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'ACCOUNT PENDING',
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    color: appBlue,
+                    letterSpacing: 1.2,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Awaiting Admin Approval',
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: appBlack,
+                    letterSpacing: 0.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Your account is currently pending admin approval. This usually takes up to 48 hours.\n\nYou will receive a text message once approved and can then log in with your PIN.',
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    color: appBlack.withValues(alpha: 0.85),
+                    height: 1.4,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: appBlue,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: Text(
+                      'GOT IT',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                        fontSize: 16,
+                        letterSpacing: 1.1,
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _isPendingDialogVisible = false;
+    }
   }
 
   Widget _logo() {
@@ -1403,7 +1487,7 @@ class _LoginPageState extends State<LoginPage>
           _pinErrorMessage = '';
           _pinCtl.clear();
         });
-        _showPendingApprovalDialog();
+        unawaited(_showPendingApprovalDialog());
         return;
       }
       final message = phoneDigits.isEmpty
@@ -1424,11 +1508,11 @@ class _LoginPageState extends State<LoginPage>
     }
     setState(() {
       _showPinError = false; // Clear error when user starts typing
-      if (value == 'C') {
+      if (value == PinNumpad.clearKey || value == 'C') {
         _pinCtl.clear();
         return;
       }
-      if (value == '⌫') {
+      if (value == PinNumpad.backspaceKey || value == '\u232b') {
         if (_pinCtl.text.isNotEmpty) {
           _pinCtl.text = _pinCtl.text.substring(0, _pinCtl.text.length - 1);
         }

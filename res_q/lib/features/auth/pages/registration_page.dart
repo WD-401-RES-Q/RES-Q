@@ -26,6 +26,7 @@ class RegistrationPage extends StatefulWidget {
 class _RegistrationPageState extends State<RegistrationPage> {
   static const int _maxAddressLength = 256;
   static const String _phoneLookupScopeKey = 'register';
+  static const int _minimumAllowedAge = 13;
 
   final _formKey = GlobalKey<FormState>();
   final _firstNameCtl = TextEditingController();
@@ -339,6 +340,17 @@ class _RegistrationPageState extends State<RegistrationPage> {
     }
   }
 
+  bool _isAtLeastMinimumAge(DateTime dob) {
+    final now = DateTime.now();
+    var age = now.year - dob.year;
+    final birthdayPassedThisYear =
+        now.month > dob.month || (now.month == dob.month && now.day >= dob.day);
+    if (!birthdayPassedThisYear) {
+      age--;
+    }
+    return age >= _minimumAllowedAge;
+  }
+
   String? _validateFirstName(String? value) {
     final normalized = (value ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
     if (normalized.isEmpty) return 'First name is required';
@@ -396,10 +408,21 @@ class _RegistrationPageState extends State<RegistrationPage> {
     if (y == null || y < 1900 || y > currentYear) {
       return 'Invalid year';
     }
+    if (y > (currentYear - _minimumAllowedAge)) {
+      return 'Must be at least $_minimumAllowedAge years old';
+    }
     final month = _dobMonthCtl.text.trim();
     final day = _dobDayCtl.text.trim();
     if (month.isNotEmpty && day.isNotEmpty) {
       if (!_isValidDob(month, day, v)) return 'Invalid date';
+      final m = int.tryParse(month);
+      final d = int.tryParse(day);
+      if (m != null && d != null) {
+        final dob = DateTime(y, m, d);
+        if (!_isAtLeastMinimumAge(dob)) {
+          return 'Must be at least $_minimumAllowedAge years old';
+        }
+      }
     }
     return null;
   }

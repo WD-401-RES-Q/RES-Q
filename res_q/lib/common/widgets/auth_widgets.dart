@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image_cropper/image_cropper.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:ui' as ui;
 import '../theme/app_theme.dart';
@@ -1465,17 +1464,6 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
     String side,
     Uint8List? bytes,
   ) async {
-    // Web debug tests may run before phone auth in registration.
-    // Ensure there is at least an anonymous auth session so Storage rules
-    // that require request.auth can pass during testing.
-    if (kIsWeb && kDebugMode && FirebaseAuth.instance.currentUser == null) {
-      try {
-        await FirebaseAuth.instance.signInAnonymously();
-      } catch (e) {
-        debugPrint('Web debug anonymous auth for ID upload failed: $e');
-      }
-    }
-
     final fileName = 'id_${side}_${DateTime.now().millisecondsSinceEpoch}.jpg';
     final username = widget.usernameForPath?.trim().isNotEmpty == true
         ? widget.usernameForPath!.trim()
