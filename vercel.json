@@ -1,8 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "angular",
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist/res_qwebapp/browser",
+  "buildCommand": "cd res_qwebapp && npm run build",
+  "outputDirectory": "res_qwebapp/dist/res_qwebapp/browser",
   "rewrites": [
     {
       "source": "/(.*)",
