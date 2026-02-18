@@ -707,6 +707,7 @@
 				"CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]" = NO;
 				"CODE_SIGN_IDENTITY[sdk=iphonesimulator*]" = "";
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				DEVELOPMENT_TEAM = MWJJ994KSX;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

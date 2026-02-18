@@ -41,6 +41,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>We need access to your camera to capture incident images</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to securely sign in to your RES-Q account</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>We need access to your location to report incidents accurately and connect you with emergency services</string>
 	<key>NSLocationAlwaysUsageDescription</key>
@@ -49,6 +51,8 @@
 	<string>We need access to your location to report incidents accurately and connect you with emergency services</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>We need access to your photo library to upload incident images</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We need microphone access when recording incident videos</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

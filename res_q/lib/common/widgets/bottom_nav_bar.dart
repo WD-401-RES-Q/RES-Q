@@ -34,65 +34,77 @@ class BottomNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final configs = itemConfigs ?? _defaultItems;
+    final isIOS = Theme.of(context).platform == TargetPlatform.iOS;
+    final bottomPadding = isIOS ? 4.0 : 0.0;
+    final topPadding = isIOS ? 3.0 : 0.0;
+    const labelFontSize = 7.0;
+    const navIconSize = 25.0;
 
-    return ColoredBox(
-      color: AppColors.appRed,
-      child: SafeArea(
-        top: false,
-        minimum: EdgeInsets.zero,
-        child: Theme(
-          data: Theme.of(context).copyWith(
-            splashFactory: NoSplash.splashFactory,
-            splashColor: Colors.transparent,
-            highlightColor: Colors.transparent,
-            hoverColor: Colors.transparent,
-          ),
-          child: SizedBox(
-            height: 54,
-            child: BottomNavigationBar(
-              backgroundColor: AppColors.appRed,
-              elevation: 0,
-              type: BottomNavigationBarType.fixed,
-              selectedItemColor: AppColors.appYellow,
-              unselectedItemColor: Colors.white,
-              showSelectedLabels: true,
-              showUnselectedLabels: true,
-              selectedFontSize: 7,
-              unselectedFontSize: 7,
-              selectedLabelStyle: const TextStyle(
-                fontFamily: 'Roboto',
-                fontWeight: FontWeight.w700,
-                height: 1.0,
-              ),
-              unselectedLabelStyle: const TextStyle(
-                fontFamily: 'Roboto',
-                fontWeight: FontWeight.w700,
-                height: 1.0,
-              ),
-              iconSize: 25,
-              currentIndex: currentIndex,
-              enableFeedback: false,
-              onTap: onTap,
-              items: List.generate(configs.length, (index) {
-                final config = configs[index];
-                return BottomNavigationBarItem(
-                  icon: _buildNavIcon(
-                    config.inactiveIconPath,
-                    config.iconWidth,
-                    config.iconHeight,
-                  ),
-                  activeIcon: _buildNavIcon(
-                    config.activeIconPath,
-                    config.iconWidth,
-                    config.iconHeight,
-                  ),
-                  label: config.label,
-                );
-              }),
+    final navBar = Theme(
+      data: Theme.of(context).copyWith(
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+      ),
+      child: MediaQuery.removePadding(
+        context: context,
+        removeBottom: isIOS,
+        child: Padding(
+          padding: EdgeInsets.only(top: topPadding),
+          child: BottomNavigationBar(
+            backgroundColor: AppColors.appRed,
+            elevation: 0,
+            type: BottomNavigationBarType.fixed,
+            selectedItemColor: AppColors.appYellow,
+            unselectedItemColor: Colors.white,
+            showSelectedLabels: true,
+            showUnselectedLabels: true,
+            selectedFontSize: labelFontSize,
+            unselectedFontSize: labelFontSize,
+            selectedLabelStyle: const TextStyle(
+              fontFamily: 'Roboto',
+              fontWeight: FontWeight.w700,
+              height: 1.0,
             ),
+            unselectedLabelStyle: const TextStyle(
+              fontFamily: 'Roboto',
+              fontWeight: FontWeight.w700,
+              height: 1.0,
+            ),
+            iconSize: navIconSize,
+            currentIndex: currentIndex,
+            enableFeedback: false,
+            onTap: onTap,
+            items: List.generate(configs.length, (index) {
+              final config = configs[index];
+              return BottomNavigationBarItem(
+                icon: _buildNavIcon(
+                  config.inactiveIconPath,
+                  config.iconWidth,
+                  config.iconHeight,
+                ),
+                activeIcon: _buildNavIcon(
+                  config.activeIconPath,
+                  config.iconWidth,
+                  config.iconHeight,
+                ),
+                label: config.label,
+              );
+            }),
           ),
         ),
       ),
+    );
+
+    return ColoredBox(
+      color: AppColors.appRed,
+      child: isIOS
+          ? Padding(
+              padding: EdgeInsets.only(bottom: bottomPadding),
+              child: navBar,
+            )
+          : SafeArea(top: false, minimum: EdgeInsets.zero, child: navBar),
     );
   }
 

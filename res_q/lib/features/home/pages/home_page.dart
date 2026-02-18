@@ -602,211 +602,225 @@ class _HomePageContentState extends State<_HomePageContent>
 
           // Main content area - takes remaining space
           Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                const Text(
-                  "SELECT THE TYPE OF INCIDENT\nYOU WANT TO REPORT.",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'RobotoCondensed',
-                  ),
-                ),
+            child: LayoutBuilder(
+              builder: (context, constraints) => SingleChildScrollView(
+                physics: const ClampingScrollPhysics(),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      const Text(
+                        "SELECT THE TYPE OF INCIDENT\nYOU WANT TO REPORT.",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          fontFamily: 'RobotoCondensed',
+                        ),
+                      ),
 
-                SizedBox(
-                  width: gridWidth,
-                  height: gridHeight,
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF7F8F3),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        const spacing = 12.0;
-                        final maxCardWidth =
-                            (constraints.maxWidth - spacing) / 2;
-                        final maxCardHeightByWidth = maxCardWidth / 1.05;
-                        final maxCardHeightByHeight =
-                            (constraints.maxHeight - spacing * 2) / 3;
-                        final cardHeight = math.min(
-                          maxCardHeightByWidth,
-                          maxCardHeightByHeight,
-                        );
-                        final cardWidth = cardHeight * 1.05;
-                        final iconSize = (cardHeight * 0.42).clamp(34.0, 64.0);
-                        final labelFont = (cardHeight * 0.135).clamp(
-                          10.0,
-                          14.0,
-                        );
+                      SizedBox(
+                        width: gridWidth,
+                        height: gridHeight,
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF7F8F3),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              const spacing = 12.0;
+                              final maxCardWidth =
+                                  (constraints.maxWidth - spacing) / 2;
+                              final maxCardHeightByWidth = maxCardWidth / 1.05;
+                              final maxCardHeightByHeight =
+                                  (constraints.maxHeight - spacing * 2) / 3;
+                              final cardHeight = math.min(
+                                maxCardHeightByWidth,
+                                maxCardHeightByHeight,
+                              );
+                              final cardWidth = cardHeight * 1.05;
+                              final iconSize = (cardHeight * 0.42).clamp(
+                                34.0,
+                                64.0,
+                              );
+                              final labelFont = (cardHeight * 0.135).clamp(
+                                10.0,
+                                14.0,
+                              );
 
-                        return Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                SizedBox(
-                                  width: cardWidth,
-                                  height: cardHeight,
-                                  child: _incidentCard(
-                                    context,
-                                    "EARTHQUAKE",
-                                    "assets/icons/buttons/FINAL-EARTHQUAKE-ICON.svg",
-                                    fontSize: labelFont,
-                                    iconSize: iconSize,
+                              return Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      SizedBox(
+                                        width: cardWidth,
+                                        height: cardHeight,
+                                        child: _incidentCard(
+                                          context,
+                                          "EARTHQUAKE",
+                                          "assets/icons/buttons/FINAL-EARTHQUAKE-ICON.svg",
+                                          fontSize: labelFont,
+                                          iconSize: iconSize,
+                                        ),
+                                      ),
+                                      const SizedBox(width: spacing),
+                                      SizedBox(
+                                        width: cardWidth,
+                                        height: cardHeight,
+                                        child: _incidentCard(
+                                          context,
+                                          "FLOOD",
+                                          "assets/icons/buttons/FINAL-FLOOD-ICON.svg",
+                                          fontSize: labelFont,
+                                          iconSize: iconSize,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                                const SizedBox(width: spacing),
-                                SizedBox(
-                                  width: cardWidth,
-                                  height: cardHeight,
-                                  child: _incidentCard(
-                                    context,
-                                    "FLOOD",
-                                    "assets/icons/buttons/FINAL-FLOOD-ICON.svg",
-                                    fontSize: labelFont,
-                                    iconSize: iconSize,
+                                  const SizedBox(height: spacing),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      SizedBox(
+                                        width: cardWidth,
+                                        height: cardHeight,
+                                        child: _incidentCard(
+                                          context,
+                                          "FIRE",
+                                          "assets/icons/buttons/FINAL-FIRE-ICON.svg",
+                                          fontSize: labelFont,
+                                          iconSize: iconSize,
+                                        ),
+                                      ),
+                                      const SizedBox(width: spacing),
+                                      SizedBox(
+                                        width: cardWidth,
+                                        height: cardHeight,
+                                        child: _incidentCard(
+                                          context,
+                                          "ROAD CRASH",
+                                          "assets/icons/buttons/FINAL-CRASH-ICON.svg",
+                                          fontSize: labelFont,
+                                          iconSize: iconSize,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: spacing),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                SizedBox(
-                                  width: cardWidth,
-                                  height: cardHeight,
-                                  child: _incidentCard(
-                                    context,
-                                    "FIRE",
-                                    "assets/icons/buttons/FINAL-FIRE-ICON.svg",
-                                    fontSize: labelFont,
-                                    iconSize: iconSize,
+                                  const SizedBox(height: spacing),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      SizedBox(
+                                        width: cardWidth,
+                                        height: cardHeight,
+                                        child: _incidentCard(
+                                          context,
+                                          "OTHERS",
+                                          "assets/icons/buttons/FINAL-OTHERS-ICON.svg",
+                                          fontSize: labelFont,
+                                          iconSize: iconSize,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                ),
-                                const SizedBox(width: spacing),
-                                SizedBox(
-                                  width: cardWidth,
-                                  height: cardHeight,
-                                  child: _incidentCard(
-                                    context,
-                                    "ROAD CRASH",
-                                    "assets/icons/buttons/FINAL-CRASH-ICON.svg",
-                                    fontSize: labelFont,
-                                    iconSize: iconSize,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: spacing),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                SizedBox(
-                                  width: cardWidth,
-                                  height: cardHeight,
-                                  child: _incidentCard(
-                                    context,
-                                    "OTHERS",
-                                    "assets/icons/buttons/FINAL-OTHERS-ICON.svg",
-                                    fontSize: labelFont,
-                                    iconSize: iconSize,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                      ),
 
-                GestureDetector(
-                  onLongPressStart: (_) {
-                    if (_holdController.isAnimating) return;
-                    _holdController.forward(from: 0);
-                  },
-                  onLongPressEnd: (_) {
-                    if (_holdController.isAnimating ||
-                        _holdController.value > 0) {
-                      _holdController.stop();
-                      _holdController.reset();
-                    }
-                  },
-                  onLongPressCancel: () {
-                    if (_holdController.isAnimating ||
-                        _holdController.value > 0) {
-                      _holdController.stop();
-                      _holdController.reset();
-                    }
-                  },
-                  onTap: () {
-                    AppSnackBar.show(
-                      context,
-                      'Press and hold to place a call',
-                      type: AppSnackBarType.info,
-                    );
-                  },
-                  child: _buildAnimatedBorder(
-                    borderRadius: BorderRadius.circular(999),
-                    borderWidth: 7,
-                    isCircle: true,
-                    child: SizedBox(
-                      width: emergencyButtonSize,
-                      height: emergencyButtonSize,
-                      child: AnimatedBuilder(
-                        animation: _holdController,
-                        builder: (context, _) {
-                          final progress = _holdController.value == 0
-                              ? 0.18
-                              : _holdController.value;
-                          return Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              SizedBox(
-                                width: emergencyButtonSize * 0.7,
-                                height: emergencyButtonSize * 0.7,
-                                child: CircularProgressIndicator(
-                                  value: progress,
-                                  strokeWidth: (emergencyButtonSize * 0.06)
-                                      .clamp(4.0, 6.0),
-                                  backgroundColor: Colors.white.withOpacity(
-                                    0.15,
-                                  ),
-                                  valueColor: const AlwaysStoppedAnimation(
-                                    Color(0xFFFFC806),
-                                  ),
-                                ),
-                              ),
-                              Icon(
-                                Icons.phone,
-                                size: emergencyIconSize,
-                                color: Colors.white,
-                              ),
-                            ],
+                      GestureDetector(
+                        onLongPressStart: (_) {
+                          if (_holdController.isAnimating) return;
+                          _holdController.forward(from: 0);
+                        },
+                        onLongPressEnd: (_) {
+                          if (_holdController.isAnimating ||
+                              _holdController.value > 0) {
+                            _holdController.stop();
+                            _holdController.reset();
+                          }
+                        },
+                        onLongPressCancel: () {
+                          if (_holdController.isAnimating ||
+                              _holdController.value > 0) {
+                            _holdController.stop();
+                            _holdController.reset();
+                          }
+                        },
+                        onTap: () {
+                          AppSnackBar.show(
+                            context,
+                            'Press and hold to place a call',
+                            type: AppSnackBarType.info,
                           );
                         },
+                        child: _buildAnimatedBorder(
+                          borderRadius: BorderRadius.circular(999),
+                          borderWidth: 7,
+                          isCircle: true,
+                          child: SizedBox(
+                            width: emergencyButtonSize,
+                            height: emergencyButtonSize,
+                            child: AnimatedBuilder(
+                              animation: _holdController,
+                              builder: (context, _) {
+                                final progress = _holdController.value == 0
+                                    ? 0.18
+                                    : _holdController.value;
+                                return Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    SizedBox(
+                                      width: emergencyButtonSize * 0.7,
+                                      height: emergencyButtonSize * 0.7,
+                                      child: CircularProgressIndicator(
+                                        value: progress,
+                                        strokeWidth:
+                                            (emergencyButtonSize * 0.06).clamp(
+                                              4.0,
+                                              6.0,
+                                            ),
+                                        backgroundColor: Colors.white
+                                            .withOpacity(0.15),
+                                        valueColor:
+                                            const AlwaysStoppedAnimation(
+                                              Color(0xFFFFC806),
+                                            ),
+                                      ),
+                                    ),
+                                    Icon(
+                                      Icons.phone,
+                                      size: emergencyIconSize,
+                                      color: Colors.white,
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Press and Hold to Call',
+                        style: TextStyle(
+                          fontFamily: 'RobotoCondensed',
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 2),
-                const Text(
-                  'Press and Hold to Call',
-                  style: TextStyle(
-                    fontFamily: 'RobotoCondensed',
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ],
