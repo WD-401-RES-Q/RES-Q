@@ -22,6 +22,10 @@
           <span class="legend-dot fence"></span>
           Angeles geofence
         </div>
+        <div class="legend-item">
+          <span class="legend-dot outside"></span>
+          Outside geofence
+        </div>
       </div>
     </div>
     <div class="live-indicator" [class.offline]="!isListening">
@@ -94,6 +98,7 @@
                 *ngFor="let report of pendingReports; trackBy: trackById"
                 (click)="selectReportForDispatch(report.reportId)"
                 [class.active]="report.reportId === selectedReportId"
+                [class.outside-geofence]="!isReportInsideGeofence(report)"
               >
                 <div class="dispatch-title">
                   <span>{{ report.reportId }}</span>
@@ -107,6 +112,9 @@
                 </div>
                 <div class="card-meta">
                   {{ report.incidentType || 'Incident' }} - {{ report.barangay || 'Angeles City' }}
+                </div>
+                <div *ngIf="!isReportInsideGeofence(report)" class="geofence-flag">
+                  Outside Angeles geofence
                 </div>
               </button>
             </div>
@@ -155,6 +163,9 @@
         >
           {{ isDeploying ? 'Deploying...' : 'Deploy Selected Responder' }}
         </button>
+        <div *ngIf="selectedPendingReportOutsideGeofence" class="deploy-warning">
+          Selected report is outside the Angeles geofence and cannot be deployed.
+        </div>
       </div>
 
       <div class="panel-section">
@@ -238,6 +249,24 @@
           <div class="detail-row">
             <span>Dispatch at</span>
             <strong>{{ formatTimestamp(track.deployedAt || track.respondingAt) }}</strong>
+          </div>
+          <div class="detail-row">
+            <span>Report geofence</span>
+            <strong [class.geofence-warning]="!isReportInsideGeofence(track)">
+              {{ getGeofenceLabel(isReportInsideGeofence(track)) }}
+            </strong>
+          </div>
+          <div class="detail-row">
+            <span>Reporter geofence</span>
+            <strong [class.geofence-warning]="isReporterInsideGeofence(track) === false">
+              {{ getGeofenceLabel(isReporterInsideGeofence(track)) }}
+            </strong>
+          </div>
+          <div class="detail-row">
+            <span>Responder geofence</span>
+            <strong [class.geofence-warning]="isResponderInsideGeofence(track) === false">
+              {{ getGeofenceLabel(isResponderInsideGeofence(track)) }}
+            </strong>
           </div>
           <div class="detail-row">
             <span>Route</span>

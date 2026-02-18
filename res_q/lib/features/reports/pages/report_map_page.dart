@@ -2169,7 +2169,7 @@ class _ReportMapPageState extends State<ReportMapPage>
     final normalized = _normalizeStatusLabel(status);
     switch (normalized) {
       case 'PENDING':
-        return const Color(0xFF2563EB);
+        return AppColors.appOffYellow;
       case 'RESPONDING':
         return AppColors.appOffYellow;
       case 'ON SCENE':

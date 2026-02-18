@@ -212,7 +212,8 @@ class ReportFormScreen extends StatefulWidget {
   State<ReportFormScreen> createState() => _ReportFormScreenState();
 }
 
-class _ReportFormScreenState extends State<ReportFormScreen> {
+class _ReportFormScreenState extends State<ReportFormScreen>
+    with TickerProviderStateMixin {
   static const int _maxCapturedMediaBytes = 25 * 1024 * 1024; // 25 MB
   final TextEditingController _informationController = TextEditingController();
   final TextEditingController _barangayController = TextEditingController();
@@ -238,10 +239,22 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
   int _injuredCount = 0;
   bool _needsAmbulance = false;
   final List<_VehicleInvolved> _vehicles = <_VehicleInvolved>[];
+  late final AnimationController _holdController;
 
   @override
   void initState() {
     super.initState();
+    _holdController =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 900),
+        )..addStatusListener((status) {
+          if (status == AnimationStatus.completed) {
+            if (!mounted) return;
+            _holdController.reset();
+            _openEmergencyCallScreen();
+          }
+        });
     _reportDate = _formatDate(DateTime.now());
     _loadUserInfo();
     if (_isVehicularIncident()) {
@@ -251,6 +264,7 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
 
   @override
   void dispose() {
+    _holdController.dispose();
     _informationController.dispose();
     _barangayController.dispose();
     _otherIncidentController.dispose();
@@ -516,8 +530,8 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
     if (!mounted) return;
     AppSnackBar.show(
       context,
-      'Press and hold the emergency button to call.',
-      type: AppSnackBarType.warning,
+      'Press and hold to place a call',
+      type: AppSnackBarType.info,
     );
   }
 
@@ -1479,34 +1493,79 @@ class _ReportFormScreenState extends State<ReportFormScreen> {
                   const SizedBox(height: 20),
 
                   // Emergency Call Button - hold to call
-                  Container(
-                    width: 110,
-                    height: 110,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.4),
-                          blurRadius: 4,
-                          offset: const Offset(0, 7),
-                        ),
-                      ],
-                    ),
-                    child: ElevatedButton(
-                      onPressed: _showHoldToCallHint,
-                      onLongPress: _openEmergencyCallScreen,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFAC1B22),
-                        shape: const CircleBorder(
-                          side: BorderSide(color: Color(0xFFFFC806), width: 6),
-                        ),
-                        elevation: 0,
-                        padding: EdgeInsets.zero,
+                  GestureDetector(
+                    onLongPressStart: (_) {
+                      if (_holdController.isAnimating) return;
+                      _holdController.forward(from: 0);
+                    },
+                    onLongPressEnd: (_) {
+                      if (_holdController.isAnimating ||
+                          _holdController.value > 0) {
+                        _holdController.stop();
+                        _holdController.reset();
+                      }
+                    },
+                    onLongPressCancel: () {
+                      if (_holdController.isAnimating ||
+                          _holdController.value > 0) {
+                        _holdController.stop();
+                        _holdController.reset();
+                      }
+                    },
+                    onTap: _showHoldToCallHint,
+                    child: Container(
+                      width: 110,
+                      height: 110,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.4),
+                            blurRadius: 4,
+                            offset: const Offset(0, 7),
+                          ),
+                        ],
                       ),
-                      child: const Icon(
-                        Icons.phone,
-                        color: Colors.white,
-                        size: 60,
+                      child: Container(
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFAC1B22),
+                          shape: BoxShape.circle,
+                          border: Border.fromBorderSide(
+                            BorderSide(color: Color(0xFFFFC806), width: 6),
+                          ),
+                        ),
+                        child: AnimatedBuilder(
+                          animation: _holdController,
+                          builder: (context, _) {
+                            final progress = _holdController.value == 0
+                                ? 0.18
+                                : _holdController.value;
+                            return Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                SizedBox(
+                                  width: 74,
+                                  height: 74,
+                                  child: CircularProgressIndicator(
+                                    value: progress,
+                                    strokeWidth: 5,
+                                    backgroundColor: Colors.white.withValues(
+                                      alpha: 0.15,
+                                    ),
+                                    valueColor: const AlwaysStoppedAnimation(
+                                      Color(0xFFFFC806),
+                                    ),
+                                  ),
+                                ),
+                                const Icon(
+                                  Icons.phone,
+                                  color: Colors.white,
+                                  size: 60,
+                                ),
+                              ],
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ),
