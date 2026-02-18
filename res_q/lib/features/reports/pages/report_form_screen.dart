@@ -388,11 +388,18 @@ class _ReportFormScreenState extends State<ReportFormScreen>
           _mediaError = null;
         });
       }
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        _capturePermissionErrorMessage(e, isVideo: false),
+        type: AppSnackBarType.error,
+      );
     } catch (e) {
       if (!mounted) return;
       AppSnackBar.show(
         context,
-        'Failed to capture photo: $e',
+        'Failed to capture photo. Please try again.',
         type: AppSnackBarType.error,
       );
     }
@@ -417,14 +424,54 @@ class _ReportFormScreenState extends State<ReportFormScreen>
           _mediaError = null;
         });
       }
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        _capturePermissionErrorMessage(e, isVideo: true),
+        type: AppSnackBarType.error,
+      );
     } catch (e) {
       if (!mounted) return;
       AppSnackBar.show(
         context,
-        'Failed to capture video: $e',
+        'Failed to capture video. Please try again.',
         type: AppSnackBarType.error,
       );
     }
+  }
+
+  String _capturePermissionErrorMessage(
+    PlatformException error, {
+    required bool isVideo,
+  }) {
+    final code = error.code.toLowerCase();
+    final details = '${error.message ?? ''} ${error.details ?? ''}'
+        .toLowerCase();
+    final isIOS = !kIsWeb && Platform.isIOS;
+
+    if (isIOS) {
+      if (isVideo &&
+          (code.contains('microphone') || details.contains('microphone'))) {
+        return 'Microphone permission is required to record video. Enable it for RES-Q in iOS Settings.';
+      }
+      if (code.contains('camera_access_denied') ||
+          code.contains('camera_access_restricted') ||
+          (details.contains('camera') &&
+              (details.contains('permission') || details.contains('denied')))) {
+        return isVideo
+            ? 'Camera permission is required to record video. Enable it for RES-Q in iOS Settings.'
+            : 'Camera permission is required to capture a photo. Enable it for RES-Q in iOS Settings.';
+      }
+      if (isVideo &&
+          (details.contains('permission') || details.contains('denied'))) {
+        return 'Camera and microphone permissions are required to record video. Enable both for RES-Q in iOS Settings.';
+      }
+    }
+
+    return isVideo
+        ? 'Failed to capture video. Please try again.'
+        : 'Failed to capture photo. Please try again.';
   }
 
   void _showMediaOptions() {

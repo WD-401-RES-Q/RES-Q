@@ -336,8 +336,37 @@ class _LoginPageState extends State<LoginPage>
       }
     } on PlatformException catch (e) {
       debugPrint('Biometric auth error: $e');
+      _showError(_biometricErrorMessage(e));
+    } catch (e) {
+      debugPrint('Unexpected biometric auth error: $e');
       _showError('Biometric authentication failed');
     }
+  }
+
+  String _biometricErrorMessage(PlatformException error) {
+    final code = error.code.toLowerCase();
+    final details = '${error.message ?? ''} ${error.details ?? ''}'
+        .toLowerCase();
+    final isIOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
+    if (isIOS) {
+      if (code.contains('notenrolled')) {
+        return 'No Face ID/Touch ID is enrolled. Set it up first in iOS Settings.';
+      }
+      if (code.contains('passcodenotset')) {
+        return 'Set a device passcode first, then try Face ID/Touch ID again.';
+      }
+      if (code.contains('lockedout')) {
+        return 'Biometrics is locked. Unlock the device with passcode and retry.';
+      }
+      if (code.contains('notavailable') ||
+          code.contains('denied') ||
+          details.contains('permission')) {
+        return 'Face ID permission is disabled. Enable it for RES-Q in iOS Settings.';
+      }
+    }
+
+    return 'Biometric authentication failed';
   }
 
   Future<void> _verifyWithBiometrics() async {
