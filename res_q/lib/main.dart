@@ -9,12 +9,20 @@ import 'common/navigation/app_page_transitions.dart';
 import 'common/navigation/performance_route_observer.dart';
 import 'features/home/pages/home_page.dart';
 import 'features/loading/pages/loading_screen.dart';
+import 'common/widgets/global_permission_gate.dart';
 // auth pages
 import 'features/auth/pages/login_page.dart';
 import 'features/auth/pages/registration_page.dart';
 import 'features/auth/pages/otp_page.dart';
 import 'features/auth/pages/pin_creation_page.dart';
 import 'features/auth/pages/forgot_pin_page.dart';
+import 'features/auth/pages/change_phone_number_page.dart';
+import 'features/auth/pages/login_verify_page.dart';
+import 'features/auth/pages/login_register_page.dart';
+import 'features/auth/pages/login_create_pin_page.dart';
+import 'features/auth/pages/login_confirm_pin_page.dart';
+import 'features/auth/pages/login_submitted_page.dart';
+import 'features/auth/pages/login_pin_page.dart';
 // services
 import 'common/services/frame_timing_service.dart';
 import 'common/services/notification_service.dart';
@@ -91,13 +99,26 @@ class MyApp extends StatelessWidget {
           titleLarge: TextStyle(fontSize: 18.0, fontWeight: FontWeight.w600),
         ),
       ),
+      builder: (context, child) {
+        if (child == null) {
+          return const SizedBox.shrink();
+        }
+        return GlobalPermissionGate(child: child);
+      },
       home: const LoadingScreen(), // <-- SHOW LOADING SCREEN FIRST
       routes: {
         '/login': (context) => const LoginPage(),
+        '/login/verify': (context) => const LoginVerifyPage(),
+        '/login/register': (context) => const LoginRegisterPage(),
+        '/login/create-pin': (context) => const LoginCreatePinPage(),
+        '/login/confirm-pin': (context) => const LoginConfirmPinPage(),
+        '/login/submitted': (context) => const LoginSubmittedPage(),
+        '/login/pin': (context) => const LoginPinPage(),
         '/register': (context) => const RegistrationPage(),
         '/otp': (context) => const OTPPage(),
         '/pin-creation': (context) => const PINCreationPage(),
         '/forgot-pin': (context) => const ForgotPinPage(),
+        '/change-phone-number': (context) => const ChangePhoneNumberPage(),
         // Backwards-compatible route alias
         '/approved-pin-creation': (context) => const ForgotPinPage(),
         '/main': (context) => const MainPage(),

@@ -2383,8 +2383,10 @@ class _ProfilePageState extends State<ProfilePage>
                                     final data = userDoc.data();
                                     final enteredPinHash =
                                         SecurityHash.sha256Hex(pin);
-                                    final storedPinHash = data?['pin_hash']
-                                        ?.toString();
+                                    final storedPinHash =
+                                        (data?['hashedPin'] ??
+                                                data?['pin_hash'])
+                                            ?.toString();
                                     final storedLegacyPin = data?['pin']
                                         ?.toString();
                                     final isPinValid =
@@ -2451,14 +2453,26 @@ class _ProfilePageState extends State<ProfilePage>
                                   // Update PIN in Firestore
                                   setDialogState(() => isLoading = true);
                                   try {
+                                    final newPinHash = SecurityHash.sha256Hex(
+                                      newPinEntered,
+                                    );
                                     await FirebaseFirestore.instance
                                         .collection('approved_users')
                                         .doc(docId)
-                                        .update({'pin': newPinEntered});
+                                        .update({
+                                          'pin': FieldValue.delete(),
+                                          'hashedPin': newPinHash,
+                                          'pin_hash': newPinHash,
+                                          'pinCreatedAt':
+                                              FieldValue.serverTimestamp(),
+                                        });
 
                                     // Update local session
-                                    UserSession.currentUserData?['pin'] =
-                                        newPinEntered;
+                                    UserSession.currentUserData?.remove('pin');
+                                    UserSession.currentUserData?['hashedPin'] =
+                                        newPinHash;
+                                    UserSession.currentUserData?['pin_hash'] =
+                                        newPinHash;
 
                                     // Close dialog
                                     if (mounted) {

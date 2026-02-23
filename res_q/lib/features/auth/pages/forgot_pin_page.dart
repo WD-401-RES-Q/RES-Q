@@ -309,9 +309,11 @@ class _ForgotPinPageState extends State<ForgotPinPage> {
 
     try {
       // Update the user document with the PIN
+      final pinHash = SecurityHash.sha256Hex(pin);
       await _firestore.collection('approved_users').doc(_userId).update({
-        'pin': pin,
-        'pin_hash': SecurityHash.sha256Hex(pin),
+        'pin': FieldValue.delete(),
+        'hashedPin': pinHash,
+        'pin_hash': pinHash,
         'pinCreatedAt': FieldValue.serverTimestamp(),
       });
 

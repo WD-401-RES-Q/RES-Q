@@ -13,6 +13,8 @@ class ResqPillButton extends StatelessWidget {
   final Color backgroundColor;
   final Color disabledColor;
   final Color shadowColor;
+  final double shadowBlurRadius;
+  final Offset shadowOffset;
   final TextStyle? textStyle;
 
   const ResqPillButton({
@@ -26,6 +28,8 @@ class ResqPillButton extends StatelessWidget {
     this.backgroundColor = AppTheme.appOffYellow,
     this.disabledColor = const Color(0xFFBDBDBD),
     this.shadowColor = const Color(0x66000000),
+    this.shadowBlurRadius = 4,
+    this.shadowOffset = const Offset(0, 7),
     this.textStyle,
   });
 
@@ -39,8 +43,8 @@ class ResqPillButton extends StatelessWidget {
         boxShadow: [
           BoxShadow(
             color: shadowColor,
-            blurRadius: 4,
-            offset: const Offset(0, 7),
+            blurRadius: shadowBlurRadius,
+            offset: shadowOffset,
           ),
         ],
       ),
@@ -155,6 +159,7 @@ class ResqBackButton extends StatelessWidget {
       case ResqBackButtonStyle.branded:
         return AppTheme.appRed;
       case ResqBackButtonStyle.outline:
+        return AppTheme.appBrightWhite;
       case ResqBackButtonStyle.ghost:
         return Colors.transparent;
     }
@@ -193,6 +198,13 @@ class ResqBackButton extends StatelessWidget {
           ),
         ];
       case ResqBackButtonStyle.outline:
+        return [
+          BoxShadow(
+            color: AppTheme.appBlack.withValues(alpha: 0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ];
       case ResqBackButtonStyle.ghost:
         return [];
     }

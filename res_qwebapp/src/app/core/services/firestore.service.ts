@@ -469,6 +469,7 @@ export class FirestoreService {
       await setDoc(doc(db, 'approved_users', id), {
         ...pendingData,
         createdAt,
+        isApproved: true,
         accountStatus: 'approved',
         approvedAt: Timestamp.now(),
         approvedBy: adminUsername,
