@@ -8,6 +8,7 @@ import { SettingsComponent } from '../features/admin/settings/settings.component
 import { AnnouncementsComponent } from '../features/admin/announcements/announcements.component';
 import { AdminLoginComponent } from '../features/admin/auth/login.component';
 import { ResponderMapComponent } from '../features/admin/responder-map/responder-map.component';
+import { ResponderAccountsComponent } from '../features/admin/responder-accounts/responder-accounts.component';
 import { authGuard } from './guards/auth.guard';
 
 export const routes: Routes = [
@@ -22,6 +23,7 @@ export const routes: Routes = [
       { path: 'dashboard', component: DashboardComponent },
       { path: 'reports', component: ReportsComponent },
       { path: 'responder-map', component: ResponderMapComponent },
+      { path: 'responder-accounts', component: ResponderAccountsComponent },
       { path: 'announcements', component: AnnouncementsComponent },
       { path: 'accounts', component: AccountsComponent },
       { path: 'unverified-accounts', component: UnverifiedAccountsComponent },

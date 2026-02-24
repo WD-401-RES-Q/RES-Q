@@ -39,6 +39,12 @@
             (click)="selectFilter('flagged')">
             Flagged
           </button>
+          <button
+            class="filter-option"
+            [class.active]="currentFilter === 'archived'"
+            (click)="selectFilter('archived')">
+            Archived
+          </button>
         </div>
       </div>
     </div>
@@ -196,8 +202,11 @@
                 <span>{{ report.comments || 0 }}</span>
               </div>
             </div>
-            <button class="btn btn-delete-inline" (click)="deleteReport(report)">
-              Delete Report
+            <button *ngIf="currentFilter !== 'archived'" class="btn btn-delete-inline" (click)="archiveReport(report)">
+              Archive
+            </button>
+            <button *ngIf="currentFilter === 'archived'" class="btn btn-revert-inline" (click)="unarchiveReport(report)">
+              Unarchive
             </button>
           </div>
         </div>
@@ -274,15 +283,15 @@
             </button>
           </ng-container>
 
-          <!-- Approved: Revert -->
-          <ng-container *ngIf="report.status === 'Approved'">
+          <!-- Approved: Revert (hide for archived) -->
+          <ng-container *ngIf="report.status === 'Approved' && currentFilter !== 'archived'">
             <button class="btn btn-revert" (click)="revert(report)">
               Revert to Pending
             </button>
           </ng-container>
 
-          <!-- Flagged: Revert -->
-          <ng-container *ngIf="report.status === 'Flagged'">
+          <!-- Flagged: Revert (hide for archived) -->
+          <ng-container *ngIf="report.status === 'Flagged' && currentFilter !== 'archived'">
             <button class="btn btn-revert" (click)="revert(report)">
               Revert to Pending
             </button>
@@ -426,24 +435,24 @@
     </div>
   </div>
 
-  <!-- DELETE MODAL -->
-  <div class="modal-overlay" *ngIf="showDeleteModal" (click)="cancelDeleteReport()">
+  <!-- ARCHIVE MODAL -->
+  <div class="modal-overlay" *ngIf="showArchiveModal" (click)="cancelArchiveReport()">
     <div class="modal-content-confirm" (click)="$event.stopPropagation()">
-      <h3 class="modal-title">DELETE THIS REPORT?</h3>
-      <p class="modal-subtitle">This permanently removes the report and its related data.</p>
+      <h3 class="modal-title">ARCHIVE THIS REPORT?</h3>
+      <p class="modal-subtitle">This will hide the report from view. You can restore it later.</p>
       <div class="modal-actions">
         <button
           type="button"
           class="btn-modal btn-yes"
-          [disabled]="isDeletingReport"
-          (click)="confirmDeleteReport()">
-          {{ isDeletingReport ? 'DELETING...' : 'DELETE' }}
+          [disabled]="isArchivingReport"
+          (click)="confirmArchiveReport()">
+          {{ isArchivingReport ? 'ARCHIVING...' : 'ARCHIVE' }}
         </button>
         <button
           type="button"
           class="btn-modal btn-no"
-          [disabled]="isDeletingReport"
-          (click)="cancelDeleteReport()">
+          [disabled]="isArchivingReport"
+          (click)="cancelArchiveReport()">
           CANCEL
         </button>
       </div>

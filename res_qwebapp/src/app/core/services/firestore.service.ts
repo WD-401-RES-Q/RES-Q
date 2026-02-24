@@ -12,7 +12,8 @@ import {
   setDoc,
   Timestamp,
   onSnapshot,
-  Unsubscribe
+  Unsubscribe,
+  serverTimestamp
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../config/firebase.config';
@@ -29,6 +30,7 @@ export class FirestoreService {
   private approvedReportsSubject = new BehaviorSubject<any[]>([]);
   private reportsSubject = new BehaviorSubject<any[]>([]);
   private flaggedReportsSubject = new BehaviorSubject<any[]>([]);
+  private archivedReportsSubject = new BehaviorSubject<any[]>([]);
   
   // Track loading state
   private isLoadingSubject = new BehaviorSubject<boolean>(true);
@@ -39,6 +41,7 @@ export class FirestoreService {
   public approvedReports$: Observable<any[]> = this.approvedReportsSubject.asObservable();
   public reports$: Observable<any[]> = this.reportsSubject.asObservable();
   public flaggedReports$: Observable<any[]> = this.flaggedReportsSubject.asObservable();
+  public archivedReports$: Observable<any[]> = this.archivedReportsSubject.asObservable();
   public isLoading$: Observable<boolean> = this.isLoadingSubject.asObservable();
   
   private pendingUsersUnsubscribe?: Unsubscribe;
@@ -47,6 +50,7 @@ export class FirestoreService {
   private approvedReportsUnsubscribe?: Unsubscribe;
   private reportsUnsubscribe?: Unsubscribe;
   private flaggedReportsUnsubscribe?: Unsubscribe;
+  private archivedReportsUnsubscribe?: Unsubscribe;
 
   constructor(private ngZone: NgZone) {
     
@@ -97,7 +101,9 @@ export class FirestoreService {
       // Load all reports once (seed streams before listeners fire)
       const reportsRef = collection(db, 'reports');
       const reportsSnapshot = await getDocs(reportsRef);
-      const reports = reportsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const reports = reportsSnapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter((r: any) => !r.isArchived);
       this.ngZone.run(() => {
         this.reportsSubject.next(reports);
         // Seed filtered subjects too for immediate UI without waiting on snapshots
@@ -207,7 +213,9 @@ export class FirestoreService {
           this.ngZone.run(() => {
             const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
             // Show Pending/RESPONDING/ON SCENE always, RESOLVED/FLAGGED within 30 days
+            // Exclude archived reports
             const filtered = reports.filter(r => {
+              if (r.isArchived) return false;
               const status = (r.status || '').toUpperCase();
               if (['PENDING', 'RESPONDING', 'ON SCENE'].includes(status)) return true;
               if (status === 'RESOLVED') {
@@ -251,7 +259,8 @@ export class FirestoreService {
         (snapshot) => {
           this.ngZone.run(() => {
             const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
-            this.approvedReportsSubject.next(reports);
+            const filtered = reports.filter(r => !r.isArchived);
+            this.approvedReportsSubject.next(filtered);
           });
         },
         (error) => {
@@ -262,13 +271,15 @@ export class FirestoreService {
         }
       );
 
-      // All reports listener (no filter)
+      // All reports listener (no filter, but exclude archived)
       const reportsRef = collection(db, 'reports');
       this.reportsUnsubscribe = onSnapshot(
         reportsRef,
         (snapshot) => {
           this.ngZone.run(() => {
-            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const reports = snapshot.docs
+              .map(doc => ({ id: doc.id, ...doc.data() }))
+              .filter((r: any) => !r.isArchived);
             this.reportsSubject.next(reports);
           });
         },
@@ -292,6 +303,7 @@ export class FirestoreService {
             const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any[];
             // Filter: show FLAGGED if within last 30 days, or if no flaggedAt (legacy data)
             const filtered = reports.filter(r => {
+              if (r.isArchived) return false;
               if (r.flaggedAt) {
                 const flaggedTime = typeof r.flaggedAt.toDate === 'function' 
                   ? r.flaggedAt.toDate().getTime() 
@@ -308,6 +320,27 @@ export class FirestoreService {
           console.error('=== FLAGGED REPORTS LISTENER ERROR ===', error);
           this.ngZone.run(() => {
             this.flaggedReportsSubject.next([]);
+          });
+        }
+      );
+
+      // Archived reports listener (isArchived = true)
+      const archivedReportsQuery = query(
+        collection(db, 'reports'),
+        where('isArchived', '==', true)
+      );
+      this.archivedReportsUnsubscribe = onSnapshot(
+        archivedReportsQuery,
+        (snapshot) => {
+          this.ngZone.run(() => {
+            const reports = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            this.archivedReportsSubject.next(reports);
+          });
+        },
+        (error) => {
+          console.error('=== ARCHIVED REPORTS LISTENER ERROR ===', error);
+          this.ngZone.run(() => {
+            this.archivedReportsSubject.next([]);
           });
         }
       );
@@ -343,6 +376,28 @@ export class FirestoreService {
     const q = query(collection(db, collectionName), where(field, operator, value));
     const querySnapshot = await getDocs(q);
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  }
+
+  // Listen to all documents in a collection (real-time)
+  listenToCollection(
+    collectionName: string,
+    callback: (docs: any[]) => void,
+    onError?: (error: any) => void,
+  ): Unsubscribe {
+    const collectionRef = collection(db, collectionName);
+    return onSnapshot(
+      collectionRef,
+      (snapshot) => {
+        const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        this.ngZone.run(() => callback(docs));
+      },
+      (error) => {
+        console.error(`Snapshot error for ${collectionName}:`, error);
+        if (onError) {
+          this.ngZone.run(() => onError(error));
+        }
+      }
+    );
   }
 
   // Listen to documents with a filter (real-time)
@@ -388,6 +443,10 @@ export class FirestoreService {
       this.flaggedReportsUnsubscribe();
       this.flaggedReportsUnsubscribe = undefined;
     }
+    if (this.archivedReportsUnsubscribe) {
+      this.archivedReportsUnsubscribe();
+      this.archivedReportsUnsubscribe = undefined;
+    }
   }
 
   // Add a document to a collection
@@ -432,6 +491,30 @@ export class FirestoreService {
       deletedCommentDocs: number;
       deletedVoteRecordDocs: number;
     };
+  }
+
+  async archiveReportAsAdmin(
+    reportId: string,
+    adminId: string,
+  ): Promise<void> {
+    const reportRef = doc(db, 'reports', reportId);
+    await updateDoc(reportRef, {
+      isArchived: true,
+      archivedAt: serverTimestamp(),
+      archivedBy: adminId,
+    });
+  }
+
+  async unarchiveReportAsAdmin(
+    reportId: string,
+    adminId: string,
+  ): Promise<void> {
+    const reportRef = doc(db, 'reports', reportId);
+    await updateDoc(reportRef, {
+      isArchived: false,
+      unarchivedAt: serverTimestamp(),
+      unarchivedBy: adminId,
+    });
   }
 
   async deleteAnnouncementAsAdmin(
