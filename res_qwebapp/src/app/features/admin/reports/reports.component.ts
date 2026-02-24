@@ -1,6 +1,7 @@
 import { Component, OnDestroy, OnInit, NgZone, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
 import { FirestoreService } from '../../../core/services/firestore.service';
 import { FirebaseStorageService } from '../../../core/services/firebase-storage.service';
 import { Subscription } from 'rxjs';
@@ -55,7 +56,7 @@ interface Comment {
   reportStatus: string;
 }
 
-type FilterType = 'pending' | 'approved' | 'flagged';
+type FilterType = 'pending' | 'approved' | 'flagged' | 'archived';
 type DateFilterType = 'all' | 'today' | 'week' | 'month' | 'year';
 type IncidentFilterType = 'all' | 'fire' | 'flood' | 'vehicular' | 'earthquake' | 'other';
 
@@ -71,7 +72,8 @@ export class ReportsComponent implements OnInit, OnDestroy {
     private firestoreService: FirestoreService,
     private firebaseStorageService: FirebaseStorageService,
     private ngZone: NgZone,
-    private cdr: ChangeDetectorRef
+    private cdr: ChangeDetectorRef,
+    private route: ActivatedRoute
   ) {}
 
   // Filter state
@@ -91,6 +93,7 @@ export class ReportsComponent implements OnInit, OnDestroy {
   pendingReports: Report[] = [];
   approvedReports: Report[] = [];
   flaggedReports: Report[] = [];
+  archivedReports: Report[] = [];
   
   isLoading = true;
   private subscriptions: Subscription[] = [];
@@ -99,12 +102,12 @@ export class ReportsComponent implements OnInit, OnDestroy {
   showApproveModal = false;
   showRejectModal = false;
   showRevertModal = false;
-  showDeleteModal = false;
-  isDeletingReport = false;
+  showArchiveModal = false;
+  isArchivingReport = false;
   reportToApprove: Report | null = null;
   reportToReject: Report | null = null;
   reportToRevert: Report | null = null;
-  reportToDelete: Report | null = null;
+  reportToArchive: Report | null = null;
 
   // Comments state
   expandedReportId: string | null = null;
@@ -126,6 +129,9 @@ export class ReportsComponent implements OnInit, OnDestroy {
         break;
       case 'flagged':
         reports = this.flaggedReports;
+        break;
+      case 'archived':
+        reports = this.archivedReports;
         break;
       case 'pending':
       default:
@@ -212,6 +218,13 @@ export class ReportsComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    // Check for status query param from dashboard
+    this.route.queryParams.subscribe(params => {
+      const status = params['status'];
+      if (status === 'approved' || status === 'flagged') {
+        this.currentFilter = status;
+      }
+    });
     this.loadReports();
   }
 
@@ -259,7 +272,7 @@ export class ReportsComponent implements OnInit, OnDestroy {
     const status = (report.incidentStatus ?? report.status ?? '').toUpperCase();
     return status === 'FLAGGED'
       ? 'Time Flagged:'
-      : 'Time Approved:';
+      : 'Time Resolved:';
   }
 
   getFinalActivityTime(report: Report): string {
@@ -315,7 +328,20 @@ export class ReportsComponent implements OnInit, OnDestroy {
       },
     });
 
-    this.subscriptions.push(pendingSub, approvedSub, flaggedSub);
+    // Subscribe to archived reports
+    const archivedSub = this.firestoreService.archivedReports$.subscribe({
+      next: (docs) => {
+        this.archivedReports = docs.map((doc: any) => this.mapReport(doc, 'Flagged'));
+        this.updateLoading();
+      },
+      error: (err) => {
+        console.error('Failed to load archived reports:', err);
+        this.archivedReports = [];
+        this.updateLoading();
+      },
+    });
+
+    this.subscriptions.push(pendingSub, approvedSub, flaggedSub, archivedSub);
   }
 
   private updateLoading() {
@@ -676,56 +702,70 @@ export class ReportsComponent implements OnInit, OnDestroy {
     this.reportToRevert = null;
   }
 
-  deleteReport(report: Report) {
-    if (!report.id || this.isDeletingReport) {
+  archiveReport(report: Report) {
+    if (!report.id || this.isArchivingReport) {
       return;
     }
-    this.reportToDelete = report;
-    this.showDeleteModal = true;
+    this.reportToArchive = report;
+    this.showArchiveModal = true;
     this.cdr.markForCheck();
   }
 
-  async confirmDeleteReport() {
-    if (this.isDeletingReport) {
+  async confirmArchiveReport() {
+    if (this.isArchivingReport) {
       return;
     }
 
-    const target = this.reportToDelete;
+    const target = this.reportToArchive;
     if (!target?.id) {
-      console.error('Missing report id, cannot delete');
-      this.cancelDeleteReport();
+      console.error('Missing report id, cannot archive');
+      this.cancelArchiveReport();
       return;
     }
 
     const adminId = this.getCurrentAdminId();
     if (!adminId) {
-      console.error('Missing admin id, cannot delete report');
-      this.cancelDeleteReport();
+      console.error('Missing admin id, cannot archive report');
+      this.cancelArchiveReport();
       return;
     }
 
-    this.isDeletingReport = true;
+    this.isArchivingReport = true;
     this.cdr.markForCheck();
 
     try {
-      await this.firestoreService.deleteReportAsAdmin(target.id, adminId);
+      await this.firestoreService.archiveReportAsAdmin(target.id, adminId);
     } catch (err) {
-      console.error('Failed to delete report:', err);
+      console.error('Failed to archive report:', err);
     } finally {
-      this.isDeletingReport = false;
-      this.showDeleteModal = false;
-      this.reportToDelete = null;
+      this.isArchivingReport = false;
+      this.showArchiveModal = false;
+      this.reportToArchive = null;
       this.cdr.markForCheck();
     }
   }
 
-  cancelDeleteReport() {
-    if (this.isDeletingReport) {
+  cancelArchiveReport() {
+    if (this.isArchivingReport) {
       return;
     }
-    this.showDeleteModal = false;
-    this.reportToDelete = null;
+    this.showArchiveModal = false;
+    this.reportToArchive = null;
     this.cdr.markForCheck();
+  }
+
+  async unarchiveReport(report: Report) {
+    if (!report.id) return;
+    const adminId = this.getCurrentAdminId();
+    if (!adminId) {
+      console.error('Missing admin id, cannot unarchive report');
+      return;
+    }
+    try {
+      await this.firestoreService.unarchiveReportAsAdmin(report.id, adminId);
+    } catch (err) {
+      console.error('Failed to unarchive report:', err);
+    }
   }
 
   private getCurrentAdminId(): string {

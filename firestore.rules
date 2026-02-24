@@ -50,6 +50,44 @@ service cloud.firestore {
           request.resource.data.status in ['online', 'offline', 'available', 'unavailable', 'busy'];
     }
 
+    // Semi-admin account creation from admin web page.
+    function isValidSemiAdminCreate() {
+      let keys = request.resource.data.keys();
+      return keys.hasOnly([
+          'fullName',
+          'name',
+          'username',
+          'role',
+          'contactNumber',
+          'phoneNumber',
+          'pin',
+          'password',
+          'isLoggedIn',
+          'status',
+          'isAvailable',
+          'createdAt'
+        ]) &&
+        request.resource.data.fullName is string &&
+        request.resource.data.fullName.size() > 1 &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 1 &&
+        request.resource.data.username is string &&
+        request.resource.data.username.size() > 2 &&
+        request.resource.data.role is string &&
+        request.resource.data.contactNumber is string &&
+        request.resource.data.contactNumber.matches('^\\+639[0-9]{9}$') &&
+        request.resource.data.phoneNumber is string &&
+        request.resource.data.phoneNumber.matches('^\\+639[0-9]{9}$') &&
+        request.resource.data.pin is string &&
+        request.resource.data.pin.matches('^[0-9]{4}$') &&
+        request.resource.data.password is string &&
+        request.resource.data.password.size() >= 6 &&
+        request.resource.data.isLoggedIn is bool &&
+        request.resource.data.isAvailable is bool &&
+        request.resource.data.status in ['online', 'offline', 'available', 'unavailable', 'busy'] &&
+        (!keys.hasAny(['createdAt']) || request.resource.data.createdAt is timestamp);
+    }
+
     // Basic comment payload checks for authored content
     function isValidCommentCreate() {
       return request.resource.data.author is string &&
@@ -135,8 +173,9 @@ service cloud.firestore {
     // Semi-admins collection - allow read for mobile login checks
     match /semi_admins/{docId} {
       allow read: if true;
+      allow create: if isValidSemiAdminCreate();
       allow update: if isValidSemiAdminPresenceUpdate();
-      allow create, delete: if false; // Only backend scripts
+      allow delete: if false; // Only backend scripts
     }
 
     // Users collection - authenticated users can only read/write their own

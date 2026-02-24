@@ -17,23 +17,29 @@
 
     <div class="pdf-section-title">Executive Summary</div>
 
-    <!-- TOP SUMMARY CARDS -->
-    <section class="summary-row">
-    <div class="summary-card">
-      <div class="summary-title">TOTAL REPORTS</div>
-      <div class="summary-value">{{ totalReports }}</div>
-    </div>
+    <!-- TOP SUMMARY CARDS - HERO SECTION -->
+    <section class="summary-hero">
+      <div class="summary-card summary-total clickable" (click)="goToReports()" title="View all reports">
+        <div class="summary-content">
+          <div class="summary-value">{{ totalReports }}</div>
+          <div class="summary-title">TOTAL REPORTS</div>
+        </div>
+      </div>
 
-    <div class="summary-card">
-      <div class="summary-title">APPROVED &amp; RESOLVED</div>
-      <div class="summary-value">{{ approvedReports }}</div>
-    </div>
+      <div class="summary-card summary-approved clickable" (click)="goToReports('approved')" title="View approved reports">
+        <div class="summary-content">
+          <div class="summary-value">{{ approvedReports }}</div>
+          <div class="summary-title">APPROVED</div>
+        </div>
+      </div>
 
-    <div class="summary-card">
-      <div class="summary-title">FLAGGED REPORTS</div>
-      <div class="summary-value">{{ flaggedReports }}</div>
-    </div>
-  </section>
+      <div class="summary-card summary-flagged clickable" (click)="goToReports('flagged')" title="View flagged reports">
+        <div class="summary-content">
+          <div class="summary-value">{{ flaggedReports }}</div>
+          <div class="summary-title">FLAGGED</div>
+        </div>
+      </div>
+    </section>
 
   <div class="pdf-section-title">Emergency Categories Breakdown</div>
 
