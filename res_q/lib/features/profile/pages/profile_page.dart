@@ -3166,10 +3166,24 @@ class _ProfilePageState extends State<ProfilePage>
     final profileInitial = profileName.isNotEmpty
         ? profileName[0].toUpperCase()
         : '?';
-    final hasProfilePhoto =
-        _profilePhotoBytes != null ||
-        _profilePhoto != null ||
-        _profilePhotoUrl != null;
+    final hasMemoryPhoto =
+        _profilePhotoBytes != null && _profilePhotoBytes!.isNotEmpty;
+    final hasLocalPhoto =
+        _profilePhoto != null &&
+        _profilePhoto!.path.isNotEmpty &&
+        (kIsWeb || File(_profilePhoto!.path).existsSync());
+    final hasRemotePhoto =
+        _profilePhotoUrl != null && _profilePhotoUrl!.trim().isNotEmpty;
+
+    final ImageProvider<Object>? avatarImage = hasMemoryPhoto
+        ? MemoryImage(_profilePhotoBytes!)
+        : (hasLocalPhoto
+              ? FileImage(File(_profilePhoto!.path))
+              : (hasRemotePhoto
+                    ? CachedNetworkImageProvider(_profilePhotoUrl!)
+                    : null));
+
+    final hasProfilePhoto = avatarImage != null;
     return Scaffold(
       backgroundColor: const Color(0xFFF7F7F7),
       body: SafeArea(
@@ -3205,15 +3219,22 @@ class _ProfilePageState extends State<ProfilePage>
                     CircleAvatar(
                       radius: 55,
                       backgroundColor: const Color(0xFFAC1B22),
-                      backgroundImage: _profilePhotoBytes != null
-                          ? MemoryImage(_profilePhotoBytes!)
-                          : (_profilePhoto != null
-                                ? FileImage(File(_profilePhoto!.path))
-                                : (_profilePhotoUrl != null
-                                      ? CachedNetworkImageProvider(
-                                          _profilePhotoUrl!,
-                                        )
-                                      : null)),
+                      backgroundImage: avatarImage,
+                      onBackgroundImageError: (exception, stackTrace) {
+                        if (!mounted) return;
+                        setState(() {
+                          if (hasMemoryPhoto) {
+                            _profilePhotoBytes = null;
+                          } else if (hasLocalPhoto) {
+                            _profilePhoto = null;
+                          } else if (hasRemotePhoto) {
+                            _profilePhotoUrl = null;
+                          }
+                        });
+                        debugPrint(
+                          'Profile avatar load failed. Falling back to initial: $exception',
+                        );
+                      },
                       child: hasProfilePhoto
                           ? null
                           : Text(

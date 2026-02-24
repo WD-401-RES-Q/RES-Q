@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import '../../../common/services/notification_service.dart';
+import '../../../common/services/phone_lookup_service.dart';
+import '../../../common/services/trusted_device_service.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../auth/pages/login_page.dart';
 
@@ -37,14 +39,63 @@ class _LoadingScreenState extends State<LoadingScreen> {
       await _requestNotificationPermission();
       final hasLocation = await _ensureLocationPermissionWithModal();
       if (!mounted || !hasLocation) return;
+      await _navigateFromStartupAuthState();
+    } finally {
+      _isInitializing = false;
+    }
+  }
 
+  Future<void> _navigateFromStartupAuthState() async {
+    final trustedPhone = await TrustedDeviceService.instance.getTrustedPhone();
+
+    String? startupPhone;
+    bool allowDirectPin = false;
+
+    if (trustedPhone != null && trustedPhone.isNotEmpty) {
+      try {
+        final status = await PhoneLookupService.instance.lookupAccountStatus(
+          trustedPhone,
+          useCache: false,
+        );
+        final isApprovedAccount =
+            status.hasApprovedAccount &&
+            !status.isPendingAccount &&
+            !status.isBannedAccount;
+
+        if (isApprovedAccount) {
+          startupPhone = trustedPhone;
+          allowDirectPin = true;
+        }
+      } catch (e) {
+        debugPrint('Startup phone status lookup failed: $e');
+      }
+    }
+
+    if (!mounted) return;
+
+    final args = <String, dynamic>{};
+    if (startupPhone != null) {
+      args['trustedPhone'] = startupPhone;
+    }
+    if (allowDirectPin) {
+      args['directPin'] = true;
+    }
+
+    if (args.isEmpty) {
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const LoginPage()),
       );
-    } finally {
-      _isInitializing = false;
+      return;
     }
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const LoginPage(),
+        settings: RouteSettings(arguments: args),
+      ),
+    );
   }
 
   Future<void> _closeApplication() async {

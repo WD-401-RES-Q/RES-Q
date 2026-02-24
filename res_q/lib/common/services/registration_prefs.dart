@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class RegistrationPrefs {
   static const String _phoneKey = 'registration_phone_number';
   static const String _approvedLoginKey = 'approved_login_completed';
+  static const String _lastActivityKey = 'last_activity_timestamp';
 
   /// Normalize phone value to local 10-digit format (9XXXXXXXXX).
   static String _normalizePhone(String phone) {
@@ -67,5 +68,24 @@ class RegistrationPrefs {
   static Future<bool> isApprovedLoginCompleted() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(_approvedLoginKey) ?? false;
+  }
+
+  /// Save app activity timestamp.
+  static Future<void> saveLastActivity(DateTime timestamp) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastActivityKey, timestamp.toIso8601String());
+  }
+
+  /// Save current time as latest app activity.
+  static Future<void> saveLastActivityNow() async {
+    await saveLastActivity(DateTime.now());
+  }
+
+  /// Read last app activity timestamp.
+  static Future<DateTime?> getLastActivityTimestamp() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_lastActivityKey);
+    if (raw == null || raw.isEmpty) return null;
+    return DateTime.tryParse(raw);
   }
 }
