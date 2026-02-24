@@ -13,7 +13,6 @@ import '../../../common/utils/security_hash.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
-import '../../../common/widgets/phone_number_display_card.dart';
 
 class PINCreationPage extends StatefulWidget {
   const PINCreationPage({super.key});
@@ -81,49 +80,6 @@ class _PINCreationPageState extends State<PINCreationPage> {
       return '+63 ${digits.substring(0, 3)}-${digits.substring(3, 6)}-${digits.substring(6)}';
     }
     return phone;
-  }
-
-  Future<void> _promptPhoneChange() async {
-    final shouldChange = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppTheme.appOffWhite,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: const Text(
-          'Are you changing accounts?',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: AppTheme.appBlack,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text(
-              'No',
-              style: TextStyle(
-                color: AppTheme.appBlack,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text(
-              'Yes',
-              style: TextStyle(
-                color: AppTheme.appRed,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (shouldChange != true || !mounted) return;
-    await Navigator.pushNamed(context, '/change-phone-number');
   }
 
   void _handlePinKey(String value) {
@@ -390,14 +346,10 @@ class _PINCreationPageState extends State<PINCreationPage> {
       _uid = uid;
 
       final userData = _userData ?? {};
-      final pinHash = SecurityHash.sha256Hex(_pin);
-      userData.remove('pin');
-      userData['hashedPin'] = pinHash;
-      userData['pin_hash'] = pinHash;
+      userData['pin'] = _pin;
+      userData['pin_hash'] = SecurityHash.sha256Hex(_pin);
       userData['accountStatus'] = 'pending';
-      userData['isApproved'] = false;
       userData['contactNumber'] = _phoneNumber;
-      userData['phoneNumber'] = _phoneNumber;
 
       try {
         final registerCallable = _functions.httpsCallable(
@@ -640,10 +592,41 @@ class _PINCreationPageState extends State<PINCreationPage> {
 
                           // Phone number display
                           if (_phoneNumber != null && _phoneNumber!.isNotEmpty)
-                            PhoneNumberDisplayCard(
-                              phoneText: _formatPhoneForDisplay(_phoneNumber),
-                              onEditTap: _loading ? null : _promptPhoneChange,
-                              editTooltip: 'Change account',
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 14,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppTheme.appOffWhite,
+                                borderRadius: BorderRadius.circular(
+                                  AppDimensions.radiusMedium,
+                                ),
+                                border: Border.all(
+                                  color: AppTheme.appBlack.withValues(
+                                    alpha: 0.2,
+                                  ),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.phone_android,
+                                    color: AppTheme.appBlack,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    _formatPhoneForDisplay(_phoneNumber),
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: AppTheme.appBlack,
+                                      fontFamily: 'RobotoCondensed',
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
 
                           const SizedBox(height: AppDimensions.paddingXLarge),

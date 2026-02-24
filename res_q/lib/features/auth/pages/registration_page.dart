@@ -1,22 +1,20 @@
 import 'dart:async';
 
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:easy_stepper/easy_stepper.dart';
-import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
-
-import '../../../common/constants/app_dimensions.dart';
-import '../../../common/services/phone_lookup_service.dart';
-import '../../../common/services/registration_prefs.dart';
-import '../../../common/theme/app_text_styles.dart';
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../../common/theme/app_theme.dart';
+import '../../../common/theme/app_text_styles.dart';
+import '../../../common/constants/app_dimensions.dart';
+import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
-import '../../../common/widgets/auth_widgets.dart';
-import '../../../common/widgets/custom_form_fields.dart';
+import '../../../common/services/phone_lookup_service.dart';
+import '../../../common/services/registration_prefs.dart';
+
+/// User registration page with AES-256-GCM encrypted PII storage.
+/// See docs/AES-256-GCM-ENCRYPTION.md for encryption architecture details.
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({super.key});
@@ -27,232 +25,95 @@ class RegistrationPage extends StatefulWidget {
 
 class _RegistrationPageState extends State<RegistrationPage> {
   static const int _maxAddressLength = 256;
-  static const int _maxImageUploadBytes = 4 * 1024 * 1024;
   static const String _phoneLookupScopeKey = 'register';
   static const int _minimumAllowedAge = 13;
-  static const int _adultAgeThreshold = 18;
-  static const double _fieldRadius = RegistrationFieldTokens.radius;
 
-  static const List<String> _adultAcceptedIdTypes = [
-    'UMID',
-    "Driver's License",
-    'Passport',
-    "Voter's ID",
-    'PhilSys National ID',
-    'ePhilID',
-    'PRC ID',
-    'Postal ID',
-    'SSS ID',
-  ];
-
-  static const List<String> _minorAcceptedIdTypes = [
-    'School ID',
-    'PhilSys National ID',
-    'ePhilID',
-    'Passport',
-  ];
-
-  final _adultFormKey = GlobalKey<FormState>();
-  final _minorPage1FormKey = GlobalKey<FormState>();
-  final _minorPage3FormKey = GlobalKey<FormState>();
-
+  final _formKey = GlobalKey<FormState>();
   final _firstNameCtl = TextEditingController();
   final _lastNameCtl = TextEditingController();
+  final _emailCtl = TextEditingController();
   final _contactCtl = TextEditingController();
   final _addressCtl = TextEditingController();
-  final ScrollController _termsScrollController = ScrollController();
-
-  final _parentFirstNameCtl = TextEditingController();
-  final _parentLastNameCtl = TextEditingController();
-  final _parentContactCtl = TextEditingController();
+  final _dobDayCtl = TextEditingController();
+  final _dobMonthCtl = TextEditingController();
+  final _dobYearCtl = TextEditingController();
 
   bool _loading = false;
   bool _agree = false;
-  bool _termsScrollCompleted = false;
-  bool _ageGateCompleted = true;
-  bool _isMinor = true;
-  int _adultStep = 0;
-  int _minorStep = 0;
-
-  DateTime? _selectedDateOfBirth;
-
-  String? _adultIdType;
-  String? _minorIdType;
-  String? _parentIdType;
-
+  bool _dobSubmitAttempted = false;
   String? _frontIdUrl;
   String? _selfieWithIdUrl;
-  String? _parentFrontIdUrl;
-  String? _parentSelfieWithIdUrl;
-  String? _psaBirthCertificateUrl;
-
-  bool _uploadingPsa = false;
-
-  String? _dobError;
   String? _termsError;
   String? _idPhotoError;
-  String? _parentIdPhotoError;
-  String? _adultIdTypeError;
-  String? _minorIdTypeError;
-  String? _parentIdTypeError;
-  String? _psaError;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final PhoneLookupService _phoneLookupService = PhoneLookupService.instance;
-  final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
     _contactCtl.addListener(_onContactChanged);
-    _termsScrollController.addListener(_onTermsScroll);
+    _loadSavedData();
+  }
+
+  Future<void> _loadSavedData() async {
+    final savedPhone = await RegistrationPrefs.getPhoneNumber();
+    if (savedPhone != null && mounted) {
+      // Remove +63 prefix if present for display
+      final displayPhone = savedPhone.startsWith('+63')
+          ? savedPhone.substring(3)
+          : savedPhone;
+      setState(() {
+        _contactCtl.text = displayPhone;
+      });
+    }
   }
 
   @override
   void dispose() {
     _phoneLookupService.cancelDebounce(_phoneLookupScopeKey);
     _contactCtl.removeListener(_onContactChanged);
-    _termsScrollController.removeListener(_onTermsScroll);
-    _termsScrollController.dispose();
-
     _firstNameCtl.dispose();
     _lastNameCtl.dispose();
+    _emailCtl.dispose();
     _contactCtl.dispose();
     _addressCtl.dispose();
-    _parentFirstNameCtl.dispose();
-    _parentLastNameCtl.dispose();
-    _parentContactCtl.dispose();
+    _dobDayCtl.dispose();
+    _dobMonthCtl.dispose();
+    _dobYearCtl.dispose();
     super.dispose();
   }
 
-  void _onIdUploadComplete(String? frontUrl, String? selfieUrl) {
+  void _onIdUploadComplete(String? frontUrl, String? backUrl) {
     setState(() {
       _frontIdUrl = frontUrl;
-      _selfieWithIdUrl = selfieUrl;
-      if (frontUrl != null && selfieUrl != null) {
+      _selfieWithIdUrl = backUrl;
+      if (frontUrl != null && backUrl != null) {
         _idPhotoError = null;
       }
     });
   }
 
-  void _onParentIdUploadComplete(String? frontUrl, String? selfieUrl) {
-    setState(() {
-      _parentFrontIdUrl = frontUrl;
-      _parentSelfieWithIdUrl = selfieUrl;
-      if (frontUrl != null && selfieUrl != null) {
-        _parentIdPhotoError = null;
-      }
-    });
-  }
+  Future<void> _showTermsAndConditions() async {
+    // Unfocus any active text field before showing dialog
+    FocusManager.instance.primaryFocus?.unfocus();
 
-  void _onTermsScroll() {
-    if (_termsScrollCompleted || !_termsScrollController.hasClients) return;
-    final position = _termsScrollController.position;
-    if (position.maxScrollExtent <= 0 ||
-        position.pixels >= position.maxScrollExtent - 20) {
+    final agreed = await TermsAndConditionsDialog.show(context);
+
+    // Ensure keyboard stays hidden after dialog closes
+    if (mounted) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      // Additional delay to ensure keyboard doesn't reappear
+      await Future.delayed(const Duration(milliseconds: 100));
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
+
+    if (agreed) {
       setState(() {
-        _termsScrollCompleted = true;
+        _agree = true;
+        _termsError = null;
       });
     }
-  }
-
-  int _calculateAge(DateTime birthDate) {
-    final now = DateTime.now();
-    var age = now.year - birthDate.year;
-    final birthdayPassed =
-        now.month > birthDate.month ||
-        (now.month == birthDate.month && now.day >= birthDate.day);
-    if (!birthdayPassed) {
-      age -= 1;
-    }
-    return age;
-  }
-
-  String _formatDateForStorage(DateTime date) {
-    final month = date.month.toString().padLeft(2, '0');
-    final day = date.day.toString().padLeft(2, '0');
-    return '${date.year}-$month-$day';
-  }
-
-  String _formatDateForDisplay(DateTime date) {
-    const months = <String>[
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
-    ];
-    final monthName = months[date.month - 1];
-    return '$monthName ${date.day}, ${date.year}';
-  }
-
-  Future<void> _showAgeGateModal() async {
-    final selectedDate =
-        _selectedDateOfBirth ??
-        DateTime.now().subtract(const Duration(days: 365 * _adultAgeThreshold));
-
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: selectedDate,
-      firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
-      helpText: 'SELECT DATE OF BIRTH',
-      builder: (pickerContext, child) {
-        final themed = Theme.of(pickerContext).copyWith(
-          colorScheme: const ColorScheme.light(
-            primary: AppTheme.appRed,
-            onPrimary: Colors.white,
-            onSurface: AppTheme.appBlack,
-            surface: AppTheme.appOffWhite,
-          ),
-        );
-        return Theme(data: themed, child: child!);
-      },
-    );
-
-    if (!mounted) return;
-    if (picked == null) {
-      if (_selectedDateOfBirth == null) {
-        setState(() {
-          _dobError = 'Date of birth is required';
-        });
-      }
-      return;
-    }
-
-    final age = _calculateAge(picked);
-    setState(() {
-      _selectedDateOfBirth = picked;
-      _isMinor = age < _adultAgeThreshold;
-      _ageGateCompleted = true;
-      _adultStep = 0;
-      _minorStep = 0;
-      _agree = false;
-      _dobError = null;
-      _termsScrollCompleted = false;
-      _termsError = null;
-      if (!_isMinor) {
-        _parentFirstNameCtl.clear();
-        _parentLastNameCtl.clear();
-        _parentContactCtl.clear();
-        _parentFrontIdUrl = null;
-        _parentSelfieWithIdUrl = null;
-        _parentIdType = null;
-        _psaBirthCertificateUrl = null;
-      }
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_termsScrollController.hasClients) {
-        _termsScrollController.jumpTo(0);
-      }
-    });
   }
 
   Future<bool> _checkPhoneNumberExists(String phone) async {
@@ -282,259 +143,167 @@ class _RegistrationPageState extends State<RegistrationPage> {
     );
   }
 
-  Future<ImageSource?> _showImageSourcePicker() async {
-    return showDialog<ImageSource>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: AppTheme.appOffWhite,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-          title: const Text(
-            'Select Image Source',
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.appBlack,
-            ),
-          ),
-          content: SizedBox(
-            width: 280,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _buildImageSourceOption(
-                  icon: Icons.photo_camera,
-                  label: 'Camera',
-                  onTap: () => Navigator.pop(context, ImageSource.camera),
-                ),
-                const SizedBox(height: 10),
-                _buildImageSourceOption(
-                  icon: Icons.photo_library,
-                  label: 'Gallery',
-                  onTap: () => Navigator.pop(context, ImageSource.gallery),
-                ),
-              ],
-            ),
-          ),
+  Future<void> _submit() async {
+    _dobSubmitAttempted = true;
+    final normalizedFirstName = _firstNameCtl.text.trim().replaceAll(
+      RegExp(r'\s+'),
+      ' ',
+    );
+    final normalizedLastName = _lastNameCtl.text.trim().replaceAll(
+      RegExp(r'\s+'),
+      ' ',
+    );
+    final normalizedFullName = '$normalizedFirstName $normalizedLastName';
+    final normalizedEmail = _emailCtl.text.trim();
+    final normalizedAddress = _addressCtl.text.trim();
+    final dobMonth = _dobMonthCtl.text.trim();
+    final dobDay = _dobDayCtl.text.trim();
+    final dobYear = _dobYearCtl.text.trim();
+
+    final formValid = _formKey.currentState?.validate() ?? false;
+    final termsValid = _agree;
+    final hasFrontId = _frontIdUrl != null;
+    final hasSelfieWithId = _selfieWithIdUrl != null;
+    final idValid = hasFrontId && hasSelfieWithId;
+
+    setState(() {
+      _termsError = termsValid
+          ? null
+          : 'Please read and agree to terms and conditions';
+      if (idValid) {
+        _idPhotoError = null;
+      } else if (!hasFrontId && !hasSelfieWithId) {
+        _idPhotoError = 'Please upload your ID front and your selfie with ID';
+      } else if (!hasFrontId) {
+        _idPhotoError = 'Please upload the front of your government ID';
+      } else {
+        _idPhotoError = 'Please upload your selfie with ID';
+      }
+    });
+
+    if (!formValid || !termsValid || !idValid) {
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+    });
+
+    // Format phone number for Firebase (E.164 format: +63XXXXXXXXXX)
+    final phoneDigits = _contactCtl.text.replaceAll(RegExp(r'\D'), '');
+    final phone = '+63$phoneDigits';
+
+    // Save phone number for convenience
+    await RegistrationPrefs.savePhoneNumber(phoneDigits);
+    if (!mounted) return;
+
+    // Check if phone number already exists
+    final phoneExists = await _checkPhoneNumberExists(phone);
+    if (!mounted) return;
+    if (phoneExists) {
+      setState(() => _loading = false);
+      if (mounted) {
+        AppSnackBar.show(
+          context,
+          'This phone number is already registered. Please use a different number.',
+          type: AppSnackBarType.error,
+          duration: const Duration(seconds: 4),
         );
-      },
-    );
-  }
+      }
+      return;
+    }
 
-  Widget _buildImageSourceOption({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: Colors.white,
-      elevation: 0.5,
-      shadowColor: AppTheme.appBlack.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              Icon(icon, color: AppTheme.appRed),
-              const SizedBox(width: 10),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppTheme.appBlack,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _pickAndUploadPsa() async {
-    if (_uploadingPsa) return;
-
-    final source = await _showImageSourcePicker();
-    if (source == null) return;
+    final Map<String, dynamic> userData = {
+      'fullName': normalizedFullName,
+      'email': normalizedEmail.isEmpty ? null : normalizedEmail,
+      'contactNumber': phone,
+      'address': normalizedAddress,
+      'dateOfBirth': '$dobMonth/$dobDay/$dobYear',
+      'idPhotoFront': _frontIdUrl,
+      'idPhotoBack': null,
+      'idPhotoSelfie': _selfieWithIdUrl,
+      'role': 'user',
+    };
 
     try {
-      setState(() {
-        _uploadingPsa = true;
-        _psaError = null;
-      });
-
-      final picked = await _imagePicker.pickImage(
-        source: source,
-        imageQuality: 85,
-        maxWidth: 1800,
-      );
-
-      if (picked == null) {
-        setState(() => _uploadingPsa = false);
-        return;
+      if (!kIsWeb) {
+        await _auth.setSettings(appVerificationDisabledForTesting: kDebugMode);
       }
 
-      final phoneDigits = _contactCtl.text.replaceAll(RegExp(r'\D'), '');
-      final pathKey = phoneDigits.isEmpty
-          ? 'pending_${DateTime.now().millisecondsSinceEpoch}'
-          : phoneDigits;
-      final fileName = 'psa_birth_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      await _auth.verifyPhoneNumber(
+        phoneNumber: phone,
+        timeout: const Duration(seconds: 30),
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          // Auto-verification (rare on most devices)
+        },
+        verificationFailed: (FirebaseAuthException e) {
+          if (!mounted) return;
+          setState(() => _loading = false);
+          String msg = e.message ?? 'Phone verification failed';
 
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('id_photos')
-          .child(pathKey)
-          .child(fileName);
+          if (e.code == 'invalid-phone-number') {
+            msg = 'Invalid phone number. Please check and try again.';
+          } else if (e.code == 'too-many-requests') {
+            msg = 'Too many attempts. Please try again later.';
+          } else if (e.code == 'missing-phone-number') {
+            msg = 'Phone number is required.';
+          } else if (e.code == 'app-not-authorized') {
+            msg = 'App is not authorized. Please check Firebase Console.';
+          }
 
-      final bytes = await picked.readAsBytes();
-      if (bytes.length > _maxImageUploadBytes) {
-        if (!mounted) return;
-        setState(() {
-          _uploadingPsa = false;
-        });
-        await _showImageSizeLimitDialog();
-        return;
-      }
-      final snapshot = await storageRef.putData(
-        bytes,
-        SettableMetadata(contentType: 'image/jpeg'),
-      );
+          if (mounted) {
+            AppSnackBar.show(
+              context,
+              msg,
+              type: AppSnackBarType.error,
+              duration: const Duration(seconds: 3),
+            );
+          }
+        },
+        codeSent: (String verificationId, int? resendToken) {
+          setState(() => _loading = false);
+          _finishAutofillContext(); // Trigger "Save to Google" prompt
 
-      final downloadUrl = await snapshot.ref.getDownloadURL();
-      if (!mounted) return;
-      setState(() {
-        _psaBirthCertificateUrl = downloadUrl;
-        _uploadingPsa = false;
-        _psaError = null;
-      });
-      AppSnackBar.show(
-        context,
-        'PSA Birth Certificate uploaded successfully.',
-        type: AppSnackBarType.success,
+          if (!mounted) return;
+          Navigator.pushNamed(
+            context,
+            '/otp',
+            arguments: {
+              'verificationId': verificationId,
+              'phoneNumber': phone,
+              'userData': userData,
+            },
+          );
+        },
+        codeAutoRetrievalTimeout: (String verificationId) {
+          // Auto-retrieval timeout
+        },
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _uploadingPsa = false;
-        _psaError = 'Failed to upload PSA Birth Certificate.';
-      });
-      AppSnackBar.show(
-        context,
-        'Failed to upload document: $e',
-        type: AppSnackBarType.error,
-      );
+      setState(() => _loading = false);
+      if (mounted) {
+        AppSnackBar.show(
+          context,
+          'Failed to send OTP: $e',
+          type: AppSnackBarType.error,
+          duration: const Duration(seconds: 3),
+        );
+      }
     }
   }
 
-  Future<void> _showImageSizeLimitDialog() async {
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppTheme.appOffWhite,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: const Text(
-          'Image Too Large',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: AppTheme.appBlack,
-          ),
-        ),
-        content: const Text(
-          'The maximum allowed image size is 4 MB. Please choose a smaller image.',
-          style: TextStyle(
-            fontSize: 13,
-            color: AppTheme.appBlack,
-            fontFamily: 'RobotoCondensed',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text(
-              'OK',
-              style: TextStyle(
-                color: AppTheme.appRed,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showExpandedNetworkPreview({
-    required String title,
-    required String imageUrl,
-  }) async {
-    if (!mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: AppTheme.appOffWhite,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.appBlack,
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close, color: AppTheme.appRed),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                height: MediaQuery.of(context).size.height * 0.55,
-                child: InteractiveViewer(
-                  minScale: 1,
-                  maxScale: 4,
-                  child: Center(
-                    child: Image.network(
-                      imageUrl,
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) => Icon(
-                        Icons.broken_image,
-                        color: AppTheme.appBlack.withValues(alpha: 0.35),
-                        size: 42,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  void _finishAutofillContext() {
+    try {
+      TextInput.finishAutofillContext();
+    } catch (e) {
+      debugPrint('Failed to finish autofill: $e');
+    }
   }
 
   bool _isValidNamePart(String name) {
-    if (name.length < 2 || name.length > 40) return false;
+    if (name.length < 2) return false;
+    if (name.length > 40) return false;
     final parts = name.split(' ');
     final wordPattern = RegExp(r"^[A-Za-z]{2,}([-''][A-Za-z]+)*\.?$");
     final initialPattern = RegExp(r"^[A-Za-z]\.?$");
@@ -555,12 +324,31 @@ class _RegistrationPageState extends State<RegistrationPage> {
     return RegExp(r'[A-Za-z0-9]').hasMatch(address);
   }
 
-  bool _isValidGuardianPhone(String value) {
-    final digits = value.replaceAll(RegExp(r'\D'), '');
-    if (digits.length == 10 && digits.startsWith('9')) return true;
-    if (digits.length == 11 && digits.startsWith('09')) return true;
-    if (digits.length == 12 && digits.startsWith('63')) return true;
-    return false;
+  bool _isValidDob(String month, String day, String year) {
+    final m = int.tryParse(month);
+    final d = int.tryParse(day);
+    final y = int.tryParse(year);
+    if (m == null || d == null || y == null) return false;
+    if (y < 1900 || y > DateTime.now().year) return false;
+    try {
+      final date = DateTime(y, m, d);
+      if (date.year != y || date.month != m || date.day != d) return false;
+      if (date.isAfter(DateTime.now())) return false;
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _isAtLeastMinimumAge(DateTime dob) {
+    final now = DateTime.now();
+    var age = now.year - dob.year;
+    final birthdayPassedThisYear =
+        now.month > dob.month || (now.month == dob.month && now.day >= dob.day);
+    if (!birthdayPassedThisYear) {
+      age--;
+    }
+    return age >= _minimumAllowedAge;
   }
 
   String? _validateFirstName(String? value) {
@@ -577,6 +365,13 @@ class _RegistrationPageState extends State<RegistrationPage> {
     return null;
   }
 
+  String? _validateEmail(String? value) {
+    final email = (value ?? '').trim();
+    // Optional for now (phone OTP already verifies contact ownership).
+    if (email.isEmpty) return null;
+    return _isValidEmail(email) ? null : 'Enter a valid email address';
+  }
+
   String? _validateAddress(String? value) {
     final address = (value ?? '').trim();
     if (address.isEmpty) return 'Home address is required';
@@ -586,1262 +381,55 @@ class _RegistrationPageState extends State<RegistrationPage> {
     return _isValidAddress(address) ? null : 'Enter a valid home address';
   }
 
-  String? _validateParentFirstName(String? value) {
-    final normalized = (value ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
-    if (normalized.isEmpty) return 'Parent/guardian first name is required';
-    if (!_isValidNamePart(normalized)) {
-      return 'Enter a valid parent/guardian first name';
-    }
+  String? _validateDobMonth(String? value) {
+    final v = (value ?? '').trim();
+    if (v.isEmpty) return _dobSubmitAttempted ? 'Month is required' : null;
+    final m = int.tryParse(v);
+    if (v.length != 2) return 'Use 2 digits (MM)';
+    if (m == null || m < 1 || m > 12) return 'Invalid month';
     return null;
   }
 
-  String? _validateParentLastName(String? value) {
-    final normalized = (value ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
-    if (normalized.isEmpty) return 'Parent/guardian last name is required';
-    if (!_isValidNamePart(normalized)) {
-      return 'Enter a valid parent/guardian last name';
-    }
+  String? _validateDobDay(String? value) {
+    final v = (value ?? '').trim();
+    if (v.isEmpty) return _dobSubmitAttempted ? 'Day is required' : null;
+    final d = int.tryParse(v);
+    if (v.length != 2) return 'Use 2 digits (DD)';
+    if (d == null || d < 1 || d > 31) return 'Invalid day';
     return null;
   }
 
-  String? _validateParentContact(String? value) {
-    final input = (value ?? '').trim();
-    if (input.isEmpty) {
-      return 'Parent/guardian phone or email is required';
+  String? _validateDobYear(String? value) {
+    final v = (value ?? '').trim();
+    if (v.isEmpty) return _dobSubmitAttempted ? 'Year is required' : null;
+    if (v.length != 4) return 'Use 4 digits (YYYY)';
+    final y = int.tryParse(v);
+    final currentYear = DateTime.now().year;
+    if (y == null || y < 1900 || y > currentYear) {
+      return 'Invalid year';
     }
-    if (_isValidEmail(input)) return null;
-    if (_isValidGuardianPhone(input)) return null;
-    return 'Enter a valid phone number or email';
-  }
-
-  List<TextInputFormatter> _nameInputFormatters() {
-    return [
-      FilteringTextInputFormatter.allow(RegExp(r"[a-zA-Z .'-]")),
-      const NameCapitalizationFormatter(),
-    ];
-  }
-
-  String? _currentUserFrontIdFieldError() {
-    if (_idPhotoError == null || _frontIdUrl != null) return null;
-    return _isMinor
-        ? 'Please upload the minor\'s ID photo'
-        : 'Please upload your valid ID photo';
-  }
-
-  String? _currentUserSelfieIdFieldError() {
-    if (_idPhotoError == null || _selfieWithIdUrl != null) return null;
-    return _isMinor
-        ? 'Please upload the minor\'s selfie with ID'
-        : 'Please upload your selfie with ID';
-  }
-
-  String? _parentFrontIdFieldError() {
-    if (_parentIdPhotoError == null || _parentFrontIdUrl != null) return null;
-    return 'Please upload parent/guardian ID photo';
-  }
-
-  String? _parentSelfieIdFieldError() {
-    if (_parentIdPhotoError == null || _parentSelfieWithIdUrl != null) {
-      return null;
+    if (y > (currentYear - _minimumAllowedAge)) {
+      return 'Must be at least $_minimumAllowedAge years old';
     }
-    return 'Please upload parent/guardian selfie with ID';
-  }
-
-  Widget _buildDobSummary() {
-    final selectedDate = _selectedDateOfBirth;
-    final value = selectedDate == null
-        ? 'Select date of birth'
-        : _formatDateForDisplay(selectedDate);
-    return CustomDatePicker(
-      valueText: value,
-      isPlaceholder: selectedDate == null,
-      onChange: _loading ? null : _showAgeGateModal,
-      hasError: _dobError != null,
-      isValid: selectedDate != null && _dobError == null,
-      errorText: _dobError,
-    );
-  }
-
-  Widget _buildInlineTermsAndAgreement({bool fillAvailableSpace = false}) {
-    final canCheckTerms = _termsScrollCompleted;
-    final fallbackHeight = (MediaQuery.of(context).size.height * 0.42).clamp(
-      240.0,
-      420.0,
-    );
-
-    final termsCard = Container(
-      decoration: BoxDecoration(
-        color: AppTheme.appBrightWhite,
-        borderRadius: BorderRadius.circular(_fieldRadius),
-        border: Border.all(
-          color: AppTheme.appBlack.withValues(alpha: 0.35),
-          width: 0.7,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.appBlack.withValues(alpha: 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(_fieldRadius - 2),
-        child: Scrollbar(
-          controller: _termsScrollController,
-          thumbVisibility: true,
-          child: SingleChildScrollView(
-            controller: _termsScrollController,
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              TermsAndConditionsDialog.termsAndConditionsText,
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.6,
-                color: AppTheme.appBlack,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'TERMS AND CONDITIONS',
-          style: AppTextStyles.authLabel.copyWith(fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 6),
-        if (fillAvailableSpace) ...[
-          Expanded(child: termsCard),
-        ] else ...[
-          SizedBox(height: fallbackHeight, child: termsCard),
-        ],
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 16,
-          child: AnimatedOpacity(
-            opacity: canCheckTerms ? 0 : 1,
-            duration: const Duration(milliseconds: 150),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Scroll to the bottom to enable the checkbox.',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.appBlack.withValues(alpha: 0.7),
-                  fontStyle: FontStyle.italic,
-                ),
-              ),
-            ),
-          ),
-        ),
-        Row(
-          children: [
-            Checkbox(
-              value: _agree,
-              onChanged: canCheckTerms
-                  ? (value) {
-                      setState(() {
-                        _agree = value ?? false;
-                        if (_agree) {
-                          _termsError = null;
-                        }
-                      });
-                    }
-                  : null,
-              checkColor: Colors.white,
-              fillColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) {
-                  return AppTheme.appRed;
-                }
-                return AppTheme.appBrightWhite;
-              }),
-            ),
-            Expanded(
-              child: Text(
-                'I have read and agree to the Terms and Conditions',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: canCheckTerms
-                      ? AppTheme.appRed
-                      : AppTheme.appBlack.withValues(alpha: 0.55),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-        RegistrationValidationMessage(message: _termsError),
-      ],
-    );
-  }
-
-  Widget _buildMinorProgress() {
-    const total = 5;
-    final step = _minorStep + 1;
-
-    return Column(
-      children: [
-        Text(
-          'STEP $step OF $total',
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            color: AppTheme.appBlack.withValues(alpha: 0.8),
-          ),
-        ),
-        const SizedBox(height: 8),
-        TweenAnimationBuilder<double>(
-          tween: Tween<double>(begin: 0, end: _minorStep.toDouble()),
-          duration: const Duration(milliseconds: 420),
-          curve: Curves.easeOutCubic,
-          builder: (context, animatedStep, _) {
-            final clampedAnimated = animatedStep.clamp(
-              0.0,
-              (total - 1).toDouble(),
-            );
-            final activeStep = clampedAnimated.floor().clamp(0, total - 1);
-            final lineProgress = (clampedAnimated - activeStep).clamp(0.0, 1.0);
-
-            return EasyStepper(
-              activeStep: activeStep,
-              enableStepTapping: false,
-              steppingEnabled: false,
-              direction: Axis.horizontal,
-              disableScroll: true,
-              fitWidth: true,
-              showTitle: false,
-              showStepBorder: false,
-              showLoadingAnimation: false,
-              internalPadding: 8,
-              stepRadius: 13,
-              borderThickness: 1.2,
-              defaultStepBorderType: BorderType.normal,
-              activeStepBorderType: BorderType.normal,
-              finishedStepBorderType: BorderType.normal,
-              unreachedStepBorderType: BorderType.normal,
-              activeStepBoxShadow: const [],
-              finishedStepBoxShadow: const [],
-              unreachedStepBoxShadow: const [],
-              activeStepBackgroundColor: AppTheme.appRed,
-              finishedStepBackgroundColor: AppTheme.appRed,
-              unreachedStepBackgroundColor: AppTheme.appOffWhite,
-              activeStepTextColor: Colors.white,
-              finishedStepTextColor: Colors.white,
-              unreachedStepTextColor: AppTheme.appBlack.withValues(alpha: 0.62),
-              activeStepIconColor: Colors.white,
-              finishedStepIconColor: Colors.white,
-              unreachedStepIconColor: AppTheme.appBlack.withValues(alpha: 0.62),
-              activeStepBorderColor: AppTheme.appOffYellow,
-              finishedStepBorderColor: AppTheme.appOffYellow,
-              unreachedStepBorderColor: AppTheme.appBlack.withValues(
-                alpha: 0.32,
-              ),
-              lineStyle: LineStyle(
-                lineType: LineType.normal,
-                lineLength: double.infinity,
-                lineThickness: 2.4,
-                defaultLineColor: AppTheme.appBlack.withValues(alpha: 0.18),
-                unreachedLineColor: AppTheme.appBlack.withValues(alpha: 0.18),
-                activeLineColor: AppTheme.appBlack.withValues(alpha: 0.18),
-                finishedLineColor: AppTheme.appRed.withValues(alpha: 0.45),
-                progressColor: AppTheme.appRed,
-                progress: activeStep >= total - 1 ? 1.0 : lineProgress,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              steps: List.generate(total, (index) {
-                final isCompleted = index < clampedAnimated;
-                final isActive = index == activeStep;
-                return EasyStep(
-                  enabled: false,
-                  customStep: _buildMinorStepperCircle(
-                    index: index,
-                    isCompleted: isCompleted,
-                    isActive: isActive,
-                  ),
-                );
-              }),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMinorStepperCircle({
-    required int index,
-    required bool isCompleted,
-    required bool isActive,
-  }) {
-    final isReached = isCompleted || isActive;
-    final outerRingColor = isReached
-        ? AppTheme.appOffYellow
-        : AppTheme.appBlack.withValues(alpha: 0.32);
-    final innerRingColor = isReached
-        ? AppTheme.appRed
-        : AppTheme.appBlack.withValues(alpha: 0.32);
-    final backgroundColor = isReached ? AppTheme.appRed : AppTheme.appOffWhite;
-    final labelColor = isReached
-        ? Colors.white
-        : AppTheme.appBlack.withValues(alpha: 0.62);
-
-    return Container(
-      width: 26,
-      height: 26,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: outerRingColor, width: 1.4),
-      ),
-      padding: const EdgeInsets.all(1.8),
-      child: Container(
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: backgroundColor,
-          border: Border.all(color: innerRingColor, width: 1.2),
-        ),
-        alignment: Alignment.center,
-        child: isCompleted
-            ? const Icon(Icons.check, size: 14, color: Colors.white)
-            : Text(
-                '${index + 1}',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: labelColor,
-                ),
-              ),
-      ),
-    );
-  }
-
-  Widget _buildMinorBackButton() {
-    return Container(
-      height: 48,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.appBlack.withValues(alpha: 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: OutlinedButton(
-        onPressed: _loading
-            ? null
-            : () {
-                if (_minorStep == 0) {
-                  Navigator.of(context).maybePop();
-                  return;
-                }
-                setState(() {
-                  _minorStep -= 1;
-                });
-              },
-        style: OutlinedButton.styleFrom(
-          backgroundColor: AppTheme.appOffWhite,
-          side: BorderSide(color: AppTheme.appRed.withValues(alpha: 0.6)),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(30),
-          ),
-        ),
-        child: Text(
-          'BACK',
-          style: TextStyle(color: AppTheme.appRed, fontWeight: FontWeight.w700),
-        ),
-      ),
-    );
-  }
-
-  bool _validateMinorStep(int step) {
-    if (step == 0) {
-      return _minorPage1FormKey.currentState?.validate() ?? false;
-    }
-
-    if (step == 1) {
-      final hasFrontId = _frontIdUrl != null;
-      final hasSelfie = _selfieWithIdUrl != null;
-      setState(() {
-        _minorIdTypeError = _minorIdType == null
-            ? 'Select the minor\'s ID type'
-            : null;
-        if (hasFrontId && hasSelfie) {
-          _idPhotoError = null;
-        } else if (!hasFrontId && !hasSelfie) {
-          _idPhotoError = 'Please upload minor ID and selfie with ID';
-        } else if (!hasFrontId) {
-          _idPhotoError = 'Please upload the minor\'s ID photo';
-        } else {
-          _idPhotoError = 'Please upload the minor\'s selfie with ID';
-        }
-        _psaError = _psaBirthCertificateUrl == null
-            ? 'Please upload the PSA Birth Certificate'
-            : null;
-      });
-      return _minorIdType != null &&
-          hasFrontId &&
-          hasSelfie &&
-          _psaBirthCertificateUrl != null;
-    }
-
-    if (step == 2) {
-      return _minorPage3FormKey.currentState?.validate() ?? false;
-    }
-
-    if (step == 3) {
-      final hasParentFront = _parentFrontIdUrl != null;
-      final hasParentSelfie = _parentSelfieWithIdUrl != null;
-      setState(() {
-        _parentIdTypeError = _parentIdType == null
-            ? 'Select parent/guardian ID type'
-            : null;
-        if (hasParentFront && hasParentSelfie) {
-          _parentIdPhotoError = null;
-        } else if (!hasParentFront && !hasParentSelfie) {
-          _parentIdPhotoError = 'Please upload parent ID and selfie with ID';
-        } else if (!hasParentFront) {
-          _parentIdPhotoError = 'Please upload parent/guardian ID photo';
-        } else {
-          _parentIdPhotoError = 'Please upload parent/guardian selfie with ID';
-        }
-      });
-      return _parentIdType != null && hasParentFront && hasParentSelfie;
-    }
-
-    if (step == 4) {
-      setState(() {
-        _termsError = _agree
-            ? null
-            : 'Please read and agree to the Terms and Conditions.';
-      });
-      return _agree;
-    }
-
-    return false;
-  }
-
-  bool _isAdultInfoComplete() {
-    return _validateFirstName(_firstNameCtl.text) == null &&
-        _validateLastName(_lastNameCtl.text) == null &&
-        validatePhilippinePhone(_contactCtl.text) == null &&
-        _validateAddress(_addressCtl.text) == null &&
-        _selectedDateOfBirth != null;
-  }
-
-  Future<void> _nextAdultStepOrSubmit() async {
-    if (_adultStep == 0) {
-      final valid = _adultFormKey.currentState?.validate() ?? false;
-      if (!valid) {
-        AppSnackBar.show(
-          context,
-          'Please complete the required fields before continuing.',
-          type: AppSnackBarType.warning,
-        );
-        return;
-      }
-
-      final selectedDate = _selectedDateOfBirth;
-      if (selectedDate == null) {
-        setState(() {
-          _dobError = 'Date of birth is required';
-        });
-        AppSnackBar.show(
-          context,
-          'Please select your date of birth before continuing.',
-          type: AppSnackBarType.warning,
-        );
-        return;
-      }
-
-      final age = _calculateAge(selectedDate);
-      if (age < _minimumAllowedAge) {
-        AppSnackBar.show(
-          context,
-          'Registration is only allowed for users aged 13 and above.',
-          type: AppSnackBarType.warning,
-        );
-        return;
-      }
-
-      if (age < _adultAgeThreshold) {
-        setState(() {
-          _isMinor = true;
-          _minorStep = 1;
-          _adultStep = 0;
-        });
-        return;
-      }
-
-      setState(() {
-        _adultStep = 1;
-        _isMinor = false;
-      });
-      return;
-    }
-
-    if (_adultStep == 1) {
-      final hasFrontId = _frontIdUrl != null;
-      final hasSelfie = _selfieWithIdUrl != null;
-      setState(() {
-        _adultIdTypeError = _adultIdType == null
-            ? 'Please select an ID type'
-            : null;
-        if (hasFrontId && hasSelfie) {
-          _idPhotoError = null;
-        } else if (!hasFrontId && !hasSelfie) {
-          _idPhotoError = 'Please upload your ID and selfie with ID';
-        } else if (!hasFrontId) {
-          _idPhotoError = 'Please upload your valid ID photo';
-        } else {
-          _idPhotoError = 'Please upload your selfie with ID';
-        }
-      });
-
-      if (_adultIdType == null || !hasFrontId || !hasSelfie) {
-        AppSnackBar.show(
-          context,
-          'Please complete the required fields before continuing.',
-          type: AppSnackBarType.warning,
-        );
-        return;
-      }
-
-      setState(() {
-        _adultStep = 2;
-      });
-      return;
-    }
-
-    await _submit();
-  }
-
-  Future<void> _nextMinorStepOrSubmit() async {
-    if (!_validateMinorStep(_minorStep)) {
-      if (mounted) {
-        AppSnackBar.show(
-          context,
-          'Please complete the required fields before continuing.',
-          type: AppSnackBarType.warning,
-        );
-      }
-      return;
-    }
-
-    if (_minorStep == 0) {
-      final selectedDate = _selectedDateOfBirth;
-      if (selectedDate == null) {
-        setState(() {
-          _dobError = 'Date of birth is required';
-        });
-        AppSnackBar.show(
-          context,
-          'Please select your date of birth before continuing.',
-          type: AppSnackBarType.warning,
-        );
-        return;
-      }
-
-      final age = _calculateAge(selectedDate);
-      if (age < _minimumAllowedAge) {
-        AppSnackBar.show(
-          context,
-          'Registration is only allowed for users aged 13 and above.',
-          type: AppSnackBarType.warning,
-        );
-        return;
-      }
-
-      if (age >= _adultAgeThreshold) {
-        setState(() {
-          _isMinor = false;
-          _adultStep = 1;
-          _minorStep = 0;
-        });
-        return;
-      }
-    }
-
-    if (_minorStep < 4) {
-      setState(() {
-        _minorStep += 1;
-      });
-      return;
-    }
-
-    await _submit();
-  }
-
-  Future<void> _submit() async {
-    final selectedDate = _selectedDateOfBirth;
-    if (!_ageGateCompleted || selectedDate == null) {
-      setState(() {
-        _dobError = 'Date of birth is required';
-      });
-      AppSnackBar.show(
-        context,
-        'Please select your date of birth before continuing.',
-        type: AppSnackBarType.warning,
-      );
-      return;
-    }
-
-    final normalizedFirstName = _firstNameCtl.text.trim().replaceAll(
-      RegExp(r'\s+'),
-      ' ',
-    );
-    final normalizedLastName = _lastNameCtl.text.trim().replaceAll(
-      RegExp(r'\s+'),
-      ' ',
-    );
-    final normalizedAddress = _addressCtl.text.trim();
-
-    final normalizedParentFirstName = _parentFirstNameCtl.text
-        .trim()
-        .replaceAll(RegExp(r'\s+'), ' ');
-    final normalizedParentLastName = _parentLastNameCtl.text.trim().replaceAll(
-      RegExp(r'\s+'),
-      ' ',
-    );
-    final normalizedParentContact = _parentContactCtl.text.trim();
-
-    final isAdultValid = !_isMinor ? _isAdultInfoComplete() : true;
-    if (!isAdultValid) {
-      AppSnackBar.show(
-        context,
-        'Please complete your information before creating an account.',
-        type: AppSnackBarType.warning,
-      );
-      return;
-    }
-
-    if (!_agree) {
-      setState(() {
-        _termsError = 'Please read and agree to the Terms and Conditions.';
-      });
-      return;
-    }
-
-    final hasFrontId = _frontIdUrl != null;
-    final hasSelfie = _selfieWithIdUrl != null;
-    final hasParentFront = !_isMinor || _parentFrontIdUrl != null;
-    final hasParentSelfie = !_isMinor || _parentSelfieWithIdUrl != null;
-
-    setState(() {
-      if (!_isMinor) {
-        _adultIdTypeError = _adultIdType == null
-            ? 'Please select an ID type'
-            : null;
-      }
-
-      if (hasFrontId && hasSelfie) {
-        _idPhotoError = null;
-      } else if (!hasFrontId && !hasSelfie) {
-        _idPhotoError = 'Please upload your ID and selfie with ID';
-      } else if (!hasFrontId) {
-        _idPhotoError = 'Please upload your valid ID photo';
-      } else {
-        _idPhotoError = 'Please upload your selfie with ID';
-      }
-
-      if (_isMinor) {
-        _minorIdTypeError = _minorIdType == null
-            ? 'Please select the minor\'s ID type'
-            : null;
-        _psaError = _psaBirthCertificateUrl == null
-            ? 'Please upload the PSA Birth Certificate'
-            : null;
-        _parentIdTypeError = _parentIdType == null
-            ? 'Please select parent ID type'
-            : null;
-
-        if (hasParentFront && hasParentSelfie) {
-          _parentIdPhotoError = null;
-        } else if (!hasParentFront && !hasParentSelfie) {
-          _parentIdPhotoError =
-              'Please upload parent/guardian ID and selfie with ID';
-        } else if (!hasParentFront) {
-          _parentIdPhotoError = 'Please upload parent/guardian ID photo';
-        } else {
-          _parentIdPhotoError = 'Please upload parent/guardian selfie with ID';
+    final month = _dobMonthCtl.text.trim();
+    final day = _dobDayCtl.text.trim();
+    if (month.isNotEmpty && day.isNotEmpty) {
+      if (!_isValidDob(month, day, v)) return 'Invalid date';
+      final m = int.tryParse(month);
+      final d = int.tryParse(day);
+      if (m != null && d != null) {
+        final dob = DateTime(y, m, d);
+        if (!_isAtLeastMinimumAge(dob)) {
+          return 'Must be at least $_minimumAllowedAge years old';
         }
       }
-    });
-
-    final hasAdultIdType = !_isMinor ? _adultIdType != null : true;
-    final hasMinorData = !_isMinor
-        ? true
-        : (_minorIdType != null &&
-              _psaBirthCertificateUrl != null &&
-              _parentIdType != null &&
-              hasParentFront &&
-              hasParentSelfie &&
-              (_minorPage3FormKey.currentState?.validate() ?? false));
-
-    if (!hasAdultIdType || !hasFrontId || !hasSelfie || !hasMinorData) {
-      return;
     }
-
-    setState(() => _loading = true);
-
-    final phoneDigits = _contactCtl.text.replaceAll(RegExp(r'\D'), '');
-    final phone = '+63$phoneDigits';
-
-    await RegistrationPrefs.savePhoneNumber(phoneDigits);
-    if (!mounted) return;
-
-    final phoneExists = await _checkPhoneNumberExists(phone);
-    if (!mounted) return;
-    if (phoneExists) {
-      setState(() => _loading = false);
-      AppSnackBar.show(
-        context,
-        'This phone number is already registered. Please use a different number.',
-        type: AppSnackBarType.error,
-        duration: const Duration(seconds: 4),
-      );
-      return;
-    }
-
-    final userData = <String, dynamic>{
-      'firstName': normalizedFirstName,
-      'lastName': normalizedLastName,
-      'fullName': '$normalizedFirstName $normalizedLastName',
-      'phoneNumber': phone,
-      'contactNumber': phone,
-      'address': normalizedAddress,
-      'dateOfBirth': _formatDateForStorage(selectedDate),
-      'dateOfBirthDisplay': _formatDateForDisplay(selectedDate),
-      'isApproved': false,
-      'isMinor': _isMinor,
-      'lastLoginTimestamp': null,
-      'createdAt': null,
-      'idType': _isMinor ? _minorIdType : _adultIdType,
-      'idImageUrl': _frontIdUrl,
-      'selfieImageUrl': _selfieWithIdUrl,
-      'status': 'pending',
-      'accountStatus': 'pending',
-      'role': 'user',
-    };
-
-    if (_isMinor) {
-      userData['psaBirthCertificateUrl'] = _psaBirthCertificateUrl;
-      userData['parentFirstName'] = normalizedParentFirstName;
-      userData['parentLastName'] = normalizedParentLastName;
-      userData['parentName'] =
-          '$normalizedParentFirstName $normalizedParentLastName'.trim();
-      userData['parentContact'] = normalizedParentContact;
-      userData['parentIdType'] = _parentIdType;
-      userData['parentIdImageUrl'] = _parentFrontIdUrl;
-      userData['parentSelfieImageUrl'] = _parentSelfieWithIdUrl;
-    }
-
-    try {
-      if (!kIsWeb) {
-        await _auth.setSettings(appVerificationDisabledForTesting: kDebugMode);
-      }
-
-      await _auth.verifyPhoneNumber(
-        phoneNumber: phone,
-        timeout: const Duration(seconds: 30),
-        verificationCompleted: (_) async {},
-        verificationFailed: (FirebaseAuthException e) {
-          if (!mounted) return;
-          setState(() => _loading = false);
-          AppSnackBar.show(
-            context,
-            e.message ?? 'Phone verification failed',
-            type: AppSnackBarType.error,
-          );
-        },
-        codeSent: (String verificationId, int? resendToken) {
-          if (!mounted) return;
-          setState(() => _loading = false);
-          _finishAutofillContext();
-
-          Navigator.pushNamed(
-            context,
-            '/otp',
-            arguments: {
-              'flowType': 'registration',
-              'verificationId': verificationId,
-              'phoneNumber': phone,
-              'userData': userData,
-            },
-          );
-        },
-        codeAutoRetrievalTimeout: (_) {},
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-      AppSnackBar.show(
-        context,
-        'Failed to send OTP: $e',
-        type: AppSnackBarType.error,
-      );
-    }
+    return null;
   }
-
-  void _finishAutofillContext() {
-    try {
-      TextInput.finishAutofillContext();
-    } catch (_) {}
-  }
-
-  Widget _buildAdultProgress() {
-    const total = 3;
-    final step = _adultStep + 1;
-
-    return Column(
-      children: [
-        Text(
-          'STEP $step OF $total',
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            color: AppTheme.appBlack.withValues(alpha: 0.8),
-          ),
-        ),
-        const SizedBox(height: 8),
-        TweenAnimationBuilder<double>(
-          tween: Tween<double>(begin: 0, end: _adultStep.toDouble()),
-          duration: const Duration(milliseconds: 420),
-          curve: Curves.easeOutCubic,
-          builder: (context, animatedStep, _) {
-            final clampedAnimated = animatedStep.clamp(
-              0.0,
-              (total - 1).toDouble(),
-            );
-            final activeStep = clampedAnimated.floor().clamp(0, total - 1);
-            final lineProgress = (clampedAnimated - activeStep).clamp(0.0, 1.0);
-
-            return EasyStepper(
-              activeStep: activeStep,
-              enableStepTapping: false,
-              steppingEnabled: false,
-              direction: Axis.horizontal,
-              disableScroll: true,
-              fitWidth: true,
-              showTitle: false,
-              showStepBorder: false,
-              showLoadingAnimation: false,
-              internalPadding: 8,
-              stepRadius: 13,
-              borderThickness: 1.2,
-              defaultStepBorderType: BorderType.normal,
-              activeStepBorderType: BorderType.normal,
-              finishedStepBorderType: BorderType.normal,
-              unreachedStepBorderType: BorderType.normal,
-              activeStepBoxShadow: const [],
-              finishedStepBoxShadow: const [],
-              unreachedStepBoxShadow: const [],
-              activeStepBackgroundColor: AppTheme.appRed,
-              finishedStepBackgroundColor: AppTheme.appRed,
-              unreachedStepBackgroundColor: AppTheme.appOffWhite,
-              activeStepTextColor: Colors.white,
-              finishedStepTextColor: Colors.white,
-              unreachedStepTextColor: AppTheme.appBlack.withValues(alpha: 0.62),
-              activeStepIconColor: Colors.white,
-              finishedStepIconColor: Colors.white,
-              unreachedStepIconColor: AppTheme.appBlack.withValues(alpha: 0.62),
-              activeStepBorderColor: AppTheme.appOffYellow,
-              finishedStepBorderColor: AppTheme.appOffYellow,
-              unreachedStepBorderColor: AppTheme.appBlack.withValues(
-                alpha: 0.32,
-              ),
-              lineStyle: LineStyle(
-                lineType: LineType.normal,
-                lineLength: double.infinity,
-                lineThickness: 2.4,
-                defaultLineColor: AppTheme.appBlack.withValues(alpha: 0.18),
-                unreachedLineColor: AppTheme.appBlack.withValues(alpha: 0.18),
-                activeLineColor: AppTheme.appBlack.withValues(alpha: 0.18),
-                finishedLineColor: AppTheme.appRed.withValues(alpha: 0.45),
-                progressColor: AppTheme.appRed,
-                progress: activeStep >= total - 1 ? 1.0 : lineProgress,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              steps: List.generate(total, (index) {
-                final isCompleted = index < clampedAnimated;
-                final isActive = index == activeStep;
-                return EasyStep(
-                  enabled: false,
-                  customStep: _buildMinorStepperCircle(
-                    index: index,
-                    isCompleted: isCompleted,
-                    isActive: isActive,
-                  ),
-                );
-              }),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAdultStepContent() {
-    if (_adultStep == 0) {
-      return Form(
-        key: _adultFormKey,
-        child: Column(
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: CustomTextFormField(
-                    controller: _firstNameCtl,
-                    label: 'FIRST NAME',
-                    hintText: 'e.g. Juan',
-                    autofillHints: const [AutofillHints.givenName],
-                    inputFormatters: _nameInputFormatters(),
-                    textCapitalization: TextCapitalization.words,
-                    validator: _validateFirstName,
-                    autovalidateMode: AutovalidateMode.onUserInteraction,
-                  ),
-                ),
-                const SizedBox(width: AppDimensions.paddingSmall),
-                Expanded(
-                  child: CustomTextFormField(
-                    controller: _lastNameCtl,
-                    label: 'LAST NAME',
-                    hintText: 'e.g. Dela Cruz',
-                    autofillHints: const [AutofillHints.familyName],
-                    inputFormatters: _nameInputFormatters(),
-                    textCapitalization: TextCapitalization.words,
-                    validator: _validateLastName,
-                    autovalidateMode: AutovalidateMode.onUserInteraction,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppDimensions.paddingMedium),
-            CustomPhoneField(
-              controller: _contactCtl,
-              label: 'PHONE NUMBER',
-              validator: validatePhilippinePhone,
-              autofillHints: const [AutofillHints.telephoneNumber],
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-            ),
-            const SizedBox(height: AppDimensions.paddingMedium),
-            CustomAddressField(
-              controller: _addressCtl,
-              label: 'COMPLETE ADDRESS',
-              hintText: 'e.g. Blk 3 Lot 2, Brgy. Mabini, QC',
-              inputFormatters: [
-                LengthLimitingTextInputFormatter(_maxAddressLength),
-              ],
-              autofillHints: const [AutofillHints.fullStreetAddress],
-              validator: _validateAddress,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-            ),
-            const SizedBox(height: AppDimensions.paddingMedium),
-            _buildDobSummary(),
-          ],
-        ),
-      );
-    }
-
-    if (_adultStep == 1) {
-      return Column(
-        children: [
-          CustomDropdownField(
-            label: 'ID TYPE',
-            hint: 'Select valid ID',
-            items: _adultAcceptedIdTypes,
-            value: _adultIdType,
-            errorText: _adultIdTypeError,
-            onChanged: (value) {
-              setState(() {
-                _adultIdType = value;
-                _adultIdTypeError = null;
-              });
-            },
-          ),
-          const SizedBox(height: AppDimensions.paddingLarge),
-          IdVerificationWidget(
-            onUploadComplete: _onIdUploadComplete,
-            initialFrontUrl: _frontIdUrl,
-            initialBackUrl: _selfieWithIdUrl,
-            usernameForPath: _contactCtl.text.replaceAll(RegExp(r'\D'), ''),
-            frontValidationError: _currentUserFrontIdFieldError(),
-            selfieValidationError: _currentUserSelfieIdFieldError(),
-          ),
-        ],
-      );
-    }
-
-    return _buildInlineTermsAndAgreement(fillAvailableSpace: true);
-  }
-
-  Widget _buildAdultBackButton() {
-    return Container(
-      height: 48,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.appBlack.withValues(alpha: 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: OutlinedButton(
-        onPressed: (_loading || _adultStep == 0)
-            ? null
-            : () {
-                setState(() {
-                  _adultStep -= 1;
-                });
-              },
-        style: OutlinedButton.styleFrom(
-          backgroundColor: AppTheme.appOffWhite,
-          side: BorderSide(color: AppTheme.appRed.withValues(alpha: 0.6)),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(30),
-          ),
-        ),
-        child: Text(
-          'BACK',
-          style: TextStyle(color: AppTheme.appRed, fontWeight: FontWeight.w700),
-        ),
-      ),
-    );
-  }
-
-  String get _adultPrimaryLabel => _adultStep < 2 ? 'NEXT' : 'CREATE';
-  bool get _adultPrimaryEnabled => _adultStep < 2 || _agree;
-
-  Widget _buildMinorStepContent() {
-    switch (_minorStep) {
-      case 0:
-        return Form(
-          key: _minorPage1FormKey,
-          child: Column(
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: CustomTextFormField(
-                      controller: _firstNameCtl,
-                      label: 'FIRST NAME',
-                      hintText: 'e.g. Juan',
-                      inputFormatters: _nameInputFormatters(),
-                      textCapitalization: TextCapitalization.words,
-                      validator: _validateFirstName,
-                      autovalidateMode: AutovalidateMode.onUserInteraction,
-                    ),
-                  ),
-                  const SizedBox(width: AppDimensions.paddingSmall),
-                  Expanded(
-                    child: CustomTextFormField(
-                      controller: _lastNameCtl,
-                      label: 'LAST NAME',
-                      hintText: 'e.g. Dela Cruz',
-                      inputFormatters: _nameInputFormatters(),
-                      textCapitalization: TextCapitalization.words,
-                      validator: _validateLastName,
-                      autovalidateMode: AutovalidateMode.onUserInteraction,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppDimensions.paddingMedium),
-              CustomPhoneField(
-                controller: _contactCtl,
-                label: 'PHONE NUMBER',
-                validator: validatePhilippinePhone,
-                autofillHints: const [AutofillHints.telephoneNumber],
-                autovalidateMode: AutovalidateMode.onUserInteraction,
-              ),
-              const SizedBox(height: AppDimensions.paddingMedium),
-              CustomAddressField(
-                controller: _addressCtl,
-                label: 'COMPLETE ADDRESS',
-                hintText: 'e.g. Blk 3 Lot 2, Brgy. Mabini, QC',
-                inputFormatters: [
-                  LengthLimitingTextInputFormatter(_maxAddressLength),
-                ],
-                validator: _validateAddress,
-                autovalidateMode: AutovalidateMode.onUserInteraction,
-              ),
-              const SizedBox(height: AppDimensions.paddingMedium),
-              _buildDobSummary(),
-            ],
-          ),
-        );
-      case 1:
-        return Column(
-          children: [
-            CustomDropdownField(
-              label: 'MINOR ID TYPE',
-              hint: 'Select minor valid ID',
-              items: _minorAcceptedIdTypes,
-              value: _minorIdType,
-              errorText: _minorIdTypeError,
-              onChanged: (value) {
-                setState(() {
-                  _minorIdType = value;
-                  _minorIdTypeError = null;
-                });
-              },
-            ),
-            const SizedBox(height: AppDimensions.paddingLarge),
-            IdVerificationWidget(
-              onUploadComplete: _onIdUploadComplete,
-              initialFrontUrl: _frontIdUrl,
-              initialBackUrl: _selfieWithIdUrl,
-              usernameForPath:
-                  '${_contactCtl.text.replaceAll(RegExp(r'\\D'), '')}_minor',
-              frontValidationError: _currentUserFrontIdFieldError(),
-              selfieValidationError: _currentUserSelfieIdFieldError(),
-            ),
-            const SizedBox(height: AppDimensions.paddingLarge),
-            CustomUploadField(
-              label: 'PSA BIRTH CERTIFICATE',
-              hasPreview: _psaBirthCertificateUrl != null,
-              preview: _psaBirthCertificateUrl == null
-                  ? const SizedBox.shrink()
-                  : Image.network(
-                      _psaBirthCertificateUrl!,
-                      fit: BoxFit.cover,
-                      alignment: Alignment.center,
-                      errorBuilder: (context, error, stackTrace) => Center(
-                        child: Icon(
-                          Icons.broken_image,
-                          color: AppTheme.appBlack.withValues(alpha: 0.35),
-                          size: 28,
-                        ),
-                      ),
-                    ),
-              uploading: _uploadingPsa,
-              onUpload: _pickAndUploadPsa,
-              onPreviewTap: _psaBirthCertificateUrl == null
-                  ? null
-                  : () => _showExpandedNetworkPreview(
-                      title: 'PSA Birth Certificate Preview',
-                      imageUrl: _psaBirthCertificateUrl!,
-                    ),
-              errorText: _psaError,
-              status: (_psaError?.trim().isNotEmpty ?? false)
-                  ? UploadFieldStatus.error
-                  : (_psaBirthCertificateUrl != null
-                        ? UploadFieldStatus.success
-                        : UploadFieldStatus.none),
-            ),
-          ],
-        );
-      case 2:
-        return Form(
-          key: _minorPage3FormKey,
-          child: Column(
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'PARENT OR GUARDIAN\'S CONSENT',
-                  style: AppTextStyles.authLabel.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppDimensions.paddingSmall),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: CustomTextFormField(
-                      controller: _parentFirstNameCtl,
-                      label: 'PARENT FIRST NAME',
-                      hintText: 'e.g. Maria',
-                      inputFormatters: _nameInputFormatters(),
-                      textCapitalization: TextCapitalization.words,
-                      validator: _validateParentFirstName,
-                      autovalidateMode: AutovalidateMode.onUserInteraction,
-                    ),
-                  ),
-                  const SizedBox(width: AppDimensions.paddingSmall),
-                  Expanded(
-                    child: CustomTextFormField(
-                      controller: _parentLastNameCtl,
-                      label: 'PARENT LAST NAME',
-                      hintText: 'e.g. Santos',
-                      inputFormatters: _nameInputFormatters(),
-                      textCapitalization: TextCapitalization.words,
-                      validator: _validateParentLastName,
-                      autovalidateMode: AutovalidateMode.onUserInteraction,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppDimensions.paddingMedium),
-              CustomTextFormField(
-                controller: _parentContactCtl,
-                label: 'PARENT PHONE OR EMAIL',
-                hintText: 'e.g. 912-345-6789 or parent@email.com',
-                keyboardType: TextInputType.emailAddress,
-                validator: _validateParentContact,
-                autovalidateMode: AutovalidateMode.onUserInteraction,
-              ),
-            ],
-          ),
-        );
-      case 3:
-        return Column(
-          children: [
-            CustomDropdownField(
-              label: 'PARENT ID TYPE',
-              hint: 'Select parent valid ID',
-              items: _adultAcceptedIdTypes,
-              value: _parentIdType,
-              errorText: _parentIdTypeError,
-              onChanged: (value) {
-                setState(() {
-                  _parentIdType = value;
-                  _parentIdTypeError = null;
-                });
-              },
-            ),
-            const SizedBox(height: AppDimensions.paddingLarge),
-            IdVerificationWidget(
-              onUploadComplete: _onParentIdUploadComplete,
-              initialFrontUrl: _parentFrontIdUrl,
-              initialBackUrl: _parentSelfieWithIdUrl,
-              usernameForPath:
-                  '${_contactCtl.text.replaceAll(RegExp(r'\\D'), '')}_guardian',
-              frontValidationError: _parentFrontIdFieldError(),
-              selfieValidationError: _parentSelfieIdFieldError(),
-            ),
-          ],
-        );
-      case 4:
-      default:
-        return _buildInlineTermsAndAgreement(fillAvailableSpace: true);
-    }
-  }
-
-  String get _minorPrimaryLabel {
-    if (_minorStep < 4) return 'NEXT';
-    return 'CREATE';
-  }
-
-  bool get _minorPrimaryEnabled => _minorStep < 4 || _agree;
-
-  bool get _isTermsStepActive =>
-      _ageGateCompleted &&
-      ((!_isMinor && _adultStep == 2) || (_isMinor && _minorStep == 4));
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      resizeToAvoidBottomInset: false,
       backgroundColor: AppTheme.appOffWhite,
       body: SafeArea(
         child: Column(
@@ -1855,165 +443,202 @@ class _RegistrationPageState extends State<RegistrationPage> {
               leading: const ResqBackButton.outline(),
               title: Text('REGISTER', style: AppTextStyles.authPageTitle),
               titleSpacing: AppDimensions.paddingSmall,
-              bottomSpacing: 0,
+              bottomSpacing: AppDimensions.paddingSmall,
             ),
+
+            // Scrollable form content
             Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final formViewportHeight = constraints.maxHeight;
-                  final formContent = GestureDetector(
+              child: Center(
+                child: SingleChildScrollView(
+                  child: GestureDetector(
                     onTap: () => FocusScope.of(context).unfocus(),
                     behavior: HitTestBehavior.opaque,
                     child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: 360,
-                        minHeight: _isTermsStepActive
-                            ? (formViewportHeight -
-                                  (AppDimensions.paddingXSmall * 2))
-                            : 0,
-                      ),
+                      constraints: const BoxConstraints(maxWidth: 360),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
                           horizontal: AppDimensions.paddingXLarge,
-                          vertical: AppDimensions.paddingXSmall,
+                          vertical: AppDimensions.paddingMedium,
                         ),
                         child: AutofillGroup(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (!_ageGateCompleted) ...[
-                                const SizedBox(height: 20),
-                                SizedBox(
-                                  width: 28,
-                                  height: 28,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.4,
-                                    color: AppTheme.appRed,
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  'Preparing registration...',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: AppTheme.appBlack.withValues(
-                                      alpha: 0.7,
-                                    ),
-                                    fontFamily: 'RobotoCondensed',
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-                              ] else ...[
-                                if (_isMinor) ...[
-                                  _buildMinorProgress(),
-                                  const SizedBox(
-                                    height: AppDimensions.paddingMedium,
-                                  ),
-                                ] else ...[
-                                  _buildAdultProgress(),
-                                  const SizedBox(
-                                    height: AppDimensions.paddingMedium,
-                                  ),
-                                ],
-                              ],
-
-                              if (_ageGateCompleted && !_isMinor) ...[
-                                if (_adultStep == 2) ...[
-                                  Expanded(child: _buildAdultStepContent()),
-                                ] else ...[
-                                  _buildAdultStepContent(),
-                                ],
-                                SizedBox(
-                                  height: _adultStep == 2
-                                      ? AppDimensions.paddingSmall
-                                      : AppDimensions.paddingLarge,
-                                ),
+                          child: Form(
+                            key: _formKey,
+                            child: Column(
+                              children: [
+                                // FIRST NAME AND LAST NAME INLINE
                                 Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Expanded(child: _buildAdultBackButton()),
+                                    Expanded(
+                                      child: AuthTextField(
+                                        controller: _firstNameCtl,
+                                        label: 'FIRST NAME',
+                                        hintText: 'e.g. Juan',
+                                        autofillHints: const [
+                                          AutofillHints.givenName,
+                                        ],
+                                        inputFormatters: [
+                                          FilteringTextInputFormatter.allow(
+                                            RegExp(r"[a-zA-Z .'-]"),
+                                          ),
+                                        ],
+                                        validator: _validateFirstName,
+                                        autovalidateMode:
+                                            AutovalidateMode.onUserInteraction,
+                                      ),
+                                    ),
                                     const SizedBox(
                                       width: AppDimensions.paddingSmall,
                                     ),
                                     Expanded(
-                                      child: ResqPillButton(
-                                        label: _adultPrimaryLabel,
-                                        loading: _loading,
-                                        onPressed:
-                                            (_loading || !_adultPrimaryEnabled)
-                                            ? null
-                                            : _nextAdultStepOrSubmit,
-                                        height: 48,
-                                        radius: 30,
-                                        backgroundColor: AppTheme.appOffYellow,
-                                        shadowColor: AppTheme.appBlack
-                                            .withValues(alpha: 0.1),
-                                        shadowBlurRadius: 8,
-                                        shadowOffset: const Offset(0, 2),
-                                        textStyle: AppTextStyles.authButton,
+                                      child: AuthTextField(
+                                        controller: _lastNameCtl,
+                                        label: 'LAST NAME',
+                                        hintText: 'e.g. Dela Cruz',
+                                        autofillHints: const [
+                                          AutofillHints.familyName,
+                                        ],
+                                        inputFormatters: [
+                                          FilteringTextInputFormatter.allow(
+                                            RegExp(r"[a-zA-Z .'-]"),
+                                          ),
+                                        ],
+                                        validator: _validateLastName,
+                                        autovalidateMode:
+                                            AutovalidateMode.onUserInteraction,
                                       ),
                                     ),
                                   ],
                                 ),
-                              ],
+                                const SizedBox(
+                                  height: AppDimensions.paddingMedium,
+                                ),
 
-                              if (_ageGateCompleted && _isMinor) ...[
-                                if (_minorStep == 4) ...[
-                                  Expanded(child: _buildMinorStepContent()),
-                                ] else ...[
-                                  _buildMinorStepContent(),
-                                ],
-                                SizedBox(
-                                  height: _minorStep == 4
-                                      ? AppDimensions.paddingSmall
-                                      : AppDimensions.paddingLarge,
+                                AuthTextField(
+                                  controller: _emailCtl,
+                                  label: 'EMAIL ADDRESS',
+                                  hintText: 'e.g. juan@email.com',
+                                  keyboardType: TextInputType.emailAddress,
+                                  autofillHints: const [AutofillHints.email],
+                                  validator: _validateEmail,
+                                  autovalidateMode:
+                                      AutovalidateMode.onUserInteraction,
                                 ),
-                                Row(
-                                  children: [
-                                    Expanded(child: _buildMinorBackButton()),
-                                    const SizedBox(
-                                      width: AppDimensions.paddingSmall,
-                                    ),
-                                    Expanded(
-                                      child: ResqPillButton(
-                                        label: _minorPrimaryLabel,
-                                        loading: _loading,
-                                        onPressed:
-                                            (_loading || !_minorPrimaryEnabled)
-                                            ? null
-                                            : _nextMinorStepOrSubmit,
-                                        height: 48,
-                                        radius: 30,
-                                        backgroundColor: AppTheme.appOffYellow,
-                                        shadowColor: AppTheme.appBlack
-                                            .withValues(alpha: 0.1),
-                                        shadowBlurRadius: 8,
-                                        shadowOffset: const Offset(0, 2),
-                                        textStyle: AppTextStyles.authButton,
-                                      ),
+                                const SizedBox(
+                                  height: AppDimensions.paddingMedium,
+                                ),
+
+                                // PHONE INPUT WITH +63 PREFIX
+                                PhoneInputField(
+                                  controller: _contactCtl,
+                                  validator: validatePhilippinePhone,
+                                  autofillHints: const [
+                                    AutofillHints.telephoneNumber,
+                                  ],
+                                  autovalidateMode:
+                                      AutovalidateMode.onUserInteraction,
+                                ),
+                                const SizedBox(
+                                  height: AppDimensions.paddingMedium,
+                                ),
+
+                                AuthTextField(
+                                  controller: _addressCtl,
+                                  label: 'HOME ADDRESS',
+                                  hintText:
+                                      'e.g. Blk 3 Lot 2, Brgy. Mabini, QC',
+                                  inputFormatters: [
+                                    LengthLimitingTextInputFormatter(
+                                      _maxAddressLength,
                                     ),
                                   ],
+                                  autofillHints: const [
+                                    AutofillHints.fullStreetAddress,
+                                  ],
+                                  validator: _validateAddress,
+                                  autovalidateMode:
+                                      AutovalidateMode.onUserInteraction,
+                                ),
+                                const SizedBox(
+                                  height: AppDimensions.paddingMedium,
+                                ),
+
+                                DateOfBirthInput(
+                                  monthController: _dobMonthCtl,
+                                  dayController: _dobDayCtl,
+                                  yearController: _dobYearCtl,
+                                  monthValidator: _validateDobMonth,
+                                  dayValidator: _validateDobDay,
+                                  yearValidator: _validateDobYear,
+                                  autovalidateMode:
+                                      AutovalidateMode.onUserInteraction,
+                                ),
+                                const SizedBox(
+                                  height: AppDimensions.paddingLarge,
+                                ),
+
+                                // ID VERIFICATION WIDGET (FRONT + SELFIE WITH ID)
+                                IdVerificationWidget(
+                                  onUploadComplete: _onIdUploadComplete,
+                                  initialFrontUrl: _frontIdUrl,
+                                  usernameForPath: _contactCtl.text.replaceAll(
+                                    RegExp(r'\D'),
+                                    '',
+                                  ),
+                                ),
+                                if (_idPhotoError != null) ...[
+                                  const SizedBox(
+                                    height: AppDimensions.paddingSmall,
+                                  ),
+                                  Text(
+                                    _idPhotoError!,
+                                    style: AppTextStyles.authError,
+                                  ),
+                                ],
+                                const SizedBox(
+                                  height: AppDimensions.paddingLarge,
+                                ),
+
+                                // TERMS CHECKBOX (DISPLAY-ONLY, CLICK LINK TO AGREE)
+                                TermsCheckbox(
+                                  agreed: _agree,
+                                  onTermsTap: _showTermsAndConditions,
+                                ),
+                                if (_termsError != null) ...[
+                                  const SizedBox(
+                                    height: AppDimensions.paddingSmall,
+                                  ),
+                                  Text(
+                                    _termsError!,
+                                    style: AppTextStyles.authError,
+                                  ),
+                                ],
+                                const SizedBox(
+                                  height: AppDimensions.paddingLarge,
+                                ),
+
+                                ResqPillButton(
+                                  label: 'CREATE ACCOUNT',
+                                  loading: _loading,
+                                  onPressed:
+                                      (_loading ||
+                                          _frontIdUrl == null ||
+                                          _selfieWithIdUrl == null)
+                                      ? null
+                                      : _submit,
+                                  height: 48,
+                                  radius: 30,
+                                  backgroundColor: AppTheme.appOffYellow,
+                                  textStyle: AppTextStyles.authButton,
                                 ),
                               ],
-                            ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  );
-
-                  if (_isTermsStepActive) {
-                    return Align(
-                      alignment: Alignment.topCenter,
-                      child: formContent,
-                    );
-                  }
-
-                  return Align(
-                    alignment: Alignment.topCenter,
-                    child: SingleChildScrollView(child: formContent),
-                  );
-                },
+                  ),
+                ),
               ),
             ),
           ],
