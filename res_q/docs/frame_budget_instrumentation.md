@@ -12,7 +12,7 @@ This project now includes app-level frame timing instrumentation for debug/profi
   - `lib/features/community/pages/community_page.dart`
   - `lib/features/map/pages/map_page.dart`
   - `lib/features/reports/pages/report_map_page.dart`
-  - `lib/features/semi_admin/pages/semi_admin_map_page.dart`
+  - `lib/features/responder/pages/responder_map_page.dart`
 
 ## How To Run
 

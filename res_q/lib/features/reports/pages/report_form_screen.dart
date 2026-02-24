@@ -214,7 +214,10 @@ class ReportFormScreen extends StatefulWidget {
 
 class _ReportFormScreenState extends State<ReportFormScreen>
     with TickerProviderStateMixin {
-  static const int _maxCapturedMediaBytes = 25 * 1024 * 1024; // 25 MB
+  static const int _maxPhotosPerReport = 4;
+  static const int _maxVideosPerReport = 2;
+  static const int _maxPhotoBytes = 4 * 1024 * 1024; // 4 MB
+  static const int _maxVideoBytes = 8 * 1024 * 1024; // 8 MB
   final TextEditingController _informationController = TextEditingController();
   final TextEditingController _barangayController = TextEditingController();
   final TextEditingController _otherIncidentController =
@@ -231,12 +234,16 @@ class _ReportFormScreenState extends State<ReportFormScreen>
   LocationSelectionMode _locationMode = LocationSelectionMode.current;
   LatLng? _selectedLocation;
   bool _locationLoading = false;
-  XFile? _capturedMedia;
-  CapturedMediaType? _capturedMediaType;
+  final List<XFile> _capturedPhotos = <XFile>[];
+  final List<XFile> _capturedVideos = <XFile>[];
   final ImagePicker _picker = ImagePicker();
   bool _submitting = false;
   int _navIndex = 0;
   int _injuredCount = 0;
+  final TextEditingController _injuredCountController = TextEditingController(
+    text: '0',
+  );
+  final FocusNode _injuredCountFocusNode = FocusNode();
   bool _needsAmbulance = false;
   final List<_VehicleInvolved> _vehicles = <_VehicleInvolved>[];
   late final AnimationController _holdController;
@@ -257,6 +264,11 @@ class _ReportFormScreenState extends State<ReportFormScreen>
         });
     _reportDate = _formatDate(DateTime.now());
     _loadUserInfo();
+    _injuredCountFocusNode.addListener(() {
+      if (!_injuredCountFocusNode.hasFocus) {
+        _normalizeInjuredCountInput();
+      }
+    });
     if (_isVehicularIncident()) {
       _vehicles.add(_VehicleInvolved());
     }
@@ -268,6 +280,8 @@ class _ReportFormScreenState extends State<ReportFormScreen>
     _informationController.dispose();
     _barangayController.dispose();
     _otherIncidentController.dispose();
+    _injuredCountController.dispose();
+    _injuredCountFocusNode.dispose();
     for (final vehicle in _vehicles) {
       vehicle.dispose();
     }
@@ -290,26 +304,21 @@ class _ReportFormScreenState extends State<ReportFormScreen>
     return '$month/$day/${date.year}';
   }
 
-  bool _isLikelyVideoPath(String path) {
-    final lower = path.toLowerCase();
-    return lower.endsWith('.mp4') ||
-        lower.endsWith('.mov') ||
-        lower.endsWith('.m4v') ||
-        lower.endsWith('.3gp') ||
-        lower.endsWith('.webm');
-  }
-
   String _capturedMediaDisplayText() {
-    if (_capturedMedia == null) return 'CAPTURE PHOTO/VIDEO *';
-    final fallbackName = _fileNameFromPath(_capturedMedia!.path);
-    final fileName = (_capturedMedia!.name).isNotEmpty
-        ? _capturedMedia!.name
-        : fallbackName;
-    final isVideo =
-        _capturedMediaType == CapturedMediaType.video ||
-        _isLikelyVideoPath(_capturedMedia!.path);
-    final typeLabel = isVideo ? 'Video' : 'Photo';
-    return '[OK] $typeLabel captured: $fileName';
+    if (_capturedPhotos.isEmpty && _capturedVideos.isEmpty) {
+      return 'CAPTURE PHOTO/VIDEO *';
+    }
+
+    if (_capturedPhotos.isNotEmpty && _capturedVideos.isNotEmpty) {
+      return '[OK] ${_capturedPhotos.length} photo(s), '
+          '${_capturedVideos.length} video(s) captured';
+    }
+
+    if (_capturedPhotos.isNotEmpty) {
+      return '[OK] ${_capturedPhotos.length} photo(s) captured';
+    }
+
+    return '[OK] ${_capturedVideos.length} video(s) captured';
   }
 
   String _fileNameFromPath(String path) {
@@ -329,18 +338,33 @@ class _ReportFormScreenState extends State<ReportFormScreen>
     }
   }
 
-  String _formatMediaMb(int bytes) {
-    final sizeMb = bytes / (1024 * 1024);
-    return sizeMb.toStringAsFixed(1);
-  }
-
-  Future<bool> _validateCapturedMediaLimit(
+  Future<bool> _validateAndStoreCapturedMedia(
     XFile media, {
-    required String mediaLabel,
+    required CapturedMediaType mediaType,
   }) async {
+    final isPhoto = mediaType == CapturedMediaType.photo;
+    final currentCount = isPhoto
+        ? _capturedPhotos.length
+        : _capturedVideos.length;
+    final maxCount = isPhoto ? _maxPhotosPerReport : _maxVideosPerReport;
+    final countError = isPhoto
+        ? 'You can only upload a maximum of 4 photos.'
+        : 'You can only upload a maximum of 2 videos.';
+    final sizeError = isPhoto
+        ? 'Each image must not exceed 4MB.'
+        : 'Each video must not exceed 8MB.';
+
+    if (currentCount >= maxCount) {
+      if (!mounted) return false;
+      setState(() => _mediaError = countError);
+      AppSnackBar.show(context, countError, type: AppSnackBarType.error);
+      return false;
+    }
+
     final bytes = await _readCapturedMediaBytes(media);
     if (bytes == null) {
       if (!mounted) return false;
+      final mediaLabel = isPhoto ? 'photo' : 'video';
       AppSnackBar.show(
         context,
         'Unable to read captured $mediaLabel size. Please capture again.',
@@ -348,22 +372,23 @@ class _ReportFormScreenState extends State<ReportFormScreen>
       );
       return false;
     }
-    if (bytes > _maxCapturedMediaBytes) {
+    final maxBytes = isPhoto ? _maxPhotoBytes : _maxVideoBytes;
+    if (bytes > maxBytes) {
       if (!mounted) return false;
-      final currentMb = _formatMediaMb(bytes);
-      setState(() {
-        _capturedMedia = null;
-        _capturedMediaType = null;
-        _mediaError =
-            '$mediaLabel is too large ($currentMb MB). Maximum allowed is 25 MB.';
-      });
-      AppSnackBar.show(
-        context,
-        'Captured $mediaLabel is $currentMb MB. Maximum allowed is 25 MB.',
-        type: AppSnackBarType.error,
-      );
+      setState(() => _mediaError = sizeError);
+      AppSnackBar.show(context, sizeError, type: AppSnackBarType.error);
       return false;
     }
+
+    if (!mounted) return false;
+    setState(() {
+      if (isPhoto) {
+        _capturedPhotos.add(media);
+      } else {
+        _capturedVideos.add(media);
+      }
+      _mediaError = null;
+    });
     return true;
   }
 
@@ -376,17 +401,11 @@ class _ReportFormScreenState extends State<ReportFormScreen>
         maxHeight: 1024,
       );
       if (photo != null) {
-        if (!mounted) return;
-        final isWithinLimit = await _validateCapturedMediaLimit(
+        final isWithinLimit = await _validateAndStoreCapturedMedia(
           photo,
-          mediaLabel: 'photo',
+          mediaType: CapturedMediaType.photo,
         );
         if (!isWithinLimit || !mounted) return;
-        setState(() {
-          _capturedMedia = photo;
-          _capturedMediaType = CapturedMediaType.photo;
-          _mediaError = null;
-        });
       }
     } on PlatformException catch (e) {
       if (!mounted) return;
@@ -412,17 +431,11 @@ class _ReportFormScreenState extends State<ReportFormScreen>
         maxDuration: const Duration(seconds: 10),
       );
       if (video != null) {
-        if (!mounted) return;
-        final isWithinLimit = await _validateCapturedMediaLimit(
+        final isWithinLimit = await _validateAndStoreCapturedMedia(
           video,
-          mediaLabel: 'video',
+          mediaType: CapturedMediaType.video,
         );
         if (!isWithinLimit || !mounted) return;
-        setState(() {
-          _capturedMedia = video;
-          _capturedMediaType = CapturedMediaType.video;
-          _mediaError = null;
-        });
       }
     } on PlatformException catch (e) {
       if (!mounted) return;
@@ -474,6 +487,62 @@ class _ReportFormScreenState extends State<ReportFormScreen>
         : 'Failed to capture photo. Please try again.';
   }
 
+  Future<Map<String, String>> _uploadSingleCapturedMedia({
+    required XFile media,
+    required CapturedMediaType mediaType,
+    required DateTime now,
+    required int uploadIndex,
+  }) async {
+    final isVideo = mediaType == CapturedMediaType.video;
+    final rawName = media.name.isNotEmpty
+        ? media.name
+        : _fileNameFromPath(media.path);
+    final defaultExt = isVideo ? '.mp4' : '.jpg';
+    final safeName = rawName.isNotEmpty
+        ? rawName
+        : 'report_${now.millisecondsSinceEpoch}_$uploadIndex$defaultExt';
+    final lowerName = safeName.toLowerCase();
+    final storageRef = FirebaseStorage.instance
+        .ref()
+        .child('reports')
+        .child('${now.millisecondsSinceEpoch}_${uploadIndex}_$safeName');
+
+    final contentType = isVideo
+        ? (lowerName.endsWith('.mov') ? 'video/quicktime' : 'video/mp4')
+        : 'image/jpeg';
+    final metadata = SettableMetadata(contentType: contentType);
+
+    _debugLog(
+      'Uploading ${isVideo ? 'video' : 'photo'} to Firebase Storage...',
+    );
+    final uploadTimeout = isVideo
+        ? const Duration(seconds: 120)
+        : const Duration(seconds: 60);
+
+    final mediaPath = media.path;
+    if (mediaPath.isEmpty) {
+      throw Exception('Captured media path is empty.');
+    }
+
+    final UploadTask uploadTask;
+    if (kIsWeb) {
+      final mediaBytes = await media.readAsBytes();
+      uploadTask = storageRef.putData(mediaBytes, metadata);
+    } else {
+      uploadTask = storageRef.putFile(File(mediaPath), metadata);
+    }
+
+    final uploadSnapshot = await uploadTask.timeout(uploadTimeout);
+    final url = await uploadSnapshot.ref.getDownloadURL().timeout(
+      const Duration(seconds: 20),
+    );
+
+    await uploadSnapshot.ref.getMetadata().timeout(const Duration(seconds: 10));
+    _debugLog('Media uploaded successfully: $url');
+
+    return <String, String>{'url': url, 'type': isVideo ? 'video' : 'photo'};
+  }
+
   void _showMediaOptions() {
     showDialog(
       context: context,
@@ -523,7 +592,7 @@ class _ReportFormScreenState extends State<ReportFormScreen>
                               elevation: 2,
                             ),
                             child: const Text(
-                              'CAPTURE AN IMAGE (25MB max)',
+                              'CAPTURE AN IMAGE (4MB max)',
                               style: TextStyle(
                                 fontFamily: 'RobotoCondensed',
                                 fontSize: 12,
@@ -551,7 +620,7 @@ class _ReportFormScreenState extends State<ReportFormScreen>
                               elevation: 2,
                             ),
                             child: const Text(
-                              'CAPTURE A VIDEO (10s / 25MB max)',
+                              'CAPTURE A VIDEO (10s / 8MB max)',
                               style: TextStyle(
                                 fontFamily: 'RobotoCondensed',
                                 fontSize: 12,
@@ -650,21 +719,8 @@ class _ReportFormScreenState extends State<ReportFormScreen>
       }
     }
     // Validate required media
-    if (_capturedMedia == null) {
+    if (_capturedPhotos.isEmpty && _capturedVideos.isEmpty) {
       setState(() => _mediaError = 'Photo or video is required');
-      return;
-    }
-    final mediaForValidation = _capturedMedia!;
-    final mediaLabel =
-        (_capturedMediaType == CapturedMediaType.video ||
-            _isLikelyVideoPath(mediaForValidation.path))
-        ? 'video'
-        : 'photo';
-    final withinLimit = await _validateCapturedMediaLimit(
-      mediaForValidation,
-      mediaLabel: mediaLabel,
-    );
-    if (!withinLimit) {
       return;
     }
 
@@ -686,63 +742,38 @@ class _ReportFormScreenState extends State<ReportFormScreen>
 
       String? mediaUrl;
       String? mediaType;
+      final List<String> mediaUrls = <String>[];
+      final List<String> mediaTypes = <String>[];
+      int uploadIndex = 0;
 
-      // Upload media only if captured (required by validation above)
-      if (_capturedMedia != null) {
-        final rawName = (_capturedMedia?.name ?? '').isNotEmpty
-            ? _capturedMedia!.name
-            : _fileNameFromPath(_capturedMedia!.path);
-        final isVideo =
-            _capturedMediaType == CapturedMediaType.video ||
-            _isLikelyVideoPath(_capturedMedia!.path);
-        final defaultExt = isVideo ? '.mp4' : '.jpg';
-        final safeName = rawName.isNotEmpty
-            ? rawName
-            : 'report_${now.millisecondsSinceEpoch}$defaultExt';
-        final lowerName = safeName.toLowerCase();
-        final storageRef = FirebaseStorage.instance
-            .ref()
-            .child('reports')
-            .child('${now.millisecondsSinceEpoch}_$safeName');
-
-        final contentType = isVideo
-            ? (lowerName.endsWith('.mov') ? 'video/quicktime' : 'video/mp4')
-            : 'image/jpeg';
-        final metadata = SettableMetadata(contentType: contentType);
-
-        _debugLog(
-          'Uploading ${isVideo ? 'video' : 'photo'} to Firebase Storage...',
+      // Upload all captured media.
+      for (final photo in _capturedPhotos) {
+        uploadIndex += 1;
+        final uploaded = await _uploadSingleCapturedMedia(
+          media: photo,
+          mediaType: CapturedMediaType.photo,
+          now: now,
+          uploadIndex: uploadIndex,
         );
-        final uploadTimeout = isVideo
-            ? const Duration(seconds: 120)
-            : const Duration(seconds: 60);
-        final mediaPath = _capturedMedia!.path;
-        if (mediaPath.isEmpty) {
-          throw Exception('Captured media path is empty.');
-        }
-        final UploadTask uploadTask;
-        if (kIsWeb) {
-          // Web runtime does not support dart:io File APIs.
-          final mediaBytes = await _capturedMedia!.readAsBytes();
-          uploadTask = storageRef.putData(mediaBytes, metadata);
-        } else {
-          uploadTask = storageRef.putFile(File(mediaPath), metadata);
-        }
+        mediaUrls.add(uploaded['url']!);
+        mediaTypes.add(uploaded['type']!);
+      }
 
-        final uploadSnapshot = await uploadTask.timeout(uploadTimeout);
-
-        mediaUrl = await uploadSnapshot.ref.getDownloadURL().timeout(
-          const Duration(seconds: 20),
+      for (final video in _capturedVideos) {
+        uploadIndex += 1;
+        final uploaded = await _uploadSingleCapturedMedia(
+          media: video,
+          mediaType: CapturedMediaType.video,
+          now: now,
+          uploadIndex: uploadIndex,
         );
-        mediaType = isVideo ? 'video' : 'photo';
+        mediaUrls.add(uploaded['url']!);
+        mediaTypes.add(uploaded['type']!);
+      }
 
-        // Verify that the object exists in Storage and is readable.
-        await uploadSnapshot.ref.getMetadata().timeout(
-          const Duration(seconds: 10),
-        );
-        _debugLog('Media uploaded successfully: $mediaUrl');
-      } else {
-        _debugLog('Skipping media upload (no media captured)');
+      if (mediaUrls.isNotEmpty) {
+        mediaUrl = mediaUrls.first;
+        mediaType = mediaTypes.first;
       }
 
       _debugLog('Saving report to Firestore...');
@@ -823,6 +854,10 @@ class _ReportFormScreenState extends State<ReportFormScreen>
                 : 'pin',
             'mediaUrl': mediaUrl,
             'mediaType': mediaType,
+            'mediaUrls': mediaUrls,
+            'mediaTypes': mediaTypes,
+            'photoCount': _capturedPhotos.length,
+            'videoCount': _capturedVideos.length,
             // Keep incident pin immutable for maps/admin even when user shares
             // live location updates later.
             'location': GeoPoint(location.latitude, location.longitude),
@@ -875,6 +910,10 @@ class _ReportFormScreenState extends State<ReportFormScreen>
             },
             'mediaUrl': mediaUrl,
             'mediaType': mediaType,
+            'mediaUrls': mediaUrls,
+            'mediaTypes': mediaTypes,
+            'photoCount': _capturedPhotos.length,
+            'videoCount': _capturedVideos.length,
             'reportedAt': now,
             'locationSource': _locationMode == LocationSelectionMode.current
                 ? 'current'
@@ -1339,7 +1378,9 @@ class _ReportFormScreenState extends State<ReportFormScreen>
                                     fontFamily: 'RobotoCondensed',
                                     fontSize: 14,
                                     fontWeight: FontWeight.w400,
-                                    color: _capturedMedia == null
+                                    color:
+                                        (_capturedPhotos.isEmpty &&
+                                            _capturedVideos.isEmpty)
                                         ? (_mediaError != null
                                               ? Colors.red
                                               : Colors.black)
@@ -1743,6 +1784,46 @@ class _ReportFormScreenState extends State<ReportFormScreen>
     return widget.incidentType.toUpperCase() == 'OTHERS';
   }
 
+  void _setInjuredCountValue(int value, {bool syncText = true}) {
+    final normalized = value.clamp(0, 999);
+    if (_injuredCount != normalized) {
+      setState(() => _injuredCount = normalized);
+    }
+
+    if (!syncText) return;
+    final normalizedText = normalized.toString();
+    if (_injuredCountController.text != normalizedText) {
+      _injuredCountController.value = TextEditingValue(
+        text: normalizedText,
+        selection: TextSelection.collapsed(offset: normalizedText.length),
+      );
+    }
+  }
+
+  void _handleInjuredCountChanged(String value) {
+    if (value.isEmpty) {
+      setState(() => _injuredCount = 0);
+      return;
+    }
+
+    final parsed = int.tryParse(value) ?? 0;
+    final normalized = parsed.clamp(0, 999);
+    if (_injuredCount != normalized) {
+      setState(() => _injuredCount = normalized);
+    }
+  }
+
+  void _normalizeInjuredCountInput() {
+    final raw = _injuredCountController.text.trim();
+    if (raw.isEmpty) {
+      _setInjuredCountValue(0, syncText: true);
+      return;
+    }
+
+    final parsed = int.tryParse(raw) ?? 0;
+    _setInjuredCountValue(parsed, syncText: true);
+  }
+
   Widget _buildInjuredCounterField() {
     return _buildLabeledField(
       label: 'How many injured? *',
@@ -1750,26 +1831,40 @@ class _ReportFormScreenState extends State<ReportFormScreen>
         children: [
           IconButton(
             onPressed: _injuredCount > 0
-                ? () => setState(() => _injuredCount -= 1)
+                ? () => _setInjuredCountValue(_injuredCount - 1)
                 : null,
             icon: const Icon(Icons.remove_circle_outline),
             color: const Color(0xFFAC1B22),
           ),
           Expanded(
-            child: Text(
-              _injuredCount.toString(),
+            child: TextField(
+              controller: _injuredCountController,
+              focusNode: _injuredCountFocusNode,
               textAlign: TextAlign.center,
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(3),
+              ],
+              onChanged: _handleInjuredCountChanged,
+              onEditingComplete: _normalizeInjuredCountInput,
+              onSubmitted: (_) => _normalizeInjuredCountInput(),
               style: const TextStyle(
                 fontFamily: 'RobotoCondensed',
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
                 color: Colors.black,
               ),
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                isCollapsed: true,
+                contentPadding: EdgeInsets.zero,
+              ),
             ),
           ),
           IconButton(
             onPressed: _injuredCount < 999
-                ? () => setState(() => _injuredCount += 1)
+                ? () => _setInjuredCountValue(_injuredCount + 1)
                 : null,
             icon: const Icon(Icons.add_circle_outline),
             color: const Color(0xFFAC1B22),
@@ -2395,7 +2490,7 @@ class _PinPickerPage extends StatefulWidget {
 
 class _PinPickerPageState extends State<_PinPickerPage> {
   static const LatLng _center = AngelesGeofenceService.mapCenter;
-  static const double _reporterRadiusMeters = 500;
+  static const double _reporterRadiusMeters = 250;
   static const Duration _confirmLocationTimeout = Duration(seconds: 4);
   static const Duration _trackedLocationFreshForConfirm = Duration(seconds: 12);
 
@@ -2599,7 +2694,7 @@ class _PinPickerPageState extends State<_PinPickerPage> {
         },
       );
       await _showPinPickerError(
-        'Pinned location must be within 500 meters of your current location. '
+        'Pinned location must be within 250 meters of your current location. '
         'Move closer to the incident or pin inside the blue radius.',
       );
       return;
@@ -2808,8 +2903,8 @@ class _PinPickerPageState extends State<_PinPickerPage> {
                     Expanded(
                       child: Text(
                         _currentLocation == null
-                            ? 'Locating you... Pin selection is limited to a 500m radius from your location.'
-                            : 'Blue radius = your 500m allowed pin area. Pin inside this circle and within the green city boundary.',
+                            ? 'Locating you... Pin selection is limited to a 250m radius from your location.'
+                            : 'Blue radius = your 250m allowed pin area. Pin inside this circle and within the green city boundary.',
                         style: const TextStyle(
                           fontFamily: 'RobotoCondensed',
                           fontSize: 12,

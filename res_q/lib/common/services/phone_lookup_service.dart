@@ -6,7 +6,7 @@ import '../utils/security_hash.dart';
 
 class PhoneLookupResult {
   const PhoneLookupResult({
-    required this.hasSemiAdminAccount,
+    required this.hasResponderAccount,
     required this.hasApprovedAccount,
     required this.isPendingAccount,
     this.isBannedAccount = false,
@@ -15,7 +15,7 @@ class PhoneLookupResult {
     this.banReasons = const <String>[],
   });
 
-  final bool hasSemiAdminAccount;
+  final bool hasResponderAccount;
   final bool hasApprovedAccount;
   final bool isPendingAccount;
   final bool isBannedAccount;
@@ -23,7 +23,7 @@ class PhoneLookupResult {
   final DateTime? bannedUntil;
   final List<String> banReasons;
 
-  bool get hasAnyAccount => hasSemiAdminAccount || hasApprovedAccount;
+  bool get hasAnyAccount => hasResponderAccount || hasApprovedAccount;
   bool get hasRegistrationConflict => hasApprovedAccount || isPendingAccount;
   bool get isTemporaryBan => isBannedAccount && !isPermanentBan;
 }
@@ -42,6 +42,10 @@ class PhoneLookupService {
 
   static const Duration _cacheTtl = Duration(seconds: 12);
   static const Duration _defaultDebounceDelay = Duration(milliseconds: 300);
+  static const List<String> _responderCollections = <String>[
+    'responders',
+    'semi_admins',
+  ];
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Map<String, _PhoneLookupCacheEntry> _statusCache = {};
@@ -112,6 +116,21 @@ class PhoneLookupService {
         .get();
   }
 
+  Future<QuerySnapshot<Map<String, dynamic>>?> _queryFirstResponderByPhone(
+    String phone,
+  ) async {
+    for (final collection in _responderCollections) {
+      final query = await _queryCollectionByPhone(
+        collection: collection,
+        phone: phone,
+      );
+      if (query.docs.isNotEmpty) {
+        return query;
+      }
+    }
+    return null;
+  }
+
   PhoneLookupResult? readCachedAccountStatus(String phone) {
     final cached = _statusCache[phone];
     if (cached == null) return null;
@@ -155,13 +174,15 @@ class PhoneLookupService {
   }
 
   Future<PhoneLookupResult> _lookupAccountStatusUncached(String phone) async {
-    final queries = await Future.wait([
-      _queryCollectionByPhone(collection: 'semi_admins', phone: phone),
+    final queries = await Future.wait<dynamic>([
+      _queryFirstResponderByPhone(phone),
       _queryCollectionByPhone(collection: 'approved_users', phone: phone),
       _queryCollectionByPhone(collection: 'pending_users', phone: phone),
     ]);
 
-    final approvedQuery = queries[1];
+    final responderQuery = queries[0] as QuerySnapshot<Map<String, dynamic>>?;
+    final approvedQuery = queries[1] as QuerySnapshot<Map<String, dynamic>>;
+    final pendingQuery = queries[2] as QuerySnapshot<Map<String, dynamic>>;
     Map<String, dynamic> approvedData = const <String, dynamic>{};
     if (approvedQuery.docs.isNotEmpty) {
       approvedData = approvedQuery.docs.first.data();
@@ -174,14 +195,25 @@ class PhoneLookupService {
         .toList(growable: false);
 
     return PhoneLookupResult(
-      hasSemiAdminAccount: queries[0].docs.isNotEmpty,
+      hasResponderAccount:
+          responderQuery != null && responderQuery.docs.isNotEmpty,
       hasApprovedAccount: approvedQuery.docs.isNotEmpty,
-      isPendingAccount: queries[2].docs.isNotEmpty,
+      isPendingAccount: pendingQuery.docs.isNotEmpty,
       isBannedAccount: isBanned,
       isPermanentBan: isPermanentBan,
       bannedUntil: _toDateTime(approvedData['bannedUntil']),
       banReasons: banReasons,
     );
+  }
+
+  Future<QueryDocumentSnapshot<Map<String, dynamic>>?> getFirstResponderDoc(
+    String phone,
+  ) async {
+    final query = await _queryFirstResponderByPhone(phone);
+    if (query == null || query.docs.isEmpty) {
+      return null;
+    }
+    return query.docs.first;
   }
 
   Future<bool> hasRegistrationConflict(

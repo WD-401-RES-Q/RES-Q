@@ -485,7 +485,8 @@ class _PINCreationPageState extends State<PINCreationPage>
       var message = 'Registration failed. Please try again.';
       if (e is FirebaseFunctionsException) {
         if (e.code == 'already-exists') {
-          message = 'This phone number is already registered.';
+          message =
+              'This phone number is already registered or pending approval.';
         } else if (e.code == 'invalid-argument') {
           message = e.message ?? 'Invalid registration details.';
         } else if (e.message != null && e.message!.isNotEmpty) {

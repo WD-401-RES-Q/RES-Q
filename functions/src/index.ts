@@ -641,6 +641,7 @@ async function resolveResponderTokenRecord(
   reportId: string,
   data: FirestoreData,
 ): Promise<{ docId: string; fcmToken: string } | null> {
+  const responderCollections = ['responders', 'semi_admins'];
   const candidates = buildResponderTokenDocCandidates(data);
   const seen = new Set<string>(candidates);
 
@@ -652,13 +653,16 @@ async function resolveResponderTokenRecord(
   const responderId = readTrimmedString(data.responderId);
   if (responderId.length > 0) {
     try {
-      const semiAdminDoc = await db.collection('semi_admins').doc(responderId).get();
-      if (semiAdminDoc.exists) {
+      for (const collectionName of responderCollections) {
+        const responderDoc = await db.collection(collectionName).doc(responderId).get();
+        if (!responderDoc.exists) {
+          continue;
+        }
         appendResponderTokenCandidatesFromProfileData(
           candidates,
           seen,
-          semiAdminDoc.id,
-          (semiAdminDoc.data() ?? {}) as FirestoreData,
+          responderDoc.id,
+          (responderDoc.data() ?? {}) as FirestoreData,
         );
       }
 
@@ -692,34 +696,36 @@ async function resolveResponderTokenRecord(
     const phoneVariants = buildPhoneLookupVariants(seed);
     for (const phoneVariant of phoneVariants) {
       try {
-        const semiAdminContactMatch = await db
-          .collection('semi_admins')
-          .where('contactNumber', '==', phoneVariant)
-          .limit(1)
-          .get();
-        if (!semiAdminContactMatch.empty) {
-          const match = semiAdminContactMatch.docs[0];
-          appendResponderTokenCandidatesFromProfileData(
-            candidates,
-            seen,
-            match.id,
-            (match.data() ?? {}) as FirestoreData,
-          );
-        }
+        for (const collectionName of responderCollections) {
+          const responderContactMatch = await db
+            .collection(collectionName)
+            .where('contactNumber', '==', phoneVariant)
+            .limit(1)
+            .get();
+          if (!responderContactMatch.empty) {
+            const match = responderContactMatch.docs[0];
+            appendResponderTokenCandidatesFromProfileData(
+              candidates,
+              seen,
+              match.id,
+              (match.data() ?? {}) as FirestoreData,
+            );
+          }
 
-        const semiAdminPhoneMatch = await db
-          .collection('semi_admins')
-          .where('phoneNumber', '==', phoneVariant)
-          .limit(1)
-          .get();
-        if (!semiAdminPhoneMatch.empty) {
-          const match = semiAdminPhoneMatch.docs[0];
-          appendResponderTokenCandidatesFromProfileData(
-            candidates,
-            seen,
-            match.id,
-            (match.data() ?? {}) as FirestoreData,
-          );
+          const responderPhoneMatch = await db
+            .collection(collectionName)
+            .where('phoneNumber', '==', phoneVariant)
+            .limit(1)
+            .get();
+          if (!responderPhoneMatch.empty) {
+            const match = responderPhoneMatch.docs[0];
+            appendResponderTokenCandidatesFromProfileData(
+              candidates,
+              seen,
+              match.id,
+              (match.data() ?? {}) as FirestoreData,
+            );
+          }
         }
       } catch (error) {
         console.error(
