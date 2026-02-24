@@ -155,6 +155,39 @@
           </div>
         </div>
 
+        <div class="priority-selector">
+          <label class="priority-label">Priority Level</label>
+          <div class="priority-buttons">
+            <button
+              type="button"
+              class="priority-btn"
+              [class.active]="deploymentPriority === 'High'"
+              (click)="deploymentPriority = 'High'"
+            >
+              <span class="priority-dot high"></span>
+              High
+            </button>
+            <button
+              type="button"
+              class="priority-btn"
+              [class.active]="deploymentPriority === 'Medium'"
+              (click)="deploymentPriority = 'Medium'"
+            >
+              <span class="priority-dot medium"></span>
+              Medium
+            </button>
+            <button
+              type="button"
+              class="priority-btn"
+              [class.active]="deploymentPriority === 'Low'"
+              (click)="deploymentPriority = 'Low'"
+            >
+              <span class="priority-dot low"></span>
+              Low
+            </button>
+          </div>
+        </div>
+
         <button
           class="deploy-btn"
           type="button"

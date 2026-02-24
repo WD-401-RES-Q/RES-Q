@@ -1,0 +1,160 @@
+<section class="admin-page responder-accounts-page">
+  <header class="page-header">
+    <div class="page-header-row">
+      <h1>Responder Accounts ({{ accounts.length }})</h1>
+      <button class="btn btn-create" (click)="openCreateModal()">
+        <span class="btn-icon">+</span>
+        Create Account
+      </button>
+    </div>
+  </header>
+
+  <!-- Loading State -->
+  <div class="loading-state" *ngIf="isLoadingAccounts">
+    <div class="spinner"></div>
+    <p>Loading accounts...</p>
+  </div>
+
+  <!-- Error State -->
+  <div class="error-state" *ngIf="loadError && !isLoadingAccounts">
+    <p>{{ loadError }}</p>
+    <button class="btn btn-secondary" (click)="loadAccounts()">Retry</button>
+  </div>
+
+  <!-- Empty State -->
+  <div class="empty-state" *ngIf="!isLoadingAccounts && !loadError && accounts.length === 0">
+    <div class="empty-icon">👤</div>
+    <h3>No Responder Accounts</h3>
+    <p>Create your first responder account to get started.</p>
+    <button class="btn btn-create" (click)="openCreateModal()">Create Account</button>
+  </div>
+
+  <!-- Accounts Grid -->
+  <div class="accounts-grid" *ngIf="!isLoadingAccounts && !loadError && accounts.length > 0">
+    <div class="account-card" *ngFor="let account of accounts; trackBy: trackByAccountId">
+      <div class="card-header">
+        <div class="avatar">{{ getAccountInitial(account) }}</div>
+        <div class="card-identity">
+          <div class="card-name">{{ account.fullName || 'Unknown' }}</div>
+          <div class="card-username">@{{ account.username || 'N/A' }}</div>
+        </div>
+        <span class="status-badge" [ngClass]="getStatusClass(account)">
+          {{ getStatusText(account) }}
+        </span>
+      </div>
+
+      <div class="card-details">
+        <div class="detail-row">
+          <span class="detail-label">Phone</span>
+          <span class="detail-value">{{ account.contactNumber || 'N/A' }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Role</span>
+          <span class="detail-value">{{ account.role || 'semi-admin' }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">PIN</span>
+          <span class="detail-value sensitive-text">{{ account.pin || '••••' }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Password</span>
+          <span class="detail-value sensitive-text">{{ account.password || '••••••' }}</span>
+        </div>
+      </div>
+
+      <div class="card-footer">
+        <span class="logged-status" [class.logged-in]="account.isLoggedIn">
+          {{ account.isLoggedIn ? '● Logged In' : '○ Logged Out' }}
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Account Modal -->
+  <div class="modal-overlay" *ngIf="showCreateModal" (click)="closeCreateModal()">
+    <div class="modal-content" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2>Create Responder Account</h2>
+        <button class="modal-close" (click)="closeCreateModal()">&times;</button>
+      </div>
+      
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="fullName">Full Name</label>
+          <input
+            id="fullName"
+            type="text"
+            [(ngModel)]="fullName"
+            placeholder="e.g. Juan Dela Cruz"
+            [disabled]="isSubmitting"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="contactNumber">Contact Number</label>
+          <input
+            id="contactNumber"
+            type="text"
+            [(ngModel)]="contactNumber"
+            placeholder="e.g. 09123456789"
+            [disabled]="isSubmitting"
+          />
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="pin">PIN (4 digits)</label>
+            <input
+              id="pin"
+              type="password"
+              maxlength="4"
+              [(ngModel)]="pin"
+              placeholder="e.g. 1234"
+              [disabled]="isSubmitting"
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              [(ngModel)]="password"
+              placeholder="Min 6 characters"
+              [disabled]="isSubmitting"
+            />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="role">Role</label>
+          <input
+            id="role"
+            type="text"
+            [(ngModel)]="role"
+            placeholder="semi-admin"
+            [disabled]="isSubmitting"
+          />
+        </div>
+
+        <p class="feedback success" *ngIf="successMessage">{{ successMessage }}</p>
+        <p class="feedback error" *ngIf="errorMessage">{{ errorMessage }}</p>
+      </div>
+
+      <div class="modal-footer">
+        <button 
+          class="btn btn-secondary" 
+          (click)="closeCreateModal()"
+          [disabled]="isSubmitting">
+          Cancel
+        </button>
+        <button
+          class="btn btn-create"
+          [disabled]="!canSubmit || isSubmitting"
+          (click)="createResponderAccount()">
+          {{ isSubmitting ? (submitStage === 'checking' ? 'Checking...' : 'Creating...') : 'Create Account' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</section>

@@ -471,6 +471,23 @@
     box-shadow: 0 3px 8px rgba(17, 24, 39, 0.32);
   }
 
+  .btn-revert-inline {
+    background-color: #111827;
+    color: #ffffff;
+    padding: 8px 14px;
+    font-size: 13px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    white-space: nowrap;
+    line-height: 1.1;
+  }
+
+  .btn-revert-inline:hover {
+    background-color: #000000;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 8px rgba(17, 24, 39, 0.32);
+  }
+
   .btn-revert {
     background-color: var(--resq-red, var(--resq-red, #AC1B22)); /* RESQ Red */
     color: white;

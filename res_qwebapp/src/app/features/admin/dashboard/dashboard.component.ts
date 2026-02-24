@@ -1,5 +1,6 @@
 import { Component, OnDestroy, OnInit, ViewChild, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { Router } from '@angular/router';
 import { NgChartsModule } from 'ng2-charts';
 import { ChartConfiguration, ChartOptions } from 'chart.js';
 import 'chart.js/auto';
@@ -35,7 +36,10 @@ type ReportRecord = {
   styleUrls: ['./dashboard.component.scss'],
 })
 export class DashboardComponent implements OnInit, OnDestroy {
-  constructor(private firestoreService: FirestoreService) {}
+  constructor(
+    private firestoreService: FirestoreService,
+    private router: Router
+  ) {}
 
   // TOP SUMMARY NUMBERS
   totalReports = 0;
@@ -173,6 +177,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
     if (this.sub) this.sub.unsubscribe();
   }
 
+  goToReports(filter?: 'approved' | 'flagged'): void {
+    if (filter) {
+      this.router.navigate(['/admin/reports'], { queryParams: { status: filter } });
+    } else {
+      this.router.navigate(['/admin/reports']);
+    }
+  }
+
   private resetCategoryCounts() {
     this.otherEmergencies = 0;
     this.vehicularEmergencies = 0;
@@ -186,12 +198,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.flaggedReports = 0;
 
     reports.forEach((report) => {
-      const status = (report['status'] ?? '').toString().trim().toLowerCase();
+      const status = (report['status'] ?? '').toString().trim();
       if (!status) return;
-      if (status === 'approved' || status === 'resolved') {
+      
+      // Match the same logic as firestoreService queries:
+      // Approved: where('status', '==', 'Approved')
+      if (status === 'Approved') {
         this.approvedReports += 1;
       }
-      if (status === 'flagged') {
+      
+      // Flagged: where('status', 'in', ['ADMIN_FLAGGED', 'Admin_Flagged'])
+      if (status === 'ADMIN_FLAGGED' || status === 'Admin_Flagged') {
         this.flaggedReports += 1;
       }
     });
@@ -862,9 +879,23 @@ export class DashboardComponent implements OnInit, OnDestroy {
     pdf.setTextColor(26, 26, 26);
     pdf.setFontSize(8);
 
+    // Sort reports by date (latest first)
+    const sortedReports = [...this.allReports].sort((a, b) => {
+      const getTime = (report: ReportRecord): number => {
+        const dateField = report['reportedAt'];
+        if (!dateField) return 0;
+        if (typeof dateField.toDate === 'function') {
+          return dateField.toDate().getTime();
+        }
+        const parsed = new Date(dateField);
+        return isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+      };
+      return getTime(b) - getTime(a);
+    });
+
     let rowCount = 0;
     // Table rows
-    this.allReports.slice(0, 50).forEach((report) => {
+    sortedReports.slice(0, 50).forEach((report) => {
       if (yPosition > pdf.internal.pageSize.getHeight() - 15) {
         pdf.addPage();
         yPosition = margin;
@@ -889,7 +920,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
       const typeRaw = (report['incidentType'] ?? report['incident_type'] ?? report['type'] ?? 'N/A').toString();
       const statusRaw = (report['status'] ?? 'N/A').toString();
-      const descriptionRaw = (report['description'] ?? 'N/A').toString();
+      const descriptionRaw = (report['details'] ?? report['description'] ?? 'N/A').toString();
 
       // Safe date parsing
       let reportDate = 'N/A';

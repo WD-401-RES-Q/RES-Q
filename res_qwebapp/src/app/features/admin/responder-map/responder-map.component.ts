@@ -1,5 +1,6 @@
 import { AfterViewInit, Component, NgZone, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import {
   collection,
   doc,
@@ -43,6 +44,7 @@ interface ResponderTrack {
   mediaUrl?: string | null;
   mediaType?: string | null;
   reportedAt?: Date | null;
+  deploymentPriority?: string | null;
 }
 
 interface ResponderProfile {
@@ -59,10 +61,12 @@ interface ResponderProfile {
 
 type MapFocusTarget = 'auto' | 'report' | 'reporter' | 'responder';
 
+type DeploymentPriority = 'High' | 'Medium' | 'Low';
+
 @Component({
   selector: 'app-responder-map',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   templateUrl: './responder-map.html',
   styleUrls: ['./responder-map.component.scss'],
 })
@@ -76,6 +80,9 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
   selectedReportId: string | null = null;
   selectedResponderId: string | null = null;
   isDeploying = false;
+  deploymentPriority: DeploymentPriority = 'Medium';
+
+  priorityOptions: DeploymentPriority[] = ['High', 'Medium', 'Low'];
 
   mapLoadError = '';
   isListening = false;
@@ -477,6 +484,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
         respondingAt: serverTimestamp(),
         responderAssignedAt: serverTimestamp(),
         deployedBy: this.getCurrentAdminName(),
+        deploymentPriority: this.deploymentPriority,
         updatedAt: serverTimestamp(),
       };
 
@@ -843,6 +851,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
             mediaUrl: data?.mediaUrl ?? null,
             mediaType: data?.mediaType ?? null,
             reportedAt: this.toDate(data?.reportedAt),
+            deploymentPriority: data?.deploymentPriority ?? null,
           });
         });
 
@@ -885,6 +894,9 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     this.respondersUnsubscribe = onSnapshot(
       respondersRef,
       (snapshot) => {
+        const now = Date.now();
+        const staleThresholdMs = 10 * 60 * 1000; // 10 minutes - consider offline if no activity
+
         const nextResponders: ResponderProfile[] = snapshot.docs.map((snapshotDoc) => {
           const data = snapshotDoc.data() as any;
           const statusRaw = (data?.status ?? '')
@@ -899,8 +911,21 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
           const explicitAvailability =
             typeof data?.isAvailable === 'boolean' ? data.isAvailable : null;
 
+          // Check for stale session based on lastSeenAt
+          let isStaleSession = false;
+          if (data?.lastSeenAt) {
+            const lastSeenTime = data.lastSeenAt?.toDate?.()
+              ? data.lastSeenAt.toDate().getTime()
+              : typeof data.lastSeenAt === 'number'
+                ? data.lastSeenAt
+                : 0;
+            if (lastSeenTime > 0 && now - lastSeenTime > staleThresholdMs) {
+              isStaleSession = true;
+            }
+          }
+
           const activityStatus: 'available' | 'busy' | 'offline' =
-            !isLoggedIn || statusRaw === 'offline'
+            !isLoggedIn || statusRaw === 'offline' || isStaleSession
               ? 'offline'
               : statusRaw === 'busy' ||
                   statusRaw === 'unavailable' ||
@@ -1137,13 +1162,14 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       if (reportExisting) {
         reportExisting.setLatLng([track.reportLocationLat, track.reportLocationLng]);
         reportExisting.setPopupContent(reportPopupContent);
+        reportExisting.setStyle(this.getReportMarkerStyle(false, isReportInside, track.deploymentPriority));
         if (typeof reportExisting.setTooltipContent === 'function') {
           reportExisting.setTooltipContent(this.getReportTooltipLabel(isReportInside));
         }
       } else {
         const reportMarker = L.circleMarker(
           [track.reportLocationLat, track.reportLocationLng],
-          this.getReportMarkerStyle(false, isReportInside),
+          this.getReportMarkerStyle(false, isReportInside, track.deploymentPriority),
         );
         reportMarker.on('click', () => {
           this.ngZone.run(() => this.focusResponder(track.reportId, 'report'));
@@ -1246,7 +1272,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       const isSelected = reportId === this.selectedId;
       const track = tracksById.get(reportId);
       const isInside = track ? this.isReportInsideGeofence(track) : true;
-      marker.setStyle(this.getReportMarkerStyle(isSelected, isInside));
+      marker.setStyle(this.getReportMarkerStyle(isSelected, isInside, track?.deploymentPriority));
     }
 
     for (const [reportId, marker] of this.reporterMarkerByReportId.entries()) {
@@ -1285,14 +1311,27 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       : 'Reporter location (outside geofence)';
   }
 
-  private getReportMarkerStyle(isSelected: boolean, isInsideGeofence: boolean): Record<string, number | string> {
-    const color = isInsideGeofence
-      ? isSelected
-        ? '#7F1D1D'
-        : '#AC1B22'
-      : isSelected
-        ? '#92400E'
-        : '#B45309';
+  private getReportMarkerStyle(
+    isSelected: boolean,
+    isInsideGeofence: boolean,
+    priority?: string | null,
+  ): Record<string, number | string> {
+    // Priority-based colors (when deployed with priority)
+    const priorityColors: Record<string, { normal: string; selected: string }> = {
+      High: { normal: '#EA580C', selected: '#C2410C' },        // Orange
+      Medium: { normal: '#CA8A04', selected: '#A16207' },      // Yellow/Amber
+      Low: { normal: '#2563EB', selected: '#1D4ED8' },         // Blue
+    };
+
+    let color: string;
+    if (priority && priorityColors[priority]) {
+      color = isSelected ? priorityColors[priority].selected : priorityColors[priority].normal;
+    } else if (!isInsideGeofence) {
+      color = isSelected ? '#92400E' : '#B45309'; // Outside geofence - amber
+    } else {
+      color = isSelected ? '#7F1D1D' : '#AC1B22'; // Default - RESQ red
+    }
+
     return {
       radius: isSelected ? 9 : 7,
       color,
@@ -1321,8 +1360,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     isSelected: boolean,
     isInsideGeofence: boolean | null,
   ): Record<string, number | string> {
-    const isOutside = isInsideGeofence === false;
-    const color = isOutside ? (isSelected ? '#374151' : '#6B7280') : isSelected ? '#00A458' : '#0B5FFF';
+    const color = '#0B5FFF'; // Single blue color for all responders
     return {
       radius: isSelected ? 11 : 8,
       color,
