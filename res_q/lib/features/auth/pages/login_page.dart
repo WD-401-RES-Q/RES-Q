@@ -10,7 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../../common/theme/app_text_styles.dart';
-import '../../semi_admin/pages/semi_admin_main_page.dart';
+import '../../responder/pages/responder_main_page.dart';
 import '../../home/pages/home_page.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/registration_prefs.dart';
@@ -33,8 +33,8 @@ class _LoginPageState extends State<LoginPage>
   static const appBlue = Color(0xFFAC1B22);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
-  static const bool _enableSemiAdminBootstrap = false;
-  static const String _semiAdminBootstrapDoneKey = 'semi_admin_bootstrap_done';
+  static const bool _enableResponderBootstrap = false;
+  static const String _responderBootstrapDoneKey = 'responder_bootstrap_done';
 
   final _formKey = GlobalKey<FormState>();
   bool _loading = false;
@@ -225,13 +225,13 @@ class _LoginPageState extends State<LoginPage>
     );
   }
 
-  Future<void> _updateSemiAdminPresence({
-    required Map<String, dynamic> semiAdminData,
+  Future<void> _updateResponderPresence({
+    required Map<String, dynamic> responderData,
     required bool isLoggedIn,
   }) async {
     try {
       final docId =
-          (semiAdminData['id'] ?? semiAdminData['contactNumber'])
+          (responderData['id'] ?? responderData['contactNumber'])
               ?.toString()
               .trim() ??
           '';
@@ -252,11 +252,11 @@ class _LoginPageState extends State<LoginPage>
       }
 
       await _firestore
-          .collection('semi_admins')
+          .collection('responders')
           .doc(docId)
           .set(payload, SetOptions(merge: true));
     } catch (e) {
-      debugPrint('Failed to update semi-admin presence: $e');
+      debugPrint('Failed to update responder presence: $e');
     }
   }
 
@@ -401,39 +401,32 @@ class _LoginPageState extends State<LoginPage>
 
     try {
       final accountQueries = await Future.wait<dynamic>([
-        _firestore
-            .collection('semi_admins')
-            .where('contactNumber', isEqualTo: phone)
-            .limit(1)
-            .get(),
+        _phoneLookupService.getFirstResponderDoc(phone),
         _phoneLookupService.getFirstApprovedUserDoc(phone),
       ]);
-      final semiAdminQuery =
-          accountQueries[0] as QuerySnapshot<Map<String, dynamic>>;
+      final responderDoc =
+          accountQueries[0] as QueryDocumentSnapshot<Map<String, dynamic>>?;
       final userDoc =
           accountQueries[1] as QueryDocumentSnapshot<Map<String, dynamic>>?;
 
-      if (semiAdminQuery.docs.isNotEmpty) {
-        debugPrint('Ã¢Å“â€¦ Semi-admin biometric login successful!');
+      if (responderDoc != null) {
+        debugPrint('Ã¢Å“â€¦ Responder biometric login successful!');
         await _ensureFirebaseSession();
         // Persist phone locally for faster next login.
         await _recordSuccessfulApprovedLogin(phoneDigits: phoneInput);
-        // Set user session data for semi-admin
-        final semiAdminData = semiAdminQuery.docs.first.data();
-        final sessionData = {
-          ...semiAdminData,
-          'id': semiAdminQuery.docs.first.id,
-        };
+        // Set user session data for responder
+        final responderData = responderDoc.data();
+        final sessionData = {...responderData, 'id': responderDoc.id};
         UserSession.setUserData(sessionData);
         _syncNotificationUserId(sessionData);
-        await _updateSemiAdminPresence(
-          semiAdminData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
+        await _updateResponderPresence(
+          responderData: {...responderData, 'id': responderDoc.id},
           isLoggedIn: true,
         );
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const SemiAdminMainScreen()),
+            MaterialPageRoute(builder: (_) => const ResponderMainScreen()),
           );
         }
         return;
@@ -619,24 +612,24 @@ class _LoginPageState extends State<LoginPage>
     if (mounted) {
       setState(() => _initializing = false);
     }
-    if (kDebugMode && _enableSemiAdminBootstrap) {
+    if (kDebugMode && _enableResponderBootstrap) {
       // Keep maintenance work out of normal app startup to reduce APK jank.
-      unawaited(_seedAndBackfillSemiAdminPresence());
+      unawaited(_seedAndBackfillResponderPresence());
     }
   }
 
-  Future<void> _seedAndBackfillSemiAdminPresence() async {
+  Future<void> _seedAndBackfillResponderPresence() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final alreadyBootstrapped =
-          prefs.getBool(_semiAdminBootstrapDoneKey) ?? false;
+          prefs.getBool(_responderBootstrapDoneKey) ?? false;
       if (alreadyBootstrapped) return;
 
-      await _seedSemiAdminsIfEmpty();
-      await _backfillSemiAdminPresenceDefaults();
-      await prefs.setBool(_semiAdminBootstrapDoneKey, true);
+      await _seedRespondersIfEmpty();
+      await _backfillResponderPresenceDefaults();
+      await prefs.setBool(_responderBootstrapDoneKey, true);
     } catch (e) {
-      debugPrint('Failed semi-admin bootstrap: $e');
+      debugPrint('Failed responder bootstrap: $e');
     }
   }
 
@@ -976,6 +969,22 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
+      if (status.hasResponderAccount) {
+        await RegistrationPrefs.savePhoneNumber(phoneDigits);
+        if (!mounted) return;
+
+        setState(() {
+          _loading = false;
+          _isPhoneVerifiedForPin = true;
+          _isPendingApprovalPhone = false;
+          _showPhoneError = false;
+          _phoneErrorMessage = '';
+          _showSavedPhoneCard = true;
+        });
+        _requiresOtpForApprovedLogin = false;
+        return;
+      }
+
       if (_requiresOtpForApprovedLogin) {
         final otpVerified = await _startOtpChallenge(phone, flowType: 'login');
         if (!mounted) return;
@@ -1037,40 +1046,42 @@ class _LoginPageState extends State<LoginPage>
 
     try {
       final authQueries = await Future.wait<dynamic>([
-        _firestore
-            .collection('semi_admins')
-            .where('contactNumber', isEqualTo: phone)
-            .where('pin', isEqualTo: pin)
-            .limit(1)
-            .get(),
+        _phoneLookupService.getFirstResponderDoc(phone),
         _phoneLookupService.getFirstApprovedUserDoc(phone),
       ]);
-      final semiAdminQuery =
-          authQueries[0] as QuerySnapshot<Map<String, dynamic>>;
+      final responderDoc =
+          authQueries[0] as QueryDocumentSnapshot<Map<String, dynamic>>?;
       final userDoc =
           authQueries[1] as QueryDocumentSnapshot<Map<String, dynamic>>?;
 
-      if (semiAdminQuery.docs.isNotEmpty) {
-        debugPrint('Ã¢Å“â€¦ Semi-admin login successful via PIN!');
+      if (responderDoc != null) {
+        debugPrint('Ã¢Å“â€¦ Responder login successful via PIN!');
         await _ensureFirebaseSession();
         // Persist phone locally for faster next login.
         await _recordSuccessfulApprovedLogin(phoneDigits: phoneInput);
-        // Set user session data for semi-admin
-        final semiAdminData = semiAdminQuery.docs.first.data();
-        final sessionData = {
-          ...semiAdminData,
-          'id': semiAdminQuery.docs.first.id,
-        };
+        // Set user session data for responder
+        final responderData = responderDoc.data();
+        if (!_isPinMatch(responderData, pin)) {
+          setState(() {
+            _loading = false;
+            _pinCtl.clear();
+            _showPinError = false;
+            _pinErrorMessage = '';
+          });
+          _resetPinWithError('Wrong PIN');
+          return;
+        }
+        final sessionData = {...responderData, 'id': responderDoc.id};
         UserSession.setUserData(sessionData);
         _syncNotificationUserId(sessionData);
-        await _updateSemiAdminPresence(
-          semiAdminData: {...semiAdminData, 'id': semiAdminQuery.docs.first.id},
+        await _updateResponderPresence(
+          responderData: {...responderData, 'id': responderDoc.id},
           isLoggedIn: true,
         );
         setState(() => _loading = false);
         if (mounted) {
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const SemiAdminMainScreen()),
+            MaterialPageRoute(builder: (_) => const ResponderMainScreen()),
           );
         }
         return;
@@ -1188,29 +1199,26 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
-  /// Seed 5 semi-admin users if collection is empty. Runs on init.
-  Future<void> _seedSemiAdminsIfEmpty() async {
-    debugPrint('Ã°Å¸â€Â Checking if semi_admins collection exists...');
+  /// Seed 5 responder users if collection is empty. Runs on init.
+  Future<void> _seedRespondersIfEmpty() async {
+    debugPrint('Ã°Å¸â€Â Checking if responders collection exists...');
     try {
-      final existing = await _firestore
-          .collection('semi_admins')
-          .limit(1)
-          .get();
+      final existing = await _firestore.collection('responders').limit(1).get();
 
       if (existing.docs.isNotEmpty) {
         debugPrint(
-          'Ã¢Å“â€œ semi_admins collection already exists. Skipping seed.',
+          'Ã¢Å“â€œ responders collection already exists. Skipping seed.',
         );
         return;
       }
 
-      debugPrint('Ã°Å¸â€œÂ semi_admins collection empty. Starting seed...');
+      debugPrint('Ã°Å¸â€œÂ responders collection empty. Starting seed...');
 
       final seedUsers = [
         {
-          'fullName': 'Semi Admin One',
+          'fullName': 'Responder One',
           'password': 'semi1234',
-          'role': 'semi-admin',
+          'role': 'responder',
           'contactNumber': '+639111111111',
           'pin': '1111',
           'isLoggedIn': false,
@@ -1218,9 +1226,9 @@ class _LoginPageState extends State<LoginPage>
           'isAvailable': false,
         },
         {
-          'fullName': 'Semi Admin Two',
+          'fullName': 'Responder Two',
           'password': 'semi1234',
-          'role': 'semi-admin',
+          'role': 'responder',
           'contactNumber': '+639222222222',
           'pin': '2222',
           'isLoggedIn': false,
@@ -1228,9 +1236,9 @@ class _LoginPageState extends State<LoginPage>
           'isAvailable': false,
         },
         {
-          'fullName': 'Semi Admin Three',
+          'fullName': 'Responder Three',
           'password': 'semi1234',
-          'role': 'semi-admin',
+          'role': 'responder',
           'contactNumber': '+639333333333',
           'pin': '3333',
           'isLoggedIn': false,
@@ -1238,9 +1246,9 @@ class _LoginPageState extends State<LoginPage>
           'isAvailable': false,
         },
         {
-          'fullName': 'Semi Admin Four',
+          'fullName': 'Responder Four',
           'password': 'semi1234',
-          'role': 'semi-admin',
+          'role': 'responder',
           'contactNumber': '+639444444444',
           'pin': '4444',
           'isLoggedIn': false,
@@ -1248,9 +1256,9 @@ class _LoginPageState extends State<LoginPage>
           'isAvailable': false,
         },
         {
-          'fullName': 'Semi Admin Five',
+          'fullName': 'Responder Five',
           'password': 'semi1234',
-          'role': 'semi-admin',
+          'role': 'responder',
           'contactNumber': '+639555555555',
           'pin': '5555',
           'isLoggedIn': false,
@@ -1262,23 +1270,21 @@ class _LoginPageState extends State<LoginPage>
       final batch = _firestore.batch();
       for (final user in seedUsers) {
         final ref = _firestore
-            .collection('semi_admins')
+            .collection('responders')
             .doc(user['contactNumber'] as String);
         batch.set(ref, user);
       }
       await batch.commit();
-      debugPrint(
-        'Ã¢Å“â€¦ Successfully seeded 5 semi-admin users to Firestore!',
-      );
+      debugPrint('Ã¢Å“â€¦ Successfully seeded 5 responder users to Firestore!');
     } catch (e) {
-      debugPrint('Ã¢ÂÅ’ Failed to seed semi_admins: $e');
+      debugPrint('Ã¢ÂÅ’ Failed to seed responders: $e');
       debugPrint('Stack trace: ${StackTrace.current}');
     }
   }
 
-  Future<void> _backfillSemiAdminPresenceDefaults() async {
+  Future<void> _backfillResponderPresenceDefaults() async {
     try {
-      final snapshot = await _firestore.collection('semi_admins').get();
+      final snapshot = await _firestore.collection('responders').get();
       if (snapshot.docs.isEmpty) return;
 
       final batch = _firestore.batch();
@@ -1325,11 +1331,11 @@ class _LoginPageState extends State<LoginPage>
       if (updateCount > 0) {
         await batch.commit();
         debugPrint(
-          'Backfilled semi-admin presence defaults for $updateCount responders',
+          'Backfilled responder presence defaults for $updateCount responders',
         );
       }
     } catch (e) {
-      debugPrint('Failed to backfill semi-admin presence defaults: $e');
+      debugPrint('Failed to backfill responder presence defaults: $e');
     }
   }
 

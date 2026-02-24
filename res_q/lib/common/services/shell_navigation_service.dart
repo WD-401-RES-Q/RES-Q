@@ -32,8 +32,8 @@ class MainShellNavigationService {
   }
 }
 
-class SemiAdminShellNavigationCommand {
-  const SemiAdminShellNavigationCommand({
+class ResponderShellNavigationCommand {
+  const ResponderShellNavigationCommand({
     required this.tabIndex,
     this.reportId,
   });
@@ -42,12 +42,12 @@ class SemiAdminShellNavigationCommand {
   final String? reportId;
 }
 
-class SemiAdminShellNavigationService {
-  static final ValueNotifier<SemiAdminShellNavigationCommand?> commands =
-      ValueNotifier<SemiAdminShellNavigationCommand?>(null);
+class ResponderShellNavigationService {
+  static final ValueNotifier<ResponderShellNavigationCommand?> commands =
+      ValueNotifier<ResponderShellNavigationCommand?>(null);
 
   static void openTab(int tabIndex, {String? reportId}) {
-    commands.value = SemiAdminShellNavigationCommand(
+    commands.value = ResponderShellNavigationCommand(
       tabIndex: tabIndex,
       reportId: reportId,
     );

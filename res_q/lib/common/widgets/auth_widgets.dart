@@ -2017,7 +2017,7 @@ RES-Q is a community-based disaster response and emergency assistance applicatio
     - Emergency responders when you report or are involved in an emergency
     - Local disaster response teams
     - Your designated emergency contacts
-    - Semi-administrators managing disaster response
+    - Responders managing disaster response
 6.3 Location data during active emergencies may be retained for rescue coordination and post-incident analysis.
 6.4 You may disable location sharing in non-emergency situations through app settings.
 

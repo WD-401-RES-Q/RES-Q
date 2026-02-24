@@ -28,13 +28,13 @@ void _debugLog(Object? message) {
 
 enum WeatherState { none, sunny, cloudy, rainy }
 
-class AdminMapPage extends StatefulWidget {
-  const AdminMapPage({super.key, this.initialReportId});
+class ResponderMapPage extends StatefulWidget {
+  const ResponderMapPage({super.key, this.initialReportId});
 
   final String? initialReportId;
 
   @override
-  State<AdminMapPage> createState() => _AdminMapPageState();
+  State<ResponderMapPage> createState() => _ResponderMapPageState();
 }
 
 class AdminComment {
@@ -70,7 +70,7 @@ class _ResponderIdentity {
       phone.isEmpty && normalizedName.isEmpty && authUid.isEmpty;
 }
 
-class _AdminMapPageState extends State<AdminMapPage>
+class _ResponderMapPageState extends State<ResponderMapPage>
     with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   final MapController _mapController = MapController();
   final ValueNotifier<LatLng?> _trackingUserLocationNotifier =
@@ -153,17 +153,19 @@ class _AdminMapPageState extends State<AdminMapPage>
     seconds: 2,
   );
   static const double _responderLocationWriteMinMoveMeters = 10.0;
+  static const double _autoOnSceneDistanceMeters = 25.0;
   DateTime? _lastResponderLocationWriteAt;
   LatLng? _lastResponderLocationWritePoint;
   String? _lastResponderLocationWriteReportId;
   bool _isResponderLocationWriteInFlight = false;
   LatLng? _pendingResponderLocationWritePoint;
   String? _pendingResponderLocationWriteReportId;
+  final Set<String> _autoOnSceneInFlightReportIds = <String>{};
 
   @override
   void initState() {
     super.initState();
-    FrameTimingService.instance.setCurrentScreen('AdminMapPage');
+    FrameTimingService.instance.setCurrentScreen('ResponderMapPage');
     _pendingFocusReportId = widget.initialReportId?.trim();
     _subscribeToReportsRealtime();
     // Initialize with user location (simulated)
@@ -179,7 +181,7 @@ class _AdminMapPageState extends State<AdminMapPage>
   }
 
   @override
-  void didUpdateWidget(covariant AdminMapPage oldWidget) {
+  void didUpdateWidget(covariant ResponderMapPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.initialReportId != oldWidget.initialReportId) {
       final nextReportId = widget.initialReportId?.trim();
@@ -624,15 +626,12 @@ class _AdminMapPageState extends State<AdminMapPage>
     }
 
     try {
-      await FirebaseFirestore.instance
-          .collection('semi_admins')
-          .doc(docId)
-          .set({
-            'isLoggedIn': true,
-            'status': normalizedStatus,
-            'isAvailable': isAvailable,
-            'lastSeenAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
+      await FirebaseFirestore.instance.collection('responders').doc(docId).set({
+        'isLoggedIn': true,
+        'status': normalizedStatus,
+        'isAvailable': isAvailable,
+        'lastSeenAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
       _lastPresenceStatus = normalizedStatus;
       _lastPresenceAvailability = isAvailable;
     } catch (e) {
@@ -1570,7 +1569,7 @@ class _AdminMapPageState extends State<AdminMapPage>
       final responderName =
           UserSession.currentUserData?['fullName'] as String? ??
           UserSession.currentUserData?['username'] as String? ??
-          'Semi-Admin';
+          'Responder';
 
       if (statusLower == 'resolved' || statusLower == 'incident resolved') {
         return _markIncidentResolved(reportId);
@@ -1669,7 +1668,7 @@ class _AdminMapPageState extends State<AdminMapPage>
     final responderName =
         UserSession.currentUserData?['fullName'] as String? ??
         UserSession.currentUserData?['username'] as String? ??
-        'Semi-Admin';
+        'Responder';
     try {
       await FirebaseFirestore.instance
           .collection('reports')
@@ -1741,6 +1740,57 @@ class _AdminMapPageState extends State<AdminMapPage>
     final reportId = _activeReportId;
     if (reportId == null) return;
     _scheduleResponderLocationWrite(reportId: reportId, point: point);
+    _evaluateAutoOnSceneProximity(reportId: reportId, point: point);
+  }
+
+  void _evaluateAutoOnSceneProximity({
+    required String reportId,
+    required LatLng point,
+  }) {
+    final reportData = _reportsById[reportId];
+    if (reportData == null) {
+      return;
+    }
+    if (!_isAssignedToCurrentResponder(reportData)) {
+      return;
+    }
+    final statusRaw =
+        (reportData['responderStatus'] ?? reportData['status'] ?? '')
+            .toString();
+    if (_isClosedIncidentStatus(statusRaw)) {
+      return;
+    }
+    if (_normalizeStatusKey(statusRaw) == 'on scene') {
+      return;
+    }
+    if (_autoOnSceneInFlightReportIds.contains(reportId)) {
+      return;
+    }
+
+    final incidentPoint =
+        _latLngFromDynamic(reportData['incidentLocation']) ??
+        _latLngFromDynamic(reportData['location']);
+    if (incidentPoint == null) {
+      return;
+    }
+
+    final distanceMeters = const Distance().as(
+      LengthUnit.Meter,
+      point,
+      incidentPoint,
+    );
+    if (distanceMeters > _autoOnSceneDistanceMeters) {
+      return;
+    }
+
+    reportData['status'] = 'ON SCENE';
+    reportData['responderStatus'] = 'ON SCENE';
+    _autoOnSceneInFlightReportIds.add(reportId);
+    unawaited(
+      _updateIncidentStatus(reportId, 'ON SCENE').whenComplete(() {
+        _autoOnSceneInFlightReportIds.remove(reportId);
+      }),
+    );
   }
 
   void _startResponderLocationPollingFallback() {

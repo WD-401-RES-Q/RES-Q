@@ -93,8 +93,8 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Widget _buildUnifiedNotificationFeed() {
-    final isSemiAdmin = _isSemiAdminUser();
-    final reportFetchLimit = isSemiAdmin ? 150 : 30;
+    final isResponder = _isResponderUser();
+    final reportFetchLimit = isResponder ? 150 : 30;
     final announcementsStream = FirebaseFirestore.instance
         .collection('announcements')
         .orderBy('createdAt', descending: true)
@@ -233,7 +233,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     QuerySnapshot<Map<String, dynamic>>? announcementsSnapshot,
     QuerySnapshot<Map<String, dynamic>>? reportsSnapshot,
   ) {
-    final isSemiAdmin = _isSemiAdminUser();
+    final isResponder = _isResponderUser();
     final announcements = (announcementsSnapshot?.docs ?? const [])
         .where((doc) {
           final data = doc.data();
@@ -248,13 +248,13 @@ class _NotificationsPageState extends State<NotificationsPage> {
           if (data['location'] == null) {
             return false;
           }
-          if (!isSemiAdmin) {
+          if (!isResponder) {
             return true;
           }
           return _isReportAssignedToCurrentResponder(data);
         })
         .map(
-          (doc) => _NotificationItem.fromReport(doc, forResponder: isSemiAdmin),
+          (doc) => _NotificationItem.fromReport(doc, forResponder: isResponder),
         )
         .toList();
 
@@ -479,14 +479,14 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   void _openIncidentReport(_NotificationItem notification) {
-    if (_isSemiAdminUser()) {
-      SemiAdminShellNavigationService.openTab(0, reportId: notification.id);
+    if (_isResponderUser()) {
+      ResponderShellNavigationService.openTab(0, reportId: notification.id);
       return;
     }
     MainShellNavigationService.openTab(1, communityReportId: notification.id);
   }
 
-  bool _isSemiAdminUser() {
+  bool _isResponderUser() {
     final role = (UserSession.currentUserData?['role'] ?? '')
         .toString()
         .trim()

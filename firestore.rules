@@ -34,8 +34,8 @@ service cloud.firestore {
           request.resource.data.userPhone.matches('^[0-9]+$');  // Validate phone number format
     }
 
-    // Semi-admin presence updates (online/offline heartbeat)
-    function isValidSemiAdminPresenceUpdate() {
+    // Responder presence updates (online/offline heartbeat)
+    function isValidResponderPresenceUpdate() {
       return request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly([
             'isLoggedIn',
@@ -66,7 +66,7 @@ service cloud.firestore {
           request.resource.data.type == 'user';
     }
 
-    // Responder comments from semi-admin flow may not have Firebase Auth session.
+    // Responder comments from responder flow may not have Firebase Auth session.
     // Allow only responder/admin-typed comment payloads.
     function isValidResponderCommentCreate() {
       return request.resource.data.author is string &&
@@ -132,10 +132,17 @@ service cloud.firestore {
       allow create, delete: if false; // Only backend admin scripts
     }
 
-    // Semi-admins collection - allow read for mobile login checks
+    // Responders collection - allow read for mobile login checks
+    match /responders/{docId} {
+      allow read: if true;
+      allow update: if isValidResponderPresenceUpdate();
+      allow create, delete: if false; // Only backend scripts
+    }
+
+    // Legacy responders path kept for backward compatibility.
     match /semi_admins/{docId} {
       allow read: if true;
-      allow update: if isValidSemiAdminPresenceUpdate();
+      allow update: if isValidResponderPresenceUpdate();
       allow create, delete: if false; // Only backend scripts
     }
 

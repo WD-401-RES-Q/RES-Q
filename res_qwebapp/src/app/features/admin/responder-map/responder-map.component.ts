@@ -488,7 +488,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
         Promise.all([
           updateDoc(doc(db, 'reports', selectedReportId), payload),
           setDoc(
-            doc(db, 'semi_admins', selectedResponder.id),
+            doc(db, 'responders', selectedResponder.id),
             {
               isLoggedIn: true,
               status: 'busy',
@@ -881,7 +881,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       this.respondersUnsubscribe();
       this.respondersUnsubscribe = undefined;
     }
-    const respondersRef = collection(db, 'semi_admins');
+    const respondersRef = collection(db, 'responders');
     this.respondersUnsubscribe = onSnapshot(
       respondersRef,
       (snapshot) => {

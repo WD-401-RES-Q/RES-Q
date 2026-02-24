@@ -420,7 +420,7 @@ class _ProfilePageState extends State<ProfilePage>
   bool get wantKeepAlive => true;
   static const String _ratingStarAsset = 'assets/icons/rating/rating-star.png';
 
-  Future<void> _updateSemiAdminPresenceOnLogout() async {
+  Future<void> _updateResponderPresenceOnLogout() async {
     final userData = UserSession.currentUserData;
     final role = (userData?['role'] ?? '').toString().toLowerCase();
     if (!(role == 'semi-admin' ||
@@ -435,18 +435,15 @@ class _ProfilePageState extends State<ProfilePage>
     if (docId.isEmpty) return;
 
     try {
-      await FirebaseFirestore.instance
-          .collection('semi_admins')
-          .doc(docId)
-          .set({
-            'isLoggedIn': false,
-            'status': 'offline',
-            'isAvailable': false,
-            'lastSeenAt': FieldValue.serverTimestamp(),
-            'sessionStartedAt': FieldValue.delete(),
-          }, SetOptions(merge: true));
+      await FirebaseFirestore.instance.collection('responders').doc(docId).set({
+        'isLoggedIn': false,
+        'status': 'offline',
+        'isAvailable': false,
+        'lastSeenAt': FieldValue.serverTimestamp(),
+        'sessionStartedAt': FieldValue.delete(),
+      }, SetOptions(merge: true));
     } catch (e) {
-      debugPrint('Failed to mark semi-admin offline: $e');
+      debugPrint('Failed to mark responder offline: $e');
     }
   }
 
@@ -684,7 +681,7 @@ class _ProfilePageState extends State<ProfilePage>
                     Expanded(
                       child: ElevatedButton(
                         onPressed: () async {
-                          await _updateSemiAdminPresenceOnLogout();
+                          await _updateResponderPresenceOnLogout();
                           UserSession.clear();
                           await RegistrationPrefs.setApprovedLoginCompleted(
                             false,

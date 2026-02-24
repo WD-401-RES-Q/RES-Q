@@ -1268,7 +1268,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
       setState(() => _loading = false);
       AppSnackBar.show(
         context,
-        'This phone number is already registered. Please use a different number.',
+        'This phone number is already registered or pending approval. Please use a different number.',
         type: AppSnackBarType.error,
         duration: const Duration(seconds: 4),
       );
@@ -1326,11 +1326,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
       Navigator.pushNamed(
         context,
         '/pin-creation',
-        arguments: {
-          'phoneNumber': phone,
-          'userData': userData,
-          'uid': uid,
-        },
+        arguments: {'phoneNumber': phone, 'userData': userData, 'uid': uid},
       );
       return;
     }

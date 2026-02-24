@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'semi_admin_map_page.dart';
+import 'responder_map_page.dart';
 import '../../community/pages/community_page.dart';
 import '../../notifications/pages/notifications_page.dart';
 import '../../profile/pages/profile_page.dart';
@@ -12,8 +12,8 @@ import '../../../common/services/user_session.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../../common/widgets/mandatory_permission_gate.dart';
 
-class SemiAdminMainPage extends StatelessWidget {
-  const SemiAdminMainPage({
+class ResponderMainPage extends StatelessWidget {
+  const ResponderMainPage({
     super.key,
     required this.currentIndex,
     required this.onTap,
@@ -28,7 +28,7 @@ class SemiAdminMainPage extends StatelessWidget {
   static const appOffWhite = Color(0xFFF7F8F3);
   static const _navIconSvgPath = "assets/icons/navbar";
   static const List<Widget> _defaultPages = [
-    AdminMapPage(),
+    ResponderMapPage(),
     CommunityPage(),
     NotificationsPage(),
     ProfilePage(),
@@ -98,14 +98,14 @@ class SemiAdminMainPage extends StatelessWidget {
   }
 }
 
-class SemiAdminMainScreen extends StatefulWidget {
-  const SemiAdminMainScreen({super.key});
+class ResponderMainScreen extends StatefulWidget {
+  const ResponderMainScreen({super.key});
 
   @override
-  State<SemiAdminMainScreen> createState() => _SemiAdminMainScreenState();
+  State<ResponderMainScreen> createState() => _ResponderMainScreenState();
 }
 
-class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
+class _ResponderMainScreenState extends State<ResponderMainScreen> {
   int _currentIndex = 0;
   final Set<int> _loadedTabs = {0};
   final Map<int, int> _tabReloadTokens = <int, int>{};
@@ -120,7 +120,7 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
   @override
   void initState() {
     super.initState();
-    SemiAdminShellNavigationService.commands.addListener(
+    ResponderShellNavigationService.commands.addListener(
       _handleShellNavigation,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -131,7 +131,7 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
 
   @override
   void dispose() {
-    SemiAdminShellNavigationService.commands.removeListener(
+    ResponderShellNavigationService.commands.removeListener(
       _handleShellNavigation,
     );
     super.dispose();
@@ -144,7 +144,7 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
         return userId;
       }
     } catch (_) {
-      // Fall back to session document id for semi-admin profiles
+      // Fall back to session document id for responder profiles
       // that do not yet have a normalized phone field.
     }
 
@@ -172,7 +172,7 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
   }
 
   void _handleShellNavigation() {
-    final command = SemiAdminShellNavigationService.commands.value;
+    final command = ResponderShellNavigationService.commands.value;
     if (command == null || !mounted) return;
     final nextIndex = command.tabIndex.clamp(0, 3);
     final reportId = command.reportId?.trim();
@@ -204,24 +204,24 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
               ? 'none'
               : _currentMapReportId!;
           return KeyedSubtree(
-            key: ValueKey('semi-map-tab-$reportToken-$reloadToken'),
-            child: AdminMapPage(
+            key: ValueKey('responder-map-tab-$reportToken-$reloadToken'),
+            child: ResponderMapPage(
               initialReportId: reportToken == 'none' ? null : reportToken,
             ),
           );
         case 1:
           return KeyedSubtree(
-            key: ValueKey('semi-community-tab-$reloadToken'),
+            key: ValueKey('responder-community-tab-$reloadToken'),
             child: const CommunityPage(),
           );
         case 2:
           return KeyedSubtree(
-            key: ValueKey('semi-notifications-tab-$reloadToken'),
+            key: ValueKey('responder-notifications-tab-$reloadToken'),
             child: const NotificationsPage(),
           );
         case 3:
           return KeyedSubtree(
-            key: ValueKey('semi-profile-tab-$reloadToken'),
+            key: ValueKey('responder-profile-tab-$reloadToken'),
             child: const ProfilePage(),
           );
         default:
@@ -232,7 +232,7 @@ class _SemiAdminMainScreenState extends State<SemiAdminMainScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return SemiAdminMainPage(
+    return ResponderMainPage(
       currentIndex: _currentIndex,
       pages: _buildLazyPages(),
       onTap: (index) {

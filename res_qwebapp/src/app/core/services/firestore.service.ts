@@ -101,7 +101,7 @@ export class FirestoreService {
       this.ngZone.run(() => {
         this.reportsSubject.next(reports);
         // Seed filtered subjects too for immediate UI without waiting on snapshots
-        // Pending includes: pending, responding, on scene, resolved, flagged (semi-admin actions)
+        // Pending includes: pending, responding, on scene, resolved, flagged (responder actions)
         const pendingSeed = reports.filter((r: any) => {
           const s = (r.status ?? '').toString().toLowerCase();
           return s === 'pending' || s === 'responding' || s === 'on scene' || s === 'resolved' || s === 'flagged';
