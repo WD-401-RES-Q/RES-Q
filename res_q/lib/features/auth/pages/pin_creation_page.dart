@@ -21,8 +21,11 @@ class PINCreationPage extends StatefulWidget {
   State<PINCreationPage> createState() => _PINCreationPageState();
 }
 
-class _PINCreationPageState extends State<PINCreationPage> {
+class _PINCreationPageState extends State<PINCreationPage>
+    with SingleTickerProviderStateMixin {
   String _pin = '';
+  String _confirmPin = '';
+  bool _isConfirmingPin = false;
   bool _loading = false;
   bool _showError = false;
   String _errorMessage = '';
@@ -37,6 +40,21 @@ class _PINCreationPageState extends State<PINCreationPage> {
     region: 'asia-east2',
   );
   final LocalAuthentication _localAuth = LocalAuthentication();
+  late final AnimationController _shakeController;
+  late final Animation<double> _shakeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _shakeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 450),
+    );
+    _shakeAnimation = CurvedAnimation(
+      parent: _shakeController,
+      curve: Curves.elasticIn,
+    );
+  }
 
   @override
   void didChangeDependencies() {
@@ -72,6 +90,12 @@ class _PINCreationPageState extends State<PINCreationPage> {
     }
   }
 
+  @override
+  void dispose() {
+    _shakeController.dispose();
+    super.dispose();
+  }
+
   String _formatPhoneForDisplay(String? phone) {
     if (phone == null || phone.isEmpty) return '';
     String digits = phone.replaceAll(RegExp(r'\D'), '');
@@ -82,29 +106,92 @@ class _PINCreationPageState extends State<PINCreationPage> {
     return phone;
   }
 
+  String get _activePin => _isConfirmingPin ? _confirmPin : _pin;
+
+  void _triggerShake() {
+    _shakeController
+      ..reset()
+      ..forward();
+  }
+
+  void _resetConfirmStepWithError(String message) {
+    setState(() {
+      _showError = true;
+      _errorMessage = message;
+      _confirmPin = '';
+    });
+    _triggerShake();
+  }
+
   void _handlePinKey(String value) {
     if (_loading) return;
-    setState(() {
-      _showError = false;
-      if (value == PinNumpad.clearKey || value == 'C') {
-        _pin = '';
-        return;
-      }
-      if (value == PinNumpad.backspaceKey || value == '\u232b') {
-        if (_pin.isNotEmpty) {
+    if (value == PinNumpad.clearKey || value == 'C') {
+      setState(() {
+        _showError = false;
+        _errorMessage = '';
+        if (_isConfirmingPin) {
+          _confirmPin = '';
+        } else {
+          _pin = '';
+        }
+      });
+      return;
+    }
+
+    if (value == PinNumpad.backspaceKey || value == '\u232b') {
+      setState(() {
+        _showError = false;
+        _errorMessage = '';
+        if (_isConfirmingPin) {
+          if (_confirmPin.isNotEmpty) {
+            _confirmPin = _confirmPin.substring(0, _confirmPin.length - 1);
+          }
+        } else if (_pin.isNotEmpty) {
           _pin = _pin.substring(0, _pin.length - 1);
         }
-        return;
+      });
+      return;
+    }
+
+    if (_isConfirmingPin) {
+      if (_confirmPin.length >= 4) return;
+      setState(() {
+        _showError = false;
+        _errorMessage = '';
+        _confirmPin += value;
+      });
+
+      if (_confirmPin.length == 4) {
+        Future.delayed(const Duration(milliseconds: 180), () {
+          if (!mounted) return;
+          if (_confirmPin != _pin) {
+            _resetConfirmStepWithError('PINs do not match');
+            return;
+          }
+          _createPin();
+        });
       }
-      if (_pin.length < 4) {
-        _pin += value;
-        if (_pin.length == 4) {
-          Future.delayed(const Duration(milliseconds: 200), () {
-            _createPin();
-          });
-        }
-      }
+      return;
+    }
+
+    if (_pin.length >= 4) return;
+    setState(() {
+      _showError = false;
+      _errorMessage = '';
+      _pin += value;
     });
+
+    if (_pin.length == 4) {
+      Future.delayed(const Duration(milliseconds: 180), () {
+        if (!mounted) return;
+        setState(() {
+          _isConfirmingPin = true;
+          _confirmPin = '';
+          _showError = false;
+          _errorMessage = '';
+        });
+      });
+    }
   }
 
   Future<bool> _checkBiometricsAvailable() async {
@@ -346,8 +433,9 @@ class _PINCreationPageState extends State<PINCreationPage> {
       _uid = uid;
 
       final userData = _userData ?? {};
-      userData['pin'] = _pin;
-      userData['pin_hash'] = SecurityHash.sha256Hex(_pin);
+      final hashedPin = SecurityHash.sha256Hex(_pin);
+      userData['pin_hash'] = hashedPin;
+      userData['hashedPin'] = hashedPin;
       userData['accountStatus'] = 'pending';
       userData['contactNumber'] = _phoneNumber;
 
@@ -386,8 +474,13 @@ class _PINCreationPageState extends State<PINCreationPage> {
       }
 
       if (!mounted) return;
-
-      await _showApprovalPendingDialog();
+      await _endTemporaryAuthSession();
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/account-submitted',
+        (_) => false,
+      );
     } catch (e) {
       var message = 'Registration failed. Please try again.';
       if (e is FirebaseFunctionsException) {
@@ -408,6 +501,8 @@ class _PINCreationPageState extends State<PINCreationPage> {
           _showError = true;
           _errorMessage = message;
           _pin = '';
+          _confirmPin = '';
+          _isConfirmingPin = false;
         });
       }
       if (mounted) {
@@ -416,117 +511,12 @@ class _PINCreationPageState extends State<PINCreationPage> {
     }
   }
 
-  Future<void> _showApprovalPendingDialog() async {
-    return showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Dialog(
-        backgroundColor: AppTheme.appOffWhite,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppDimensions.radiusLarge),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(AppDimensions.paddingXLarge),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  color: AppTheme.appRed.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: AppTheme.appRed, width: 2),
-                ),
-                child: Icon(
-                  Icons.hourglass_top,
-                  size: 48,
-                  color: AppTheme.appRed,
-                ),
-              ),
-              const SizedBox(height: AppDimensions.paddingLarge),
-              Text(
-                'ACCOUNT PENDING',
-                style: AppTextStyles.authPageTitle.copyWith(
-                  color: AppTheme.appRed,
-                  height: 1.2,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'Awaiting Admin Approval',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: AppTheme.appBlack,
-                  fontFamily: 'Roboto',
-                  letterSpacing: 0.5,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppDimensions.paddingMedium),
-              Text(
-                'Your account is currently pending admin approval. This usually takes up to 48 hours.\n.',
-                style: TextStyle(
-                  fontSize: 13.5,
-                  color: AppTheme.appBlack.withValues(alpha: 0.85),
-                  fontFamily: 'RobotoCondensed',
-                  height: 1.4,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppDimensions.paddingXLarge),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    unawaited(
-                      _endTemporaryAuthSession().whenComplete(() {
-                        if (!mounted) return;
-                        Navigator.pushNamedAndRemoveUntil(
-                          this.context,
-                          '/login',
-                          (_) => false,
-                        );
-                      }),
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.appRed,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(
-                        AppDimensions.radiusMedium,
-                      ),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: Text(
-                    'GOT IT',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                      fontSize: 16,
-                      letterSpacing: 1.1,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildPinDots() {
+    final activePin = _activePin;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: List.generate(4, (index) {
-        final hasValue = _pin.length > index;
+        final hasValue = activePin.length > index;
         return Container(
           margin: const EdgeInsets.symmetric(horizontal: 10),
           width: 20,
@@ -559,7 +549,20 @@ class _PINCreationPageState extends State<PINCreationPage> {
                 left: AppDimensions.paddingXLarge,
                 right: AppDimensions.paddingXLarge,
               ),
-              leading: const ResqBackButton.outline(),
+              leading: ResqBackButton.outline(
+                onPressed: () {
+                  if (_isConfirmingPin && !_loading) {
+                    setState(() {
+                      _isConfirmingPin = false;
+                      _confirmPin = '';
+                      _showError = false;
+                      _errorMessage = '';
+                    });
+                    return;
+                  }
+                  Navigator.pop(context);
+                },
+              ),
               title: Text('CREATE PIN', style: AppTextStyles.authPageTitle),
               titleSpacing: AppDimensions.paddingSmall,
               bottomSpacing: AppDimensions.paddingSmall,
@@ -579,7 +582,9 @@ class _PINCreationPageState extends State<PINCreationPage> {
                       child: Column(
                         children: [
                           Text(
-                            'Set up your 4-digit PIN for fast login',
+                            _isConfirmingPin
+                                ? 'Confirm your 4-digit PIN'
+                                : 'Set up your 4-digit PIN for fast login',
                             style: TextStyle(
                               fontSize: 14,
                               color: AppTheme.appBlack.withValues(alpha: 0.7),
@@ -633,7 +638,9 @@ class _PINCreationPageState extends State<PINCreationPage> {
 
                           // PIN label
                           Text(
-                            'ENTER YOUR PIN',
+                            _isConfirmingPin
+                                ? 'CONFIRM YOUR PIN'
+                                : 'ENTER YOUR PIN',
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
@@ -655,7 +662,25 @@ class _PINCreationPageState extends State<PINCreationPage> {
                                     color: AppTheme.appRed,
                                   ),
                                 )
-                              : _buildPinDots(),
+                              : AnimatedBuilder(
+                                  animation: _shakeAnimation,
+                                  builder: (context, child) {
+                                    final offset =
+                                        _shakeAnimation.value *
+                                        10 *
+                                        (1 - _shakeAnimation.value) *
+                                        ((_shakeController.value * 8).floor() %
+                                                    2 ==
+                                                0
+                                            ? 1
+                                            : -1);
+                                    return Transform.translate(
+                                      offset: Offset(offset, 0),
+                                      child: child,
+                                    );
+                                  },
+                                  child: _buildPinDots(),
+                                ),
 
                           // Error message
                           if (_showError) ...[
@@ -684,7 +709,9 @@ class _PINCreationPageState extends State<PINCreationPage> {
                           const SizedBox(height: AppDimensions.paddingLarge),
 
                           Text(
-                            'Please remember your PIN.\nYou will need it to login.',
+                            _isConfirmingPin
+                                ? 'Re-enter the same 4 digits to continue.'
+                                : 'Please remember your PIN.\nYou will need it to login.',
                             style: TextStyle(
                               fontSize: 12,
                               color: AppTheme.appBlack.withValues(alpha: 0.6),

@@ -10,10 +10,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../../common/theme/app_text_styles.dart';
-import '../../home/pages/home_page.dart';
 import '../../semi_admin/pages/semi_admin_main_page.dart';
+import '../../home/pages/home_page.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/services/registration_prefs.dart';
+import '../../../common/services/trusted_device_service.dart';
 import '../../../common/services/notification_service.dart';
 import '../../../common/services/phone_lookup_service.dart';
 import '../../../common/utils/security_hash.dart';
@@ -34,11 +35,12 @@ class _LoginPageState extends State<LoginPage>
   static const appOffWhite = Color(0xFFF7F8F3);
   static const bool _enableSemiAdminBootstrap = false;
   static const String _semiAdminBootstrapDoneKey = 'semi_admin_bootstrap_done';
-  static const String _phoneValidationScopeKey = 'login';
 
   final _formKey = GlobalKey<FormState>();
   bool _loading = false;
   bool _initializing = true;
+  bool _startupArgsApplied = false;
+  bool _requiresOtpForApprovedLogin = true;
   final TextEditingController _pinCtl = TextEditingController();
   final TextEditingController _phoneCtl = TextEditingController();
   bool _showPinSuccess = false;
@@ -58,12 +60,15 @@ class _LoginPageState extends State<LoginPage>
 
   // Biometrics
   final LocalAuthentication _localAuth = LocalAuthentication();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   bool _canUseBiometrics = false;
   bool _biometricsEnabled = false;
   String? _biometricsPhone;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final PhoneLookupService _phoneLookupService = PhoneLookupService.instance;
+  final TrustedDeviceService _trustedDeviceService =
+      TrustedDeviceService.instance;
 
   bool get _isPinUnlocked => _isPhoneVerifiedForPin;
 
@@ -170,6 +175,27 @@ class _LoginPageState extends State<LoginPage>
   Future<void> _saveApprovedLoginState(String phoneDigits) async {
     await RegistrationPrefs.savePhoneNumber(phoneDigits);
     await RegistrationPrefs.setApprovedLoginCompleted(true);
+  }
+
+  Future<void> _recordSuccessfulApprovedLogin({
+    required String phoneDigits,
+    String? approvedUserDocId,
+  }) async {
+    try {
+      await _saveApprovedLoginState(phoneDigits);
+      await RegistrationPrefs.saveLastActivityNow();
+      await _trustedDeviceService.markTrusted('+63$phoneDigits');
+      if (approvedUserDocId != null && approvedUserDocId.isNotEmpty) {
+        await _firestore
+            .collection('approved_users')
+            .doc(approvedUserDocId)
+            .set({
+              'lastLoginTimestamp': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+      }
+    } catch (e) {
+      debugPrint('Failed to persist trusted login metadata: $e');
+    }
   }
 
   void _syncNotificationUserId(Map<String, dynamic> userData) {
@@ -391,7 +417,7 @@ class _LoginPageState extends State<LoginPage>
         debugPrint('Ã¢Å“â€¦ Semi-admin biometric login successful!');
         await _ensureFirebaseSession();
         // Persist phone locally for faster next login.
-        await _saveApprovedLoginState(phoneInput);
+        await _recordSuccessfulApprovedLogin(phoneDigits: phoneInput);
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
         final sessionData = {
@@ -450,7 +476,9 @@ class _LoginPageState extends State<LoginPage>
         return;
       }
 
-      if (accountStatus != 'approved') {
+      final isApprovedAccount =
+          accountStatus == 'approved' || userData['isApproved'] == true;
+      if (!isApprovedAccount) {
         setState(() => _loading = false);
         await _showPendingApprovalDialog();
         return;
@@ -470,15 +498,20 @@ class _LoginPageState extends State<LoginPage>
 
       // Login successful
       // Persist phone locally for faster next login.
-      await _saveApprovedLoginState(phoneInput);
+      await _recordSuccessfulApprovedLogin(
+        phoneDigits: phoneInput,
+        approvedUserDocId: userDoc.id,
+      );
       UserSession.setUserData(userData);
       _syncNotificationUserId(userData);
       _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
-        Navigator.of(
-          context,
-        ).pushReplacement(MaterialPageRoute(builder: (_) => const MainPage()));
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const MainPage(showWelcomeBackOnLoad: true),
+          ),
+        );
       }
     } catch (e) {
       setState(() => _loading = false);
@@ -500,111 +533,7 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
-  PhoneLookupResult? _readCachedPhoneValidation(String phoneDigits) {
-    if (phoneDigits.length != 10) return null;
-    return _phoneLookupService.readCachedAccountStatus('+63$phoneDigits');
-  }
-
-  Future<void> _applyPhoneValidationResult(
-    String phoneDigits,
-    PhoneLookupResult validationResult,
-  ) async {
-    if (!mounted) return;
-    final currentDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
-    if (currentDigits != phoneDigits) return;
-
-    if (validationResult.isBannedAccount) {
-      final isPermanentBan = validationResult.isPermanentBan;
-      setState(() {
-        _isPhoneVerifiedForPin = false;
-        _isPendingApprovalPhone = false;
-        _showPhoneError = true;
-        _phoneErrorMessage = isPermanentBan
-            ? 'This account is permanently banned.'
-            : 'This account is temporarily banned.';
-        _pinCtl.clear();
-        _showPinError = false;
-        _pinErrorMessage = '';
-      });
-      await _showBannedAccountDialog(
-        isPermanentBan: isPermanentBan,
-        bannedUntil: validationResult.bannedUntil,
-        banReasons: validationResult.banReasons,
-      );
-      return;
-    }
-
-    if (validationResult.isPendingAccount) {
-      setState(() {
-        _isPhoneVerifiedForPin = false;
-        _isPendingApprovalPhone = true;
-        _showPhoneError = false;
-        _phoneErrorMessage = '';
-        _pinCtl.clear();
-        _showPinError = false;
-        _pinErrorMessage = '';
-      });
-      return;
-    }
-
-    if (!validationResult.hasAnyAccount) {
-      setState(() {
-        _isPhoneVerifiedForPin = false;
-        _isPendingApprovalPhone = false;
-        _showPhoneError = true;
-        _phoneErrorMessage = 'No account found with this phone number.';
-        _pinCtl.clear();
-        _showPinError = false;
-        _pinErrorMessage = '';
-      });
-      return;
-    }
-
-    setState(() {
-      _isPhoneVerifiedForPin = true;
-      _isPendingApprovalPhone = false;
-      _showPhoneError = false;
-      _phoneErrorMessage = '';
-    });
-
-    await RegistrationPrefs.savePhoneNumber(phoneDigits);
-  }
-
-  Future<void> _validatePhoneForPinEntry(
-    String phoneDigits, {
-    bool useCache = true,
-  }) async {
-    if (phoneDigits.length != 10) return;
-
-    final phone = '+63$phoneDigits';
-
-    try {
-      final validationResult = await _phoneLookupService.lookupAccountStatus(
-        phone,
-        useCache: useCache,
-      );
-      await _applyPhoneValidationResult(phoneDigits, validationResult);
-    } catch (e) {
-      debugPrint('Error validating phone number for PIN login: $e');
-      if (!mounted) return;
-      final currentDigits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
-      if (currentDigits != phoneDigits) return;
-      setState(() {
-        _isPhoneVerifiedForPin = false;
-        _isPendingApprovalPhone = false;
-        _showPhoneError = true;
-        _phoneErrorMessage = 'Unable to verify phone number. Please try again.';
-        _pinCtl.clear();
-        _showPinError = false;
-        _pinErrorMessage = '';
-      });
-    }
-  }
-
   void _onPhoneChanged(String _) {
-    final digits = _phoneCtl.text.replaceAll(RegExp(r'\D'), '');
-    _phoneLookupService.cancelDebounce(_phoneValidationScopeKey);
-
     final shouldRebuild =
         _pinCtl.text.isNotEmpty ||
         _showPinError ||
@@ -624,32 +553,39 @@ class _LoginPageState extends State<LoginPage>
         _showPhoneError = false;
         _phoneErrorMessage = '';
       });
+      _requiresOtpForApprovedLogin = true;
     }
-
-    if (digits.length != 10) return;
-
-    final phone = '+63$digits';
-    unawaited(
-      _phoneLookupService
-          .debouncedLookupAccountStatus(
-            scopeKey: _phoneValidationScopeKey,
-            phone: phone,
-          )
-          .then((result) async {
-            if (result == null) return;
-            await _applyPhoneValidationResult(digits, result);
-          })
-          .catchError((error) {
-            debugPrint('Error validating phone number: $error');
-            return null;
-          }),
-    );
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final args = ModalRoute.of(context)?.settings.arguments as Map?;
+    if (!_startupArgsApplied) {
+      _startupArgsApplied = true;
+      final trustedPhone = args?['trustedPhone'] as String?;
+      final directPin = args?['directPin'] == true;
+      final trustedDigits = _extractLocalPhoneDigits(trustedPhone);
+      if (trustedDigits.length == 10) {
+        setState(() {
+          _phoneCtl.text = _formatPhoneNumber(trustedDigits);
+          _showSavedPhoneCard = true;
+        });
+      }
+
+      if (directPin && trustedDigits.length == 10) {
+        setState(() {
+          _isPhoneVerifiedForPin = true;
+          _showSavedPhoneCard = true;
+          _showPhoneError = false;
+          _phoneErrorMessage = '';
+        });
+        _requiresOtpForApprovedLogin = false;
+      } else {
+        _requiresOtpForApprovedLogin = true;
+      }
+    }
+
     if (args != null && args['showPinSuccess'] == true) {
       setState(() => _showPinSuccess = true);
       Future.delayed(const Duration(seconds: 5), () {
@@ -658,6 +594,24 @@ class _LoginPageState extends State<LoginPage>
         }
       });
     }
+  }
+
+  String _extractLocalPhoneDigits(String? rawPhone) {
+    if (rawPhone == null || rawPhone.trim().isEmpty) {
+      return '';
+    }
+
+    final digits = rawPhone.replaceAll(RegExp(r'\D'), '');
+    if (digits.length == 12 && digits.startsWith('63')) {
+      return digits.substring(2);
+    }
+    if (digits.length == 11 && digits.startsWith('0')) {
+      return digits.substring(1);
+    }
+    if (digits.length > 10) {
+      return digits.substring(digits.length - 10);
+    }
+    return digits;
   }
 
   Future<void> _initialize() async {
@@ -713,22 +667,32 @@ class _LoginPageState extends State<LoginPage>
           await RegistrationPrefs.isApprovedLoginCompleted();
 
       // Load saved phone number for convenience
-      final savedPhone = await RegistrationPrefs.getPhoneNumber();
+      final trustedPhone = await _trustedDeviceService.getTrustedPhone();
+      final trustedPhoneDigits = trustedPhone?.replaceAll(RegExp(r'\D'), '');
+      final hasTrustedPhone =
+          trustedPhoneDigits != null && trustedPhoneDigits.length >= 10;
+      final fallbackSavedPhone = await RegistrationPrefs.getPhoneNumber();
+      final savedPhone = hasTrustedPhone
+          ? trustedPhoneDigits.substring(trustedPhoneDigits.length - 10)
+          : fallbackSavedPhone;
       if (savedPhone != null && savedPhone.isNotEmpty && mounted) {
-        final normalizedSavedPhone = savedPhone.replaceAll(RegExp(r'\D'), '');
         setState(() {
           _phoneCtl.text = _formatPhoneNumber(savedPhone);
-          _showSavedPhoneCard = approvedLoginCompleted;
+          _showSavedPhoneCard = approvedLoginCompleted || hasTrustedPhone;
+          _isPhoneVerifiedForPin = hasTrustedPhone;
+          _isPendingApprovalPhone = false;
+          _showPhoneError = false;
+          _phoneErrorMessage = '';
         });
+        if (hasTrustedPhone) {
+          _requiresOtpForApprovedLogin = false;
+        }
         // Sync biometrics from Firestore in background.
         unawaited(
           _loadBiometricsFromFirestore(
             '+63${savedPhone.replaceAll(RegExp(r'\D'), '')}',
           ),
         );
-        if (normalizedSavedPhone.length == 10) {
-          unawaited(_validatePhoneForPinEntry(normalizedSavedPhone));
-        }
       } else if (mounted) {
         setState(() {
           _showSavedPhoneCard = false;
@@ -797,7 +761,6 @@ class _LoginPageState extends State<LoginPage>
 
   @override
   void dispose() {
-    _phoneLookupService.cancelDebounce(_phoneValidationScopeKey);
     _pinCtl.dispose();
     _phoneCtl.dispose();
     _shakeController.dispose();
@@ -823,6 +786,82 @@ class _LoginPageState extends State<LoginPage>
         setState(() => _showPinError = false);
       }
     });
+  }
+
+  Future<bool> _startOtpChallenge(
+    String phone, {
+    String flowType = 'login',
+  }) async {
+    final otpCompleter = Completer<bool>();
+
+    try {
+      if (!kIsWeb) {
+        await _auth.setSettings(appVerificationDisabledForTesting: kDebugMode);
+      }
+
+      await _auth.verifyPhoneNumber(
+        phoneNumber: phone,
+        timeout: const Duration(seconds: 60),
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          try {
+            await _auth.signInWithCredential(credential);
+          } catch (_) {}
+          if (!otpCompleter.isCompleted) {
+            otpCompleter.complete(true);
+          }
+        },
+        verificationFailed: (FirebaseAuthException e) {
+          if (mounted) {
+            AppSnackBar.show(
+              context,
+              e.message ?? 'Phone verification failed',
+              type: AppSnackBarType.error,
+            );
+          }
+          if (!otpCompleter.isCompleted) {
+            otpCompleter.complete(false);
+          }
+        },
+        codeSent: (String verificationId, int? resendToken) async {
+          if (!mounted) {
+            if (!otpCompleter.isCompleted) {
+              otpCompleter.complete(false);
+            }
+            return;
+          }
+
+          final result = await Navigator.pushNamed(
+            context,
+            '/otp',
+            arguments: {
+              'flowType': flowType,
+              'verificationId': verificationId,
+              'phoneNumber': phone,
+            },
+          );
+          final isVerified = result == true;
+          if (!otpCompleter.isCompleted) {
+            otpCompleter.complete(isVerified);
+          }
+        },
+        codeAutoRetrievalTimeout: (_) {},
+      );
+
+      final verified = await otpCompleter.future.timeout(
+        const Duration(minutes: 3),
+        onTimeout: () => false,
+      );
+      return verified;
+    } catch (e) {
+      if (mounted) {
+        AppSnackBar.show(
+          context,
+          'Failed to send OTP. Please try again.',
+          type: AppSnackBarType.error,
+        );
+      }
+      return false;
+    }
   }
 
   Future<void> _submit() async {
@@ -861,31 +900,6 @@ class _LoginPageState extends State<LoginPage>
       return;
     }
 
-    if (!_isPinUnlocked) {
-      await _validatePhoneForPinEntry(phoneDigits, useCache: false);
-      if (!mounted) return;
-    }
-
-    if (!_isPinUnlocked) {
-      final lockedMessage = _phoneErrorMessage.isNotEmpty
-          ? _phoneErrorMessage
-          : 'Verifying phone number. Please wait.';
-      setState(() {
-        _showPhoneError = true;
-        _phoneErrorMessage = lockedMessage;
-        _pinCtl.clear();
-        _showPinError = false;
-        _pinErrorMessage = '';
-      });
-      return;
-    }
-
-    setState(() => _showPhoneError = false);
-
-    // Save as soon as we have a valid number, even before auth succeeds.
-    await RegistrationPrefs.savePhoneNumber(phoneDigits);
-    if (!mounted) return;
-
     if (_initializing) {
       AppSnackBar.show(
         context,
@@ -895,8 +909,104 @@ class _LoginPageState extends State<LoginPage>
       return;
     }
 
-    setState(() => _loading = true);
-    await _verifyPinOnly();
+    final phone = '+63$phoneDigits';
+    if (_isPinUnlocked && _pinCtl.text.trim().length == 4) {
+      setState(() {
+        _showPhoneError = false;
+        _loading = true;
+      });
+      await _verifyPinOnly();
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _showPhoneError = false;
+      _phoneErrorMessage = '';
+    });
+
+    try {
+      final status = await _phoneLookupService.lookupAccountStatus(
+        phone,
+        useCache: false,
+      );
+      if (!mounted) return;
+
+      if (status.isBannedAccount) {
+        setState(() {
+          _loading = false;
+          _isPhoneVerifiedForPin = false;
+          _isPendingApprovalPhone = false;
+        });
+        await _showBannedAccountDialog(
+          isPermanentBan: status.isPermanentBan,
+          bannedUntil: status.bannedUntil,
+          banReasons: status.banReasons,
+        );
+        return;
+      }
+
+      if (status.isPendingAccount) {
+        setState(() {
+          _loading = false;
+          _isPhoneVerifiedForPin = false;
+          _isPendingApprovalPhone = true;
+          _pinCtl.clear();
+          _showPinError = false;
+          _pinErrorMessage = '';
+        });
+        await _showPendingApprovalDialog();
+        return;
+      }
+
+      if (!status.hasAnyAccount) {
+        setState(() {
+          _loading = false;
+          _isPhoneVerifiedForPin = false;
+          _isPendingApprovalPhone = false;
+          _showPhoneError = false;
+          _phoneErrorMessage = '';
+          _pinCtl.clear();
+          _showPinError = false;
+          _pinErrorMessage = '';
+        });
+
+        await _startOtpChallenge(phone, flowType: 'registration-entry');
+        if (!mounted) return;
+        return;
+      }
+
+      if (_requiresOtpForApprovedLogin) {
+        final otpVerified = await _startOtpChallenge(phone, flowType: 'login');
+        if (!mounted) return;
+        if (!otpVerified) {
+          setState(() => _loading = false);
+          return;
+        }
+      }
+
+      await RegistrationPrefs.savePhoneNumber(phoneDigits);
+      if (!mounted) return;
+
+      setState(() {
+        _loading = false;
+        _isPhoneVerifiedForPin = true;
+        _isPendingApprovalPhone = false;
+        _showPhoneError = false;
+        _phoneErrorMessage = '';
+        _showSavedPhoneCard = true;
+      });
+      _requiresOtpForApprovedLogin = false;
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _showPhoneError = true;
+        _phoneErrorMessage = 'Unable to check account. Please try again.';
+        _isPhoneVerifiedForPin = false;
+      });
+      AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
+    }
   }
 
   Future<void> _verifyPinOnly() async {
@@ -944,7 +1054,7 @@ class _LoginPageState extends State<LoginPage>
         debugPrint('Ã¢Å“â€¦ Semi-admin login successful via PIN!');
         await _ensureFirebaseSession();
         // Persist phone locally for faster next login.
-        await _saveApprovedLoginState(phoneInput);
+        await _recordSuccessfulApprovedLogin(phoneDigits: phoneInput);
         // Set user session data for semi-admin
         final semiAdminData = semiAdminQuery.docs.first.data();
         final sessionData = {
@@ -973,20 +1083,23 @@ class _LoginPageState extends State<LoginPage>
           _showPinError = false;
           _pinErrorMessage = '';
         });
-        final cachedValidation = _readCachedPhoneValidation(phoneInput);
-        if (cachedValidation != null && cachedValidation.isBannedAccount) {
+        final validation = await _phoneLookupService.lookupAccountStatus(
+          phone,
+          useCache: false,
+        );
+        if (validation.isBannedAccount) {
           await _showBannedAccountDialog(
-            isPermanentBan: cachedValidation.isPermanentBan,
-            bannedUntil: cachedValidation.bannedUntil,
-            banReasons: cachedValidation.banReasons,
+            isPermanentBan: validation.isPermanentBan,
+            bannedUntil: validation.bannedUntil,
+            banReasons: validation.banReasons,
           );
           return;
         }
-        if (cachedValidation != null && !cachedValidation.hasAnyAccount) {
+        if (!validation.hasAnyAccount) {
           _resetPinWithError('No account found with this phone number.');
           return;
         }
-        if (cachedValidation != null && cachedValidation.isPendingAccount) {
+        if (validation.isPendingAccount) {
           await _showPendingApprovalDialog();
           return;
         }
@@ -1029,7 +1142,9 @@ class _LoginPageState extends State<LoginPage>
           ?.trim()
           .toLowerCase();
 
-      if (accountStatus != 'approved') {
+      final isApprovedAccount =
+          accountStatus == 'approved' || userData['isApproved'] == true;
+      if (!isApprovedAccount) {
         setState(() => _loading = false);
         await _showPendingApprovalDialog();
         return;
@@ -1049,15 +1164,20 @@ class _LoginPageState extends State<LoginPage>
 
       // Login successful
       // Persist phone locally for faster next login.
-      await _saveApprovedLoginState(phoneInput);
+      await _recordSuccessfulApprovedLogin(
+        phoneDigits: phoneInput,
+        approvedUserDocId: userDoc.id,
+      );
       UserSession.setUserData(userData);
       _syncNotificationUserId(userData);
       _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
       if (mounted) {
-        Navigator.of(
-          context,
-        ).pushReplacement(MaterialPageRoute(builder: (_) => const MainPage()));
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const MainPage(showWelcomeBackOnLoad: true),
+          ),
+        );
       }
     } catch (e) {
       setState(() => _loading = false);
@@ -1580,9 +1700,15 @@ class _LoginPageState extends State<LoginPage>
   void _enablePhoneFieldEditing() {
     setState(() {
       _showSavedPhoneCard = false;
+      _isPhoneVerifiedForPin = false;
+      _isPendingApprovalPhone = false;
       _showPhoneError = false;
       _phoneErrorMessage = '';
+      _showPinError = false;
+      _pinErrorMessage = '';
+      _pinCtl.clear();
     });
+    _requiresOtpForApprovedLogin = true;
   }
 
   @override
@@ -1606,8 +1732,9 @@ class _LoginPageState extends State<LoginPage>
 
             // Scrollable content
             Expanded(
-              child: Center(
-                child: SingleChildScrollView(
+              child: SingleChildScrollView(
+                child: Align(
+                  alignment: Alignment.topCenter,
                   child: GestureDetector(
                     onTap: () => FocusScope.of(context).unfocus(),
                     behavior: HitTestBehavior.opaque,
@@ -1652,7 +1779,7 @@ class _LoginPageState extends State<LoginPage>
                                         Expanded(
                                           child: Row(
                                             mainAxisAlignment:
-                                                MainAxisAlignment.center,
+                                                MainAxisAlignment.start,
                                             children: [
                                               const Icon(
                                                 Icons.phone_android,
@@ -1732,6 +1859,9 @@ class _LoginPageState extends State<LoginPage>
                                         Expanded(
                                           child: TextFormField(
                                             controller: _phoneCtl,
+                                            textAlign: TextAlign.left,
+                                            textAlignVertical:
+                                                TextAlignVertical.center,
                                             keyboardType: TextInputType.phone,
                                             autofillHints: const [
                                               AutofillHints.telephoneNumber,
@@ -1805,194 +1935,166 @@ class _LoginPageState extends State<LoginPage>
                                   ),
                                 ],
                                 const SizedBox(height: 20),
-
-                                Text(
-                                  'ENTER YOUR PIN',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w900,
-                                    color: appBlack,
-                                    fontFamily: 'Roboto',
+                                if (!_isPinUnlocked) ...[
+                                  ResqPillButton(
+                                    label: 'CONTINUE',
+                                    onPressed: _loading ? null : _submit,
+                                    loading: _loading,
+                                    backgroundColor: appBlue,
+                                    shadowColor: appBlue.withValues(alpha: 0.3),
+                                    shadowBlurRadius: 12,
+                                    shadowOffset: const Offset(0, 4),
+                                    textStyle: const TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                      fontFamily: 'Roboto',
+                                    ),
                                   ),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 16),
-
-                                // PIN Display (dots) with shake animation
-                                AnimatedBuilder(
-                                  animation: _shakeAnimation,
-                                  builder: (context, child) {
-                                    final offset =
-                                        _shakeAnimation.value *
-                                        10 *
-                                        (1 - _shakeAnimation.value) *
-                                        ((_shakeController.value * 8).floor() %
-                                                    2 ==
-                                                0
-                                            ? 1
-                                            : -1);
-                                    return Transform.translate(
-                                      offset: Offset(offset, 0),
-                                      child: child,
-                                    );
-                                  },
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: List.generate(4, (index) {
-                                      final hasValue =
-                                          _pinCtl.text.length > index;
-                                      return Container(
-                                        margin: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                        ),
-                                        width: 16,
-                                        height: 16,
-                                        decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          color: hasValue
-                                              ? (_showPinError
-                                                    ? Colors.red
-                                                    : appBlue)
-                                              : Colors.transparent,
-                                          border: Border.all(
-                                            color: _showPinError
-                                                ? Colors.red
-                                                : appBlack,
-                                            width: 2,
-                                          ),
-                                        ),
-                                      );
-                                    }),
-                                  ),
-                                ),
-
-                                // Error text below PIN
-                                if (_showPinError) ...[
-                                  const SizedBox(height: 12),
+                                ] else ...[
                                   Text(
-                                    _pinErrorMessage,
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: Colors.red,
+                                    'ENTER YOUR PIN',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w900,
+                                      color: appBlack,
+                                      fontFamily: 'Roboto',
                                     ),
                                     textAlign: TextAlign.center,
                                   ),
-                                ],
-                                const SizedBox(height: 24),
-
-                                // Numpad with biometrics (always show biometrics button)
-                                PinNumpad(
-                                  enabled: !_loading,
-                                  onKeyTap: _handlePinKey,
-                                  actionBackgroundColor: appOffWhite,
-                                  textColor: _isPinUnlocked
-                                      ? appBlack
-                                      : appBlack.withValues(alpha: 0.25),
-                                  showBiometrics: true,
-                                  onBiometricsTap: _authenticateWithBiometrics,
-                                ),
-
-                                const SizedBox(height: 20),
-
-                                // Success message for PIN creation
-                                if (_showPinSuccess) ...[
-                                  Container(
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF00A458),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        const Icon(
-                                          Icons.check_circle,
-                                          color: Colors.white,
-                                          size: 20,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Expanded(
-                                          child: Text(
-                                            'Pin is good to go! Enter the pin in the pin section.',
-                                            style: const TextStyle(
-                                              fontSize: 13,
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
                                   const SizedBox(height: 16),
-                                ],
 
-                                Align(
-                                  alignment: Alignment.center,
-                                  child: TextButton(
-                                    onPressed: () => Navigator.pushNamed(
-                                      context,
-                                      '/forgot-pin',
-                                    ),
-                                    style: TextButton.styleFrom(
-                                      padding: EdgeInsets.zero,
-                                      minimumSize: const Size(0, 0),
-                                    ),
-                                    child: Text(
-                                      'Forgot PIN?',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w700,
-                                        color: appBlue,
-                                        fontFamily: 'RobotoCondensed',
-                                        decoration: TextDecoration.underline,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-
-                                const SizedBox(height: 10),
-
-                                // Register link
-                                Align(
-                                  alignment: Alignment.center,
-                                  child: TextButton(
-                                    onPressed: () => Navigator.pushNamed(
-                                      context,
-                                      '/register',
-                                    ),
-                                    style: TextButton.styleFrom(
-                                      padding: EdgeInsets.zero,
-                                      minimumSize: const Size(0, 0),
-                                    ),
-                                    child: RichText(
-                                      text: TextSpan(
-                                        children: [
-                                          TextSpan(
-                                            text: 'No Account yet? ',
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w400,
-                                              color: appBlack,
-                                              fontFamily: 'RobotoCondensed',
+                                  // PIN Display (dots) with shake animation
+                                  AnimatedBuilder(
+                                    animation: _shakeAnimation,
+                                    builder: (context, child) {
+                                      final offset =
+                                          _shakeAnimation.value *
+                                          10 *
+                                          (1 - _shakeAnimation.value) *
+                                          ((_shakeController.value * 8)
+                                                          .floor() %
+                                                      2 ==
+                                                  0
+                                              ? 1
+                                              : -1);
+                                      return Transform.translate(
+                                        offset: Offset(offset, 0),
+                                        child: child,
+                                      );
+                                    },
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: List.generate(4, (index) {
+                                        final hasValue =
+                                            _pinCtl.text.length > index;
+                                        return Container(
+                                          margin: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                          ),
+                                          width: 16,
+                                          height: 16,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: hasValue
+                                                ? (_showPinError
+                                                      ? Colors.red
+                                                      : appBlue)
+                                                : Colors.transparent,
+                                            border: Border.all(
+                                              color: _showPinError
+                                                  ? Colors.red
+                                                  : appBlack,
+                                              width: 2,
                                             ),
                                           ),
-                                          TextSpan(
-                                            text: 'Register Now!',
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w700,
-                                              color: appBlue,
-                                              fontFamily: 'RobotoCondensed',
-                                              decoration:
-                                                  TextDecoration.underline,
+                                        );
+                                      }),
+                                    ),
+                                  ),
+
+                                  if (_showPinError) ...[
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      _pinErrorMessage,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.red,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                  const SizedBox(height: 24),
+
+                                  PinNumpad(
+                                    enabled: !_loading,
+                                    onKeyTap: _handlePinKey,
+                                    actionBackgroundColor: appOffWhite,
+                                    textColor: appBlack,
+                                    showBiometrics: true,
+                                    onBiometricsTap:
+                                        _authenticateWithBiometrics,
+                                  ),
+
+                                  const SizedBox(height: 20),
+
+                                  if (_showPinSuccess) ...[
+                                    Container(
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF00A458),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.check_circle,
+                                            color: Colors.white,
+                                            size: 20,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              'Pin is good to go! Enter the pin in the pin section.',
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w500,
+                                              ),
                                             ),
                                           ),
                                         ],
                                       ),
                                     ),
+                                    const SizedBox(height: 16),
+                                  ],
+
+                                  Align(
+                                    alignment: Alignment.center,
+                                    child: TextButton(
+                                      onPressed: () => Navigator.pushNamed(
+                                        context,
+                                        '/forgot-pin',
+                                      ),
+                                      style: TextButton.styleFrom(
+                                        padding: EdgeInsets.zero,
+                                        minimumSize: const Size(0, 0),
+                                      ),
+                                      child: Text(
+                                        'Forgot PIN?',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w700,
+                                          color: appBlue,
+                                          fontFamily: 'RobotoCondensed',
+                                          decoration: TextDecoration.underline,
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                ],
                               ],
                             ),
                           ),

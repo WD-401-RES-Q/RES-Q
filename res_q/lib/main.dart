@@ -15,9 +15,13 @@ import 'features/auth/pages/registration_page.dart';
 import 'features/auth/pages/otp_page.dart';
 import 'features/auth/pages/pin_creation_page.dart';
 import 'features/auth/pages/forgot_pin_page.dart';
+import 'features/auth/pages/login_success_page.dart';
+import 'features/auth/pages/account_submitted_page.dart';
 // services
 import 'common/services/frame_timing_service.dart';
 import 'common/services/notification_service.dart';
+import 'common/services/registration_prefs.dart';
+import 'common/services/trusted_device_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -49,8 +53,14 @@ void main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   static const bool _showPerformanceOverlay = bool.fromEnvironment(
     'RESQ_SHOW_PERF_OVERLAY',
@@ -58,6 +68,28 @@ class MyApp extends StatelessWidget {
   );
   static final PerformanceRouteObserver _performanceRouteObserver =
       PerformanceRouteObserver();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(RegistrationPrefs.saveLastActivityNow());
+      unawaited(TrustedDeviceService.instance.touchTrustedActivity());
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -98,6 +130,8 @@ class MyApp extends StatelessWidget {
         '/otp': (context) => const OTPPage(),
         '/pin-creation': (context) => const PINCreationPage(),
         '/forgot-pin': (context) => const ForgotPinPage(),
+        '/login-success': (context) => const LoginSuccessPage(),
+        '/account-submitted': (context) => const AccountSubmittedPage(),
         // Backwards-compatible route alias
         '/approved-pin-creation': (context) => const ForgotPinPage(),
         '/main': (context) => const MainPage(),

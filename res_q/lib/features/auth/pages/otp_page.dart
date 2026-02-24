@@ -20,6 +20,7 @@ class _OTPPageState extends State<OTPPage> {
   bool _loading = false;
   bool _argsInitialized = false;
 
+  String _flowType = 'registration';
   String? _verificationId;
   String? _phoneNumber;
   Map<String, dynamic>? _userData;
@@ -34,16 +35,19 @@ class _OTPPageState extends State<OTPPage> {
 
     final args = ModalRoute.of(context)?.settings.arguments as Map?;
     if (args != null) {
+      _flowType =
+          (args['flowType'] as String?)?.trim().toLowerCase() ?? 'registration';
       _verificationId = args['verificationId'] as String?;
       _phoneNumber = args['phoneNumber'] as String?;
       _userData = args['userData'] as Map<String, dynamic>?;
     }
 
+    final requiresUserData = _flowType == 'registration';
     final hasRequiredArgs =
         _verificationId != null &&
         _phoneNumber != null &&
         _phoneNumber!.isNotEmpty &&
-        _userData != null;
+        (!requiresUserData || _userData != null);
     if (!hasRequiredArgs) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -52,7 +56,11 @@ class _OTPPageState extends State<OTPPage> {
           'Registration session expired. Please start again.',
           type: AppSnackBarType.warning,
         );
-        Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          requiresUserData ? '/register' : '/login',
+          (_) => false,
+        );
       });
     }
   }
@@ -64,13 +72,20 @@ class _OTPPageState extends State<OTPPage> {
   }
 
   Future<void> _verify() async {
-    if (_verificationId == null || _phoneNumber == null || _userData == null) {
+    final requiresUserData = _flowType == 'registration';
+    if (_verificationId == null ||
+        _phoneNumber == null ||
+        (requiresUserData && _userData == null)) {
       AppSnackBar.show(
         context,
         'Registration session expired. Please start again.',
         type: AppSnackBarType.warning,
       );
-      Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        requiresUserData ? '/register' : '/login',
+        (_) => false,
+      );
       return;
     }
 
@@ -112,6 +127,29 @@ class _OTPPageState extends State<OTPPage> {
 
       if (!mounted) return;
       setState(() => _loading = false);
+
+      if (_flowType == 'login') {
+        if (mounted) {
+          Navigator.pop(context, true);
+        }
+        return;
+      }
+
+      if (_flowType == 'registration-entry') {
+        await RegistrationPrefs.savePhoneNumber(_phoneNumber!);
+        if (!mounted) return;
+
+        Navigator.pushReplacementNamed(
+          context,
+          '/register',
+          result: true,
+          arguments: {
+            'phoneNumber': _phoneNumber,
+            'phoneVerified': true,
+          },
+        );
+        return;
+      }
 
       // Keep the locally-saved phone number so the Login page can prefill it
       // for faster logins (PIN/biometrics) after admin approval.
@@ -271,7 +309,7 @@ class _OTPPageState extends State<OTPPage> {
                               child: TextField(
                                 controller: _otpCtl,
                                 keyboardType: TextInputType.number,
-                                textAlign: TextAlign.center,
+                                textAlign: TextAlign.left,
                                 style: TextStyle(
                                   fontSize: 22,
                                   letterSpacing: 8,

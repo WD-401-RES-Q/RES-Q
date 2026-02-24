@@ -27,11 +27,13 @@ import '../../reports/pages/report_map_page.dart';
 class MainPage extends StatefulWidget {
   final int initialIndex;
   final String? initialCommunityReportId;
+  final bool showWelcomeBackOnLoad;
 
   const MainPage({
     super.key,
     this.initialIndex = 0,
     this.initialCommunityReportId,
+    this.showWelcomeBackOnLoad = false,
   });
 
   @override
@@ -67,6 +69,13 @@ class _MainPageState extends State<MainPage> {
       if (!mounted) return;
       unawaited(_initializePostLoginServices());
       unawaited(_startApprovedUserBanWatcher());
+      if (widget.showWelcomeBackOnLoad) {
+        AppSnackBar.show(
+          context,
+          'Welcome back!',
+          type: AppSnackBarType.success,
+        );
+      }
     });
   }
 
