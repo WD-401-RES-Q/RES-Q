@@ -106,6 +106,29 @@ class _ReportMapPageState extends State<ReportMapPage>
   bool _showReportCard = false;
   int _navIndex = 2;
 
+  static const double _reportCardBorderWidth = 0.7;
+
+  BoxDecoration _reportCardDecoration({
+    double radius = 12,
+    Color fillColor = Colors.white,
+  }) {
+    return BoxDecoration(
+      color: fillColor,
+      borderRadius: BorderRadius.circular(radius),
+      border: Border.all(
+        color: AppTheme.appBlack.withValues(alpha: 0.35),
+        width: _reportCardBorderWidth,
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: AppTheme.appBlack.withValues(alpha: 0.1),
+          blurRadius: 8,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1677,17 +1700,21 @@ class _ReportMapPageState extends State<ReportMapPage>
   Widget _buildReportSheet(ScrollController scrollController) {
     final reportData = _liveReportData ?? widget.reportData;
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.only(
+        borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(20),
           topRight: Radius.circular(20),
         ),
+        border: Border.all(
+          color: AppTheme.appBlack.withValues(alpha: 0.35),
+          width: _reportCardBorderWidth,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black26,
-            blurRadius: 12,
-            offset: Offset(0, -2),
+            color: AppTheme.appBlack.withValues(alpha: 0.1),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
           ),
         ],
       ),
@@ -2084,7 +2111,7 @@ class _ReportMapPageState extends State<ReportMapPage>
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(12),
-      elevation: 4,
+      elevation: 0,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () {
@@ -2094,17 +2121,7 @@ class _ReportMapPageState extends State<ReportMapPage>
         },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.1),
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
+          decoration: _reportCardDecoration(radius: 12),
           child: Row(
             children: [
               Container(
@@ -2495,12 +2512,8 @@ class _ReportMapPageState extends State<ReportMapPage>
               top: 80,
               left: 16,
               right: 16,
-              child: Card(
-                elevation: 8,
-                color: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+              child: Container(
+                decoration: _reportCardDecoration(radius: 12),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
                   child: Row(

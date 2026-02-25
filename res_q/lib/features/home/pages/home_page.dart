@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../common/services/app_asset_precache_service.dart';
 import '../../../common/services/notification_service.dart';
 import '../../../common/services/registration_prefs.dart';
@@ -19,7 +20,6 @@ import '../../auth/pages/login_page.dart';
 import '../../community/pages/community_page.dart';
 import '../../notifications/pages/notifications_page.dart';
 import '../../profile/pages/profile_page.dart';
-import '../../emergency/pages/emergency_call_screen.dart';
 import '../../reports/pages/report_form_screen.dart';
 import '../../map/pages/map_page.dart';
 import '../../reports/pages/report_map_page.dart';
@@ -551,6 +551,7 @@ class _HomePageContentState extends State<_HomePageContent>
   late final AnimationController _holdController;
   static const Color _appRed = Color(0xFFAC1B22);
   static const Color _appOffWhite = Color(0xFFF7F8F3);
+  static const String _emergencyHotlineNumber = '09543059646';
 
   @override
   void initState() {
@@ -567,7 +568,7 @@ class _HomePageContentState extends State<_HomePageContent>
           if (status == AnimationStatus.completed) {
             if (!mounted) return;
             _holdController.reset();
-            _openEmergencyCall();
+            unawaited(_callEmergencyHotline());
           }
         });
   }
@@ -579,12 +580,24 @@ class _HomePageContentState extends State<_HomePageContent>
     super.dispose();
   }
 
-  void _openEmergencyCall() {
-    print("Emergency call button pressed");
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const EmergencyCallScreen()),
-    );
+  Future<void> _callEmergencyHotline() async {
+    final uri = Uri(scheme: 'tel', path: _emergencyHotlineNumber);
+    try {
+      final launched = await launchUrl(uri);
+      if (!mounted || launched) return;
+      AppSnackBar.show(
+        context,
+        'Unable to start call. Dial $_emergencyHotlineNumber manually.',
+        type: AppSnackBarType.error,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Unable to start call. Dial $_emergencyHotlineNumber manually.',
+        type: AppSnackBarType.error,
+      );
+    }
   }
 
   @override

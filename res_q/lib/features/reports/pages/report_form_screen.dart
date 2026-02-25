@@ -10,6 +10,8 @@ import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:video_player/video_player.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:async';
 import 'dart:io';
@@ -22,7 +24,6 @@ import '../../../common/utils/phone_utils.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
-import '../../emergency/pages/emergency_call_screen.dart';
 
 void _debugLog(Object? message) {
   if (kDebugMode) {
@@ -33,6 +34,20 @@ void _debugLog(Object? message) {
 enum LocationSelectionMode { current, pin }
 
 enum CapturedMediaType { photo, video }
+
+class _ReportMediaItem {
+  const _ReportMediaItem({
+    required this.type,
+    required this.file,
+    required this.index,
+  });
+
+  final CapturedMediaType type;
+  final XFile file;
+  final int index;
+
+  bool get isPhoto => type == CapturedMediaType.photo;
+}
 
 class _PinPickerResult {
   const _PinPickerResult({this.location, this.clearSelection = false});
@@ -214,14 +229,54 @@ class ReportFormScreen extends StatefulWidget {
 
 class _ReportFormScreenState extends State<ReportFormScreen>
     with TickerProviderStateMixin {
+  static const List<String> _angelesBarangays = <String>[
+    'Agapito del Rosario',
+    'Amsic',
+    'Anunas',
+    'Balibago',
+    'Capaya',
+    'Claro M. Recto',
+    'Cuayan',
+    'Cutcut',
+    'Cutud',
+    'Lourdes North West',
+    'Lourdes Sur',
+    'Lourdes Sur East',
+    'Malabanias',
+    'Margot',
+    'Marisol',
+    'Mining',
+    'Ninoy Aquino',
+    'Pampang',
+    'Pandan',
+    'Poblacion',
+    'Pulungbulu',
+    'Pulung Cacutud',
+    'Pulung Maragul',
+    'Salapungan',
+    'San Jose',
+    'San Nicolas',
+    'Santa Teresita',
+    'Santa Trinidad',
+    'Santo Cristo',
+    'Santo Domingo',
+    'Santo Rosario',
+    'Sapalibutad',
+    'Sula',
+    'Tabun',
+    'Virgen delos Remedios',
+  ];
+
   static const int _maxPhotosPerReport = 4;
   static const int _maxVideosPerReport = 2;
   static const int _maxPhotoBytes = 4 * 1024 * 1024; // 4 MB
   static const int _maxVideoBytes = 8 * 1024 * 1024; // 8 MB
+  static const String _emergencyHotlineNumber = '09543059646';
   final TextEditingController _informationController = TextEditingController();
   final TextEditingController _barangayController = TextEditingController();
   final TextEditingController _otherIncidentController =
       TextEditingController();
+  final FocusNode _barangayFocusNode = FocusNode();
   String? _fullName;
   String? _contactNumber;
   late final String _reportDate;
@@ -248,6 +303,39 @@ class _ReportFormScreenState extends State<ReportFormScreen>
   final List<_VehicleInvolved> _vehicles = <_VehicleInvolved>[];
   late final AnimationController _holdController;
 
+  static const double _reportFieldBorderRadius = 12;
+  static const double _reportFieldBorderWidth = 0.7;
+
+  BoxDecoration _reportFieldDecoration({
+    Color borderColor = AppTheme.appBlack,
+    double radius = _reportFieldBorderRadius,
+    Color fillColor = Colors.white,
+  }) {
+    final isError = borderColor.toARGB32() == Colors.red.toARGB32();
+    final resolvedBorderColor = isError
+        ? Colors.red
+        : AppTheme.appBlack.withValues(alpha: 0.35);
+    final shadowColor = isError
+        ? Colors.red.withValues(alpha: 0.16)
+        : AppTheme.appBlack.withValues(alpha: 0.1);
+
+    return BoxDecoration(
+      color: fillColor,
+      borderRadius: BorderRadius.circular(radius),
+      border: Border.all(
+        color: resolvedBorderColor,
+        width: _reportFieldBorderWidth,
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: shadowColor,
+          blurRadius: 8,
+          offset: const Offset(0, 2),
+        ),
+      ],
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -259,11 +347,33 @@ class _ReportFormScreenState extends State<ReportFormScreen>
           if (status == AnimationStatus.completed) {
             if (!mounted) return;
             _holdController.reset();
-            _openEmergencyCallScreen();
+            unawaited(_callEmergencyHotline());
           }
         });
     _reportDate = _formatDate(DateTime.now());
     _loadUserInfo();
+    _barangayFocusNode.addListener(() {
+      if (!mounted) return;
+      setState(() {});
+      if (_barangayFocusNode.hasFocus) return;
+      final raw = _barangayController.text.trim();
+      if (raw.isEmpty) return;
+      final canonical = _resolveCanonicalBarangay(raw);
+      if (canonical == null) {
+        setState(
+          () =>
+              _barangayError = 'This barangay does not belong in Angeles City.',
+        );
+      } else {
+        _barangayController.value = TextEditingValue(
+          text: canonical,
+          selection: TextSelection.collapsed(offset: canonical.length),
+        );
+        if (_barangayError != null) {
+          setState(() => _barangayError = null);
+        }
+      }
+    });
     _injuredCountFocusNode.addListener(() {
       if (!_injuredCountFocusNode.hasFocus) {
         _normalizeInjuredCountInput();
@@ -279,6 +389,7 @@ class _ReportFormScreenState extends State<ReportFormScreen>
     _holdController.dispose();
     _informationController.dispose();
     _barangayController.dispose();
+    _barangayFocusNode.dispose();
     _otherIncidentController.dispose();
     _injuredCountController.dispose();
     _injuredCountFocusNode.dispose();
@@ -302,6 +413,31 @@ class _ReportFormScreenState extends State<ReportFormScreen>
     final month = date.month.toString().padLeft(2, '0');
     final day = date.day.toString().padLeft(2, '0');
     return '$month/$day/${date.year}';
+  }
+
+  String? _resolveCanonicalBarangay(String raw) {
+    final normalized = raw.trim().toLowerCase();
+    if (normalized.isEmpty) return null;
+    for (final barangay in _angelesBarangays) {
+      if (barangay.toLowerCase() == normalized) {
+        return barangay;
+      }
+    }
+    return null;
+  }
+
+  void _toggleBarangayDropdown() {
+    if (_barangayFocusNode.hasFocus) {
+      _barangayFocusNode.unfocus();
+      return;
+    }
+    final text = _barangayController.text;
+    _barangayController.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+      composing: TextRange.empty,
+    );
+    _barangayFocusNode.requestFocus();
   }
 
   String _capturedMediaDisplayText() {
@@ -487,6 +623,232 @@ class _ReportFormScreenState extends State<ReportFormScreen>
         : 'Failed to capture photo. Please try again.';
   }
 
+  List<_ReportMediaItem> _capturedMediaItems() {
+    final items = <_ReportMediaItem>[];
+    for (int i = 0; i < _capturedPhotos.length; i++) {
+      items.add(
+        _ReportMediaItem(
+          type: CapturedMediaType.photo,
+          file: _capturedPhotos[i],
+          index: i,
+        ),
+      );
+    }
+    for (int i = 0; i < _capturedVideos.length; i++) {
+      items.add(
+        _ReportMediaItem(
+          type: CapturedMediaType.video,
+          file: _capturedVideos[i],
+          index: i,
+        ),
+      );
+    }
+    return items;
+  }
+
+  void _removeCapturedMediaItem(_ReportMediaItem item) {
+    setState(() {
+      if (item.type == CapturedMediaType.photo) {
+        if (item.index >= 0 && item.index < _capturedPhotos.length) {
+          _capturedPhotos.removeAt(item.index);
+        }
+      } else {
+        if (item.index >= 0 && item.index < _capturedVideos.length) {
+          _capturedVideos.removeAt(item.index);
+        }
+      }
+      _mediaError = null;
+    });
+  }
+
+  Widget _buildLocalImagePreview(XFile file) {
+    if (kIsWeb) {
+      return Image.network(
+        file.path,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => const Icon(
+          Icons.broken_image_outlined,
+          color: Colors.black45,
+          size: 22,
+        ),
+      );
+    }
+
+    return Image.file(
+      File(file.path),
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) => const Icon(
+        Icons.broken_image_outlined,
+        color: Colors.black45,
+        size: 22,
+      ),
+    );
+  }
+
+  Future<void> _openPhotoPreview(XFile file) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: AppTheme.appOffWhite,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Photo Preview',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.appBlack,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close, color: AppTheme.appRed),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                height: MediaQuery.of(context).size.height * 0.55,
+                child: InteractiveViewer(
+                  minScale: 1,
+                  maxScale: 4,
+                  child: Center(
+                    child: kIsWeb
+                        ? Image.network(
+                            file.path,
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) =>
+                                const Icon(
+                                  Icons.broken_image_outlined,
+                                  size: 42,
+                                  color: Colors.black45,
+                                ),
+                          )
+                        : Image.file(
+                            File(file.path),
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) =>
+                                const Icon(
+                                  Icons.broken_image_outlined,
+                                  size: 42,
+                                  color: Colors.black45,
+                                ),
+                          ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openVideoPreview(XFile file) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _ReportVideoPreviewDialog(file: file),
+    );
+  }
+
+  Future<void> _openMediaPreview(_ReportMediaItem item) {
+    if (item.isPhoto) {
+      return _openPhotoPreview(item.file);
+    }
+    return _openVideoPreview(item.file);
+  }
+
+  Widget _buildMediaThumbnail(_ReportMediaItem item) {
+    final thumb = ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 52,
+        height: 52,
+        color: const Color(0xFFF1F3EF),
+        child: item.isPhoto
+            ? _buildLocalImagePreview(item.file)
+            : _ReportVideoThumbnail(file: item.file),
+      ),
+    );
+
+    return GestureDetector(
+      onTap: () => _openMediaPreview(item),
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          thumb,
+          if (!item.isPhoto)
+            const Positioned.fill(
+              child: Center(
+                child: Icon(
+                  Icons.play_circle_fill_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+            ),
+          Positioned(
+            top: -6,
+            right: -6,
+            child: GestureDetector(
+              onTap: () => _removeCapturedMediaItem(item),
+              child: Container(
+                width: 18,
+                height: 18,
+                decoration: const BoxDecoration(
+                  color: AppTheme.appRed,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.close, size: 12, color: Colors.white),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMediaBoxContent() {
+    final items = _capturedMediaItems();
+    if (items.isEmpty) {
+      return Center(
+        child: Text(
+          _capturedMediaDisplayText(),
+          style: TextStyle(
+            fontFamily: 'RobotoCondensed',
+            fontSize: 14,
+            fontWeight: FontWeight.w400,
+            color: _mediaError != null ? Colors.red : Colors.black,
+          ),
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
+    }
+
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      itemCount: items.length,
+      separatorBuilder: (context, index) => const SizedBox(width: 8),
+      itemBuilder: (context, index) => _buildMediaThumbnail(items[index]),
+    );
+  }
+
   Future<Map<String, String>> _uploadSingleCapturedMedia({
     required XFile media,
     required CapturedMediaType mediaType,
@@ -651,11 +1013,24 @@ class _ReportFormScreenState extends State<ReportFormScreen>
     );
   }
 
-  void _openEmergencyCallScreen() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (context) => const EmergencyCallScreen()),
-    );
+  Future<void> _callEmergencyHotline() async {
+    final uri = Uri(scheme: 'tel', path: _emergencyHotlineNumber);
+    try {
+      final launched = await launchUrl(uri);
+      if (!mounted || launched) return;
+      AppSnackBar.show(
+        context,
+        'Unable to start call. Dial $_emergencyHotlineNumber manually.',
+        type: AppSnackBarType.error,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        'Unable to start call. Dial $_emergencyHotlineNumber manually.',
+        type: AppSnackBarType.error,
+      );
+    }
   }
 
   Future<void> _confirmReport() async {
@@ -706,9 +1081,19 @@ class _ReportFormScreenState extends State<ReportFormScreen>
       return;
     }
     final rawBarangay = _barangayController.text.trim();
-    final normalizedBarangay = rawBarangay.isEmpty
-        ? 'Not specified'
-        : rawBarangay;
+    final canonicalBarangay = _resolveCanonicalBarangay(rawBarangay);
+    if (rawBarangay.isNotEmpty && canonicalBarangay == null) {
+      setState(
+        () => _barangayError = 'This barangay does not belong in Angeles City.',
+      );
+      AppSnackBar.show(
+        context,
+        'This barangay does not belong in Angeles City.',
+        type: AppSnackBarType.error,
+      );
+      return;
+    }
+    final normalizedBarangay = canonicalBarangay ?? 'Not specified';
     if (_isOthersIncident()) {
       final otherIncident = _otherIncidentController.text.trim();
       if (otherIncident.isEmpty) {
@@ -1183,242 +1568,110 @@ class _ReportFormScreenState extends State<ReportFormScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F8F3),
-      body: SafeArea(
-        bottom: false,
-        child: SingleChildScrollView(
-          child: GestureDetector(
-            onTap: () => FocusScope.of(context).unfocus(),
-            behavior: HitTestBehavior.opaque,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-              child: Column(
-                children: [
-                  // Back button + logo row
-                  Row(
-                    children: [
-                      const ResqBackButton(),
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: SizedBox(
-                            height: 40,
-                            child: Align(
-                              alignment: Alignment.center,
-                              child: SvgPicture.asset(
-                                "assets/icons/logo/RES-Q_LOGO.svg",
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    const Icon(
-                                      Icons.image_not_supported,
-                                      size: 30,
-                                      color: Colors.blue,
-                                    ),
+    return PopScope<Object?>(
+      canPop: !_barangayFocusNode.hasFocus,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_barangayFocusNode.hasFocus) {
+          _barangayFocusNode.unfocus();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF7F8F3),
+        body: SafeArea(
+          bottom: false,
+          child: SingleChildScrollView(
+            child: GestureDetector(
+              onTap: () => FocusScope.of(context).unfocus(),
+              behavior: HitTestBehavior.opaque,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 32,
+                ),
+                child: Column(
+                  children: [
+                    // Back button + logo row
+                    Row(
+                      children: [
+                        const ResqBackButton(),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () => Navigator.pop(context),
+                            child: SizedBox(
+                              height: 40,
+                              child: Align(
+                                alignment: Alignment.center,
+                                child: SvgPicture.asset(
+                                  "assets/icons/logo/RES-Q_LOGO.svg",
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const Icon(
+                                        Icons.image_not_supported,
+                                        size: 30,
+                                        color: Colors.blue,
+                                      ),
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 44),
-                    ],
-                  ),
-
-                  const SizedBox(height: 32),
-
-                  // Incident label (HEADING - Roboto Black)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      widget.incidentType,
-                      style: const TextStyle(
-                        fontFamily: 'Roboto',
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFFAC1B22),
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  // Reporter info card
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.black, width: 2),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _infoRow('Name', _fullName ?? 'Not available'),
-                        const SizedBox(height: 8),
-                        _infoRow(
-                          'Contact Number',
-                          _contactNumber ?? 'Not available',
-                        ),
-                        const SizedBox(height: 8),
-                        _infoRow('Date', _reportDate),
+                        const SizedBox(width: 44),
                       ],
                     ),
-                  ),
 
-                  const SizedBox(height: 16),
+                    const SizedBox(height: 32),
 
-                  if (_isVehicularIncident()) _buildVehicleDetailsRow(),
-
-                  if (_isVehicularIncident()) const SizedBox(height: 16),
-
-                  _buildBarangayField(),
-                  if (_barangayError != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          _barangayError!,
-                          style: const TextStyle(
-                            fontFamily: 'RobotoCondensed',
-                            fontSize: 12,
-                            color: Colors.red,
-                          ),
+                    // Incident label (HEADING - Roboto Black)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        widget.incidentType,
+                        style: const TextStyle(
+                          fontFamily: 'Roboto',
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFFAC1B22),
                         ),
                       ),
                     ),
 
-                  const SizedBox(height: 16),
+                    const SizedBox(height: 12),
 
-                  if (_isFireIncident()) _buildFireTypeField(),
-
-                  if (_isFireIncident()) const SizedBox(height: 16),
-
-                  _buildInjuredCounterField(),
-
-                  const SizedBox(height: 16),
-
-                  if (!_isFloodIncident()) _buildAmbulanceField(),
-
-                  if (!_isFloodIncident()) const SizedBox(height: 16),
-
-                  if (_isOthersIncident()) _buildOtherIncidentField(),
-
-                  if (_isOthersIncident()) const SizedBox(height: 16),
-
-                  // Information TextArea
-                  Container(
-                    height: 190,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.black, width: 2),
-                    ),
-                    child: TextField(
-                      controller: _informationController,
-                      maxLines: null,
-                      expands: true,
-                      maxLength: 256,
-                      maxLengthEnforcement: MaxLengthEnforcement.enforced,
-                      inputFormatters: [LengthLimitingTextInputFormatter(256)],
-                      textAlignVertical: TextAlignVertical.top,
-                      style: const TextStyle(
-                        fontFamily: 'RobotoCondensed',
-                        fontSize: 14,
-                        fontWeight: FontWeight.w400,
-                        color: Colors.black,
-                      ),
-                      decoration: const InputDecoration(
-                        hintText:
-                            "Please tell us more about the incident...(Optional)",
-                        hintStyle: TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontSize: 16,
-                          fontWeight: FontWeight.w400,
-                          color: Colors.black,
-                        ),
-                        contentPadding: EdgeInsets.all(16),
-                        border: InputBorder.none,
-                        counterStyle: TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontSize: 11,
-                          color: Color(0xFF4B5563),
-                        ),
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  // Capture Photo/Video Row (Required)
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+                    // Reporter info card
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: _reportFieldDecoration(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            flex: 3,
-                            child: Container(
-                              height: 64,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: _mediaError != null
-                                      ? Colors.red
-                                      : Colors.black,
-                                  width: 2,
-                                ),
-                              ),
-                              child: Center(
-                                child: Text(
-                                  _capturedMediaDisplayText(),
-                                  style: TextStyle(
-                                    fontFamily: 'RobotoCondensed',
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w400,
-                                    color:
-                                        (_capturedPhotos.isEmpty &&
-                                            _capturedVideos.isEmpty)
-                                        ? (_mediaError != null
-                                              ? Colors.red
-                                              : Colors.black)
-                                        : const Color(0xFF22C55E),
-                                  ),
-                                  textAlign: TextAlign.center,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
+                          _infoRow('Name', _fullName ?? 'Not available'),
+                          const SizedBox(height: 8),
+                          _infoRow(
+                            'Contact Number',
+                            _contactNumber ?? 'Not available',
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            flex: 1,
-                            child: GestureDetector(
-                              onTap: _showMediaOptions,
-                              child: Container(
-                                height: 64,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFAC1B22),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: const Icon(
-                                  Icons.camera_alt,
-                                  color: Colors.white,
-                                  size: 32,
-                                ),
-                              ),
-                            ),
-                          ),
+                          const SizedBox(height: 8),
+                          _infoRow('Date', _reportDate),
                         ],
                       ),
-                      if (_mediaError != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    if (_isVehicularIncident()) _buildVehicleDetailsRow(),
+
+                    if (_isVehicularIncident()) const SizedBox(height: 16),
+
+                    _buildBarangayField(),
+                    if (_barangayError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
                           child: Text(
-                            _mediaError!,
+                            _barangayError!,
                             style: const TextStyle(
                               fontFamily: 'RobotoCondensed',
                               fontSize: 12,
@@ -1426,253 +1679,393 @@ class _ReportFormScreenState extends State<ReportFormScreen>
                             ),
                           ),
                         ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 18),
-
-                  // Location selection
-                  Column(
-                    children: [
-                      const Text(
-                        'Choose Report Location',
-                        style: TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontSize: 13,
-                          fontWeight: FontWeight.w400,
-                          color: Colors.black,
-                        ),
                       ),
-                      const SizedBox(height: 12),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+
+                    const SizedBox(height: 16),
+
+                    if (_isFireIncident()) _buildFireTypeField(),
+
+                    if (_isFireIncident()) const SizedBox(height: 16),
+
+                    _buildInjuredCounterField(),
+
+                    const SizedBox(height: 16),
+
+                    if (!_isFloodIncident()) _buildAmbulanceField(),
+
+                    if (!_isFloodIncident()) const SizedBox(height: 16),
+
+                    if (_isOthersIncident()) _buildOtherIncidentField(),
+
+                    if (_isOthersIncident()) const SizedBox(height: 16),
+
+                    // Information TextArea
+                    Container(
+                      height: 190,
+                      decoration: _reportFieldDecoration(),
+                      child: Stack(
                         children: [
-                          _buildLocationOption(
-                            label: 'CURRENT LOCATION',
-                            isSelected:
-                                _locationMode == LocationSelectionMode.current,
-                            onTap: () {
-                              setState(() {
-                                _locationMode = LocationSelectionMode.current;
-                              });
-                            },
+                          Positioned.fill(
+                            child: TextField(
+                              controller: _informationController,
+                              maxLines: null,
+                              expands: true,
+                              maxLengthEnforcement:
+                                  MaxLengthEnforcement.enforced,
+                              inputFormatters: [
+                                LengthLimitingTextInputFormatter(256),
+                              ],
+                              textAlignVertical: TextAlignVertical.top,
+                              style: const TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontSize: 14,
+                                fontWeight: FontWeight.w400,
+                                color: Colors.black,
+                              ),
+                              decoration: const InputDecoration(
+                                hintText:
+                                    "Please tell us more about the incident...(Optional)",
+                                hintStyle: TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w400,
+                                  color: Colors.black,
+                                ),
+                                contentPadding: EdgeInsets.fromLTRB(
+                                  16,
+                                  16,
+                                  16,
+                                  30,
+                                ),
+                                border: InputBorder.none,
+                                counterText: '',
+                              ),
+                            ),
                           ),
-                          const SizedBox(width: 12),
-                          _buildLocationOption(
-                            label: 'PIN LOCATION',
-                            isSelected:
-                                _locationMode == LocationSelectionMode.pin,
-                            onTap: () {
-                              setState(() {
-                                _locationMode = LocationSelectionMode.pin;
-                              });
-                            },
+                          Positioned(
+                            right: 10,
+                            bottom: 8,
+                            child: ValueListenableBuilder<TextEditingValue>(
+                              valueListenable: _informationController,
+                              builder: (context, value, child) {
+                                final length = value.text.length;
+                                return Text(
+                                  '$length/256',
+                                  style: const TextStyle(
+                                    fontFamily: 'RobotoCondensed',
+                                    fontSize: 11,
+                                    color: Color(0xFF4B5563),
+                                  ),
+                                );
+                              },
+                            ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 12),
-                      if (_locationMode == LocationSelectionMode.pin)
-                        Container(
-                          width: 220,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(30),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.4),
-                                blurRadius: 4,
-                                offset: const Offset(0, 7),
-                              ),
-                            ],
-                          ),
-                          child: ElevatedButton.icon(
-                            onPressed: _openPinPicker,
-                            icon: const Icon(
-                              Icons.location_on,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                            label: Text(
-                              _selectedLocation == null
-                                  ? 'PIN ON MAP'
-                                  : 'UPDATE PIN',
-                              style: const TextStyle(
-                                fontFamily: 'RobotoCondensed',
-                                fontWeight: FontWeight.w500,
-                                fontSize: 15,
-                                color: Colors.white,
-                              ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFAC1B22),
-                              foregroundColor: Colors.white,
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                            ),
-                          ),
-                        ),
-                      if (_locationMode == LocationSelectionMode.pin &&
-                          _selectedLocation != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            'Pinned: ${_selectedLocation!.latitude.toStringAsFixed(5)}, '
-                            '${_selectedLocation!.longitude.toStringAsFixed(5)}',
-                            style: const TextStyle(
-                              fontFamily: 'RobotoCondensed',
-                              fontSize: 11,
-                              color: Color(0xFF4B5563),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 14),
-
-                  // Confirm Button - Rounded corners, drop shadow
-                  Container(
-                    width: 220,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(30),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.4),
-                          blurRadius: 4,
-                          offset: const Offset(0, 7),
-                        ),
-                      ],
                     ),
-                    child: ElevatedButton(
-                      onPressed: _locationLoading ? null : _confirmReport,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFFFC806),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(30),
-                        ),
-                        elevation: 0,
-                      ),
-                      child: _submitting
-                          ? const SizedBox(
-                              height: 22,
-                              width: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 3,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Colors.white,
+
+                    const SizedBox(height: 16),
+
+                    // Capture Photo/Video Row (Required)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              flex: 3,
+                              child: Container(
+                                height: 64,
+                                decoration: _reportFieldDecoration(
+                                  borderColor: _mediaError != null
+                                      ? Colors.red
+                                      : AppTheme.appBlack,
+                                ),
+                                child: _buildMediaBoxContent(),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              flex: 1,
+                              child: GestureDetector(
+                                onTap: _showMediaOptions,
+                                child: Container(
+                                  height: 64,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFAC1B22),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(
+                                    Icons.camera_alt,
+                                    color: Colors.white,
+                                    size: 32,
+                                  ),
                                 ),
                               ),
-                            )
-                          : const Text(
-                              "CONFIRM",
-                              style: TextStyle(
+                            ),
+                          ],
+                        ),
+                        if (_mediaError != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              _mediaError!,
+                              style: const TextStyle(
                                 fontFamily: 'RobotoCondensed',
-                                fontSize: 18,
-                                fontWeight: FontWeight.w500,
+                                fontSize: 12,
+                                color: Colors.red,
                               ),
                             ),
+                          ),
+                      ],
                     ),
-                  ),
 
-                  const SizedBox(height: 20),
+                    const SizedBox(height: 18),
 
-                  // Emergency Call Button - hold to call
-                  GestureDetector(
-                    onLongPressStart: (_) {
-                      if (_holdController.isAnimating) return;
-                      _holdController.forward(from: 0);
-                    },
-                    onLongPressEnd: (_) {
-                      if (_holdController.isAnimating ||
-                          _holdController.value > 0) {
-                        _holdController.stop();
-                        _holdController.reset();
-                      }
-                    },
-                    onLongPressCancel: () {
-                      if (_holdController.isAnimating ||
-                          _holdController.value > 0) {
-                        _holdController.stop();
-                        _holdController.reset();
-                      }
-                    },
-                    onTap: _showHoldToCallHint,
-                    child: Container(
-                      width: 110,
-                      height: 110,
+                    // Location selection
+                    Column(
+                      children: [
+                        const Text(
+                          'Choose Report Location',
+                          style: TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w400,
+                            color: Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _buildLocationOption(
+                              label: 'CURRENT LOCATION',
+                              isSelected:
+                                  _locationMode ==
+                                  LocationSelectionMode.current,
+                              onTap: () {
+                                setState(() {
+                                  _locationMode = LocationSelectionMode.current;
+                                });
+                              },
+                            ),
+                            const SizedBox(width: 12),
+                            _buildLocationOption(
+                              label: 'PIN LOCATION',
+                              isSelected:
+                                  _locationMode == LocationSelectionMode.pin,
+                              onTap: () {
+                                setState(() {
+                                  _locationMode = LocationSelectionMode.pin;
+                                });
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        if (_locationMode == LocationSelectionMode.pin)
+                          Container(
+                            width: 220,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(30),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.4),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 7),
+                                ),
+                              ],
+                            ),
+                            child: ElevatedButton.icon(
+                              onPressed: _openPinPicker,
+                              icon: const Icon(
+                                Icons.location_on,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                              label: Text(
+                                _selectedLocation == null
+                                    ? 'PIN ON MAP'
+                                    : 'UPDATE PIN',
+                                style: const TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 15,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFFAC1B22),
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(30),
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (_locationMode == LocationSelectionMode.pin &&
+                            _selectedLocation != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              'Pinned: ${_selectedLocation!.latitude.toStringAsFixed(5)}, '
+                              '${_selectedLocation!.longitude.toStringAsFixed(5)}',
+                              style: const TextStyle(
+                                fontFamily: 'RobotoCondensed',
+                                fontSize: 11,
+                                color: Color(0xFF4B5563),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    // Confirm Button - Rounded corners, drop shadow
+                    Container(
+                      width: 220,
+                      height: 48,
                       decoration: BoxDecoration(
-                        shape: BoxShape.circle,
+                        borderRadius: BorderRadius.circular(30),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.4),
+                            color: Colors.black.withOpacity(0.4),
                             blurRadius: 4,
                             offset: const Offset(0, 7),
                           ),
                         ],
                       ),
-                      child: Container(
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFAC1B22),
-                          shape: BoxShape.circle,
-                          border: Border.fromBorderSide(
-                            BorderSide(color: Color(0xFFFFC806), width: 6),
+                      child: ElevatedButton(
+                        onPressed: _locationLoading ? null : _confirmReport,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFFFFC806),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
                           ),
+                          elevation: 0,
                         ),
-                        child: AnimatedBuilder(
-                          animation: _holdController,
-                          builder: (context, _) {
-                            final progress = _holdController.value == 0
-                                ? 0.18
-                                : _holdController.value;
-                            return Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                SizedBox(
-                                  width: 74,
-                                  height: 74,
-                                  child: CircularProgressIndicator(
-                                    value: progress,
-                                    strokeWidth: 5,
-                                    backgroundColor: Colors.white.withValues(
-                                      alpha: 0.15,
-                                    ),
-                                    valueColor: const AlwaysStoppedAnimation(
-                                      Color(0xFFFFC806),
-                                    ),
+                        child: _submitting
+                            ? const SizedBox(
+                                height: 22,
+                                width: 22,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 3,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
                                   ),
                                 ),
-                                const Icon(
-                                  Icons.phone,
-                                  color: Colors.white,
-                                  size: 60,
+                              )
+                            : const Text(
+                                "CONFIRM",
+                                style: TextStyle(
+                                  fontFamily: 'RobotoCondensed',
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w500,
                                 ),
-                              ],
-                            );
-                          },
+                              ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // Emergency Call Button - hold to call
+                    GestureDetector(
+                      onLongPressStart: (_) {
+                        if (_holdController.isAnimating) return;
+                        _holdController.forward(from: 0);
+                      },
+                      onLongPressEnd: (_) {
+                        if (_holdController.isAnimating ||
+                            _holdController.value > 0) {
+                          _holdController.stop();
+                          _holdController.reset();
+                        }
+                      },
+                      onLongPressCancel: () {
+                        if (_holdController.isAnimating ||
+                            _holdController.value > 0) {
+                          _holdController.stop();
+                          _holdController.reset();
+                        }
+                      },
+                      onTap: _showHoldToCallHint,
+                      child: Container(
+                        width: 110,
+                        height: 110,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.4),
+                              blurRadius: 4,
+                              offset: const Offset(0, 7),
+                            ),
+                          ],
+                        ),
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFAC1B22),
+                            shape: BoxShape.circle,
+                            border: Border.fromBorderSide(
+                              BorderSide(color: Color(0xFFFFC806), width: 6),
+                            ),
+                          ),
+                          child: AnimatedBuilder(
+                            animation: _holdController,
+                            builder: (context, _) {
+                              final progress = _holdController.value == 0
+                                  ? 0.18
+                                  : _holdController.value;
+                              return Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  SizedBox(
+                                    width: 74,
+                                    height: 74,
+                                    child: CircularProgressIndicator(
+                                      value: progress,
+                                      strokeWidth: 5,
+                                      backgroundColor: Colors.white.withValues(
+                                        alpha: 0.15,
+                                      ),
+                                      valueColor: const AlwaysStoppedAnimation(
+                                        Color(0xFFFFC806),
+                                      ),
+                                    ),
+                                  ),
+                                  const Icon(
+                                    Icons.phone,
+                                    color: Colors.white,
+                                    size: 60,
+                                  ),
+                                ],
+                              );
+                            },
+                          ),
                         ),
                       ),
                     ),
-                  ),
 
-                  const SizedBox(height: 24),
-                ],
+                    const SizedBox(height: 24),
+                  ],
+                ),
               ),
             ),
           ),
         ),
-      ),
-      bottomNavigationBar: BottomNavBar(
-        currentIndex: _navIndex,
-        onTap: (index) {
-          setState(() {
-            _navIndex = index;
-          });
-          MainShellNavigationService.popToRootAndOpenTab(context, index);
-        },
+        bottomNavigationBar: BottomNavBar(
+          currentIndex: _navIndex,
+          onTap: (index) {
+            setState(() {
+              _navIndex = index;
+            });
+            MainShellNavigationService.popToRootAndOpenTab(context, index);
+          },
+        ),
       ),
     );
   }
@@ -1877,23 +2270,33 @@ class _ReportFormScreenState extends State<ReportFormScreen>
   Widget _buildAmbulanceField() {
     return _buildLabeledField(
       label: 'Need ambulance?',
-      child: CheckboxListTile(
-        dense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-        value: _needsAmbulance,
-        onChanged: (value) {
-          setState(() => _needsAmbulance = value ?? false);
-        },
-        activeColor: const Color(0xFFAC1B22),
-        title: const Text(
-          'Request ambulance response',
-          style: TextStyle(
-            fontFamily: 'RobotoCondensed',
-            fontSize: 12,
-            color: Colors.black,
-          ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Checkbox(
+              value: _needsAmbulance,
+              onChanged: (value) {
+                setState(() => _needsAmbulance = value ?? false);
+              },
+              activeColor: const Color(0xFFAC1B22),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+            ),
+            const SizedBox(width: 6),
+            const Expanded(
+              child: Text(
+                'Request ambulance response',
+                style: TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontSize: 12,
+                  color: Colors.black,
+                ),
+              ),
+            ),
+          ],
         ),
-        controlAffinity: ListTileControlAffinity.leading,
       ),
     );
   }
@@ -2346,105 +2749,123 @@ class _ReportFormScreenState extends State<ReportFormScreen>
   }
 
   Widget _buildBarangayField() {
-    const noBarangayValue = '__none__';
-    const barangays = [
-      'Agapito del Rosario',
-      'Amsic',
-      'Anunas',
-      'Balibago',
-      'Capaya',
-      'Claro M. Recto',
-      'Cuayan',
-      'Cutcut',
-      'Cutud',
-      'Lourdes North West',
-      'Lourdes Sur',
-      'Lourdes Sur East',
-      'Malabanias',
-      'Margot',
-      'Marisol',
-      'Mining',
-      'Ninoy Aquino',
-      'Pampang',
-      'Pandan',
-      'Poblacion',
-      'Pulungbulu',
-      'Pulung Cacutud',
-      'Pulung Maragul',
-      'Salapungan',
-      'San Jose',
-      'San Nicolas',
-      'Santa Teresita',
-      'Santa Trinidad',
-      'Santo Cristo',
-      'Santo Domingo',
-      'Santo Rosario',
-      'Sapalibutad',
-      'Sula',
-      'Tabun',
-      'Virgen delos Remedios',
-    ];
-    final currentValue = _barangayController.text.trim();
-    final selectedBarangay = barangays.contains(currentValue)
-        ? currentValue
-        : null;
-
     return _buildLabeledField(
       label: 'Barangay (Optional)',
       borderColor: _barangayError != null ? Colors.red : Colors.black,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: DropdownButtonHideUnderline(
-          child: DropdownButton<String>(
-            value: selectedBarangay,
-            isExpanded: true,
-            dropdownColor: AppTheme.appOffWhite,
-            borderRadius: BorderRadius.circular(12),
-            icon: const Icon(
-              Icons.keyboard_arrow_down_rounded,
-              color: AppTheme.appBlack,
-            ),
-            style: const TextStyle(
-              fontFamily: 'RobotoCondensed',
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: AppTheme.appBlack,
-            ),
-            hint: const Text(
-              'Select barangay (optional)',
-              style: TextStyle(
-                fontFamily: 'RobotoCondensed',
-                fontSize: 12,
-                fontWeight: FontWeight.w400,
-                color: Colors.black54,
-              ),
-            ),
-            items: <DropdownMenuItem<String>>[
-              const DropdownMenuItem<String>(
-                value: noBarangayValue,
-                child: Text('Not specified'),
-              ),
-              ...barangays.map(
-                (barangay) => DropdownMenuItem<String>(
-                  value: barangay,
-                  child: Text(barangay, overflow: TextOverflow.ellipsis),
+      child: RawAutocomplete<String>(
+        textEditingController: _barangayController,
+        focusNode: _barangayFocusNode,
+        optionsBuilder: (TextEditingValue value) {
+          final query = value.text.trim().toLowerCase();
+          if (query.isEmpty) {
+            return _angelesBarangays;
+          }
+          return _angelesBarangays.where(
+            (barangay) => barangay.toLowerCase().contains(query),
+          );
+        },
+        onSelected: (String value) {
+          setState(() {
+            _barangayController.value = TextEditingValue(
+              text: value,
+              selection: TextSelection.collapsed(offset: value.length),
+            );
+            _barangayError = null;
+          });
+        },
+        fieldViewBuilder:
+            (context, textController, focusNode, onFieldSubmitted) {
+              return TextField(
+                controller: textController,
+                focusNode: focusNode,
+                textAlign: TextAlign.left,
+                style: const TextStyle(
+                  fontFamily: 'RobotoCondensed',
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: AppTheme.appBlack,
+                ),
+                decoration: InputDecoration(
+                  isDense: false,
+                  hintText: 'Select or type barangay (optional)',
+                  hintStyle: const TextStyle(
+                    fontFamily: 'RobotoCondensed',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black54,
+                  ),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 14,
+                  ),
+                  suffixIcon: IconButton(
+                    onPressed: _toggleBarangayDropdown,
+                    splashRadius: 18,
+                    icon: Icon(
+                      _barangayFocusNode.hasFocus
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      color: AppTheme.appBlack,
+                    ),
+                  ),
+                ),
+                onChanged: (_) {
+                  if (_barangayError != null) {
+                    setState(() => _barangayError = null);
+                  }
+                },
+                onSubmitted: (_) => onFieldSubmitted(),
+              );
+            },
+        optionsViewBuilder: (context, onSelected, options) {
+          final optionsList = options.toList();
+          if (optionsList.isEmpty) {
+            return const SizedBox.shrink();
+          }
+
+          final maxHeight = MediaQuery.of(context).size.height * 0.5;
+          return Align(
+            alignment: Alignment.topLeft,
+            child: Material(
+              color: Colors.white,
+              elevation: 4,
+              borderRadius: BorderRadius.circular(12),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: maxHeight,
+                  minWidth: 240,
+                ),
+                child: ListView.builder(
+                  padding: EdgeInsets.zero,
+                  shrinkWrap: true,
+                  itemCount: optionsList.length,
+                  itemBuilder: (context, index) {
+                    final option = optionsList[index];
+                    return InkWell(
+                      onTap: () => onSelected(option),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 12,
+                        ),
+                        child: Text(
+                          option,
+                          style: const TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: AppTheme.appBlack,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
-            ],
-            onChanged: (value) {
-              setState(() {
-                if (value == null || value == noBarangayValue) {
-                  _barangayController.clear();
-                } else {
-                  _barangayController.text = value;
-                }
-                if (_barangayError != null) {
-                  _barangayError = null;
-                }
-              });
-            },
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -2469,14 +2890,261 @@ class _ReportFormScreenState extends State<ReportFormScreen>
         const SizedBox(height: 6),
         Container(
           height: 48,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: borderColor, width: 1.5),
+          decoration: _reportFieldDecoration(
+            borderColor: borderColor,
+            radius: 10,
           ),
           child: child,
         ),
       ],
+    );
+  }
+}
+
+class _ReportVideoThumbnail extends StatefulWidget {
+  const _ReportVideoThumbnail({required this.file});
+
+  final XFile file;
+
+  @override
+  State<_ReportVideoThumbnail> createState() => _ReportVideoThumbnailState();
+}
+
+class _ReportVideoThumbnailState extends State<_ReportVideoThumbnail> {
+  VideoPlayerController? _controller;
+  bool _loading = true;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initController();
+  }
+
+  Future<void> _initController() async {
+    try {
+      final path = widget.file.path;
+      if (path.isEmpty) {
+        setState(() {
+          _failed = true;
+          _loading = false;
+        });
+        return;
+      }
+
+      final controller = kIsWeb
+          ? VideoPlayerController.networkUrl(Uri.parse(path))
+          : VideoPlayerController.file(File(path));
+      await controller.initialize();
+      await controller.pause();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _controller = controller;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _failed = true;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Center(
+        child: SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            valueColor: AlwaysStoppedAnimation<Color>(AppTheme.appBlack),
+          ),
+        ),
+      );
+    }
+
+    if (_failed || _controller == null || !_controller!.value.isInitialized) {
+      return const Center(
+        child: Icon(
+          Icons.videocam_outlined,
+          size: 22,
+          color: AppTheme.appBlack,
+        ),
+      );
+    }
+
+    final size = _controller!.value.size;
+    return FittedBox(
+      fit: BoxFit.cover,
+      child: SizedBox(
+        width: size.width,
+        height: size.height,
+        child: VideoPlayer(_controller!),
+      ),
+    );
+  }
+}
+
+class _ReportVideoPreviewDialog extends StatefulWidget {
+  const _ReportVideoPreviewDialog({required this.file});
+
+  final XFile file;
+
+  @override
+  State<_ReportVideoPreviewDialog> createState() =>
+      _ReportVideoPreviewDialogState();
+}
+
+class _ReportVideoPreviewDialogState extends State<_ReportVideoPreviewDialog> {
+  VideoPlayerController? _controller;
+  bool _loading = true;
+  bool _failed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _initController();
+  }
+
+  Future<void> _initController() async {
+    try {
+      final path = widget.file.path;
+      if (path.isEmpty) {
+        setState(() {
+          _failed = true;
+          _loading = false;
+        });
+        return;
+      }
+
+      final controller = kIsWeb
+          ? VideoPlayerController.networkUrl(Uri.parse(path))
+          : VideoPlayerController.file(File(path));
+      await controller.initialize();
+      await controller.pause();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _controller = controller;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _failed = true;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  void _togglePlayPause() {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    if (controller.value.isPlaying) {
+      controller.pause();
+    } else {
+      controller.play();
+    }
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.appOffWhite,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Video Preview',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.appBlack,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close, color: AppTheme.appRed),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              height: MediaQuery.of(context).size.height * 0.55,
+              child: Center(
+                child: _loading
+                    ? const CircularProgressIndicator(color: AppTheme.appRed)
+                    : _failed ||
+                          _controller == null ||
+                          !_controller!.value.isInitialized
+                    ? const Icon(
+                        Icons.videocam_off_outlined,
+                        size: 48,
+                        color: AppTheme.appBlack,
+                      )
+                    : Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          AspectRatio(
+                            aspectRatio: _controller!.value.aspectRatio,
+                            child: VideoPlayer(_controller!),
+                          ),
+                          GestureDetector(
+                            onTap: _togglePlayPause,
+                            child: Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.45),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                _controller!.value.isPlaying
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                                color: Colors.white,
+                                size: 32,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
