@@ -21,6 +21,7 @@ class LoadingScreen extends StatefulWidget {
 class _LoadingScreenState extends State<LoadingScreen> {
   bool _isInitializing = false;
   bool _webExitRequested = false;
+  static const Duration _otpBypassWindow = Duration(days: 30);
 
   @override
   void initState() {
@@ -45,6 +46,53 @@ class _LoadingScreenState extends State<LoadingScreen> {
     }
   }
 
+  DateTime? _parseTimestamp(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    try {
+      return value.toDate() as DateTime?;
+    } catch (_) {}
+    if (value is Map<String, dynamic>) {
+      final seconds = value['seconds'] ?? value['_seconds'];
+      final nanos = value['nanoseconds'] ?? value['_nanoseconds'] ?? 0;
+      if (seconds is int) {
+        final parsedNanos = nanos is int
+            ? nanos
+            : (nanos is num ? nanos.toInt() : 0);
+        return DateTime.fromMillisecondsSinceEpoch(
+          (seconds * 1000) + (parsedNanos ~/ 1000000),
+        );
+      }
+    }
+    return null;
+  }
+
+  Future<bool> _canBypassOtpOnStartup({
+    required String phone,
+    dynamic firestoreLastLogin,
+  }) async {
+    final trustedForPhone = await TrustedDeviceService.instance.isTrustedPhone(
+      phone,
+    );
+    if (!trustedForPhone) return false;
+
+    final trustedActivity = await TrustedDeviceService.instance
+        .getLastTrustedActivity();
+    final firestoreActivity = _parseTimestamp(firestoreLastLogin);
+    final latestActivity = (() {
+      if (trustedActivity == null) return firestoreActivity;
+      if (firestoreActivity == null) return trustedActivity;
+      return firestoreActivity.isAfter(trustedActivity)
+          ? firestoreActivity
+          : trustedActivity;
+    })();
+
+    if (latestActivity == null) return false;
+    return DateTime.now().difference(latestActivity) <= _otpBypassWindow;
+  }
+
   Future<void> _navigateFromStartupAuthState() async {
     final trustedPhone = await TrustedDeviceService.instance.getTrustedPhone();
 
@@ -57,14 +105,40 @@ class _LoadingScreenState extends State<LoadingScreen> {
           trustedPhone,
           useCache: false,
         );
-        final isApprovedAccount =
-            status.hasApprovedAccount &&
-            !status.isPendingAccount &&
-            !status.isBannedAccount;
+        if (!status.isPendingAccount && !status.isBannedAccount) {
+          dynamic firestoreLastLogin;
+          var hasEligibleAccount = false;
 
-        if (isApprovedAccount) {
-          startupPhone = trustedPhone;
-          allowDirectPin = true;
+          if (status.hasResponderAccount) {
+            final responderDoc = await PhoneLookupService.instance
+                .getFirstResponderDoc(trustedPhone);
+            final responderData = responderDoc?.data();
+            final hasPinCreated =
+                responderData != null && responderData['hasPinCreated'] == true;
+            if (hasPinCreated) {
+              hasEligibleAccount = true;
+              firestoreLastLogin =
+                  responderData['lastLoginTimestamp'] ??
+                  responderData['lastLoginAt'];
+            }
+          }
+
+          if (!hasEligibleAccount && status.hasApprovedAccount) {
+            final approvedDoc = await PhoneLookupService.instance
+                .getFirstApprovedUserDoc(trustedPhone);
+            if (approvedDoc != null) {
+              hasEligibleAccount = true;
+              firestoreLastLogin = approvedDoc.data()['lastLoginTimestamp'];
+            }
+          }
+
+          if (hasEligibleAccount) {
+            startupPhone = trustedPhone;
+            allowDirectPin = await _canBypassOtpOnStartup(
+              phone: trustedPhone,
+              firestoreLastLogin: firestoreLastLogin,
+            );
+          }
         }
       } catch (e) {
         debugPrint('Startup phone status lookup failed: $e');

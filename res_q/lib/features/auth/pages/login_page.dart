@@ -19,6 +19,7 @@ import '../../../common/services/notification_service.dart';
 import '../../../common/services/phone_lookup_service.dart';
 import '../../../common/utils/security_hash.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'responder_pin_setup_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -33,6 +34,7 @@ class _LoginPageState extends State<LoginPage>
   static const appBlue = Color(0xFFAC1B22);
   static const appBlack = Color(0xFF212121);
   static const appOffWhite = Color(0xFFF7F8F3);
+  static const Duration _otpBypassWindow = Duration(days: 30);
   static const bool _enableResponderBootstrap = false;
   static const String _responderBootstrapDoneKey = 'responder_bootstrap_done';
 
@@ -40,7 +42,7 @@ class _LoginPageState extends State<LoginPage>
   bool _loading = false;
   bool _initializing = true;
   bool _startupArgsApplied = false;
-  bool _requiresOtpForApprovedLogin = true;
+  bool _recoverySuccessShown = false;
   final TextEditingController _pinCtl = TextEditingController();
   final TextEditingController _phoneCtl = TextEditingController();
   bool _showPinSuccess = false;
@@ -172,6 +174,53 @@ class _LoginPageState extends State<LoginPage>
     return userData;
   }
 
+  DateTime? _parseTimestamp(dynamic value) {
+    if (value == null) return null;
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    if (value is Map<String, dynamic>) {
+      final seconds = value['seconds'] ?? value['_seconds'];
+      final nanos = value['nanoseconds'] ?? value['_nanoseconds'] ?? 0;
+      if (seconds is int) {
+        final parsedNanos = nanos is int
+            ? nanos
+            : (nanos is num ? nanos.toInt() : 0);
+        return DateTime.fromMillisecondsSinceEpoch(
+          (seconds * 1000) + (parsedNanos ~/ 1000000),
+        );
+      }
+    }
+    return null;
+  }
+
+  Future<bool> _canBypassOtpForPhone({
+    required String phone,
+    dynamic firestoreLastLogin,
+  }) async {
+    final trustedForPhone = await _trustedDeviceService.isTrustedPhone(phone);
+    if (!trustedForPhone) return false;
+
+    final trustedActivity = await _trustedDeviceService
+        .getLastTrustedActivity();
+    final firestoreActivity = _parseTimestamp(firestoreLastLogin);
+    final latestActivity = (() {
+      if (trustedActivity == null) return firestoreActivity;
+      if (firestoreActivity == null) return trustedActivity;
+      return firestoreActivity.isAfter(trustedActivity)
+          ? firestoreActivity
+          : trustedActivity;
+    })();
+
+    if (latestActivity == null) return false;
+    return DateTime.now().difference(latestActivity) <= _otpBypassWindow;
+  }
+
+  bool _responderHasPinCreated(Map<String, dynamic> responderData) {
+    return responderData['hasPinCreated'] == true;
+  }
+
   Future<void> _saveApprovedLoginState(String phoneDigits) async {
     await RegistrationPrefs.savePhoneNumber(phoneDigits);
     await RegistrationPrefs.setApprovedLoginCompleted(true);
@@ -180,6 +229,7 @@ class _LoginPageState extends State<LoginPage>
   Future<void> _recordSuccessfulApprovedLogin({
     required String phoneDigits,
     String? approvedUserDocId,
+    String? responderDocId,
   }) async {
     try {
       await _saveApprovedLoginState(phoneDigits);
@@ -192,6 +242,11 @@ class _LoginPageState extends State<LoginPage>
             .set({
               'lastLoginTimestamp': FieldValue.serverTimestamp(),
             }, SetOptions(merge: true));
+      }
+      if (responderDocId != null && responderDocId.isNotEmpty) {
+        await _firestore.collection('responders').doc(responderDocId).set({
+          'lastLoginTimestamp': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
       }
     } catch (e) {
       debugPrint('Failed to persist trusted login metadata: $e');
@@ -410,12 +465,40 @@ class _LoginPageState extends State<LoginPage>
           accountQueries[1] as QueryDocumentSnapshot<Map<String, dynamic>>?;
 
       if (responderDoc != null) {
-        debugPrint('Ã¢Å“â€¦ Responder biometric login successful!');
         await _ensureFirebaseSession();
-        // Persist phone locally for faster next login.
-        await _recordSuccessfulApprovedLogin(phoneDigits: phoneInput);
-        // Set user session data for responder
         final responderData = responderDoc.data();
+        if (!_responderHasPinCreated(responderData)) {
+          setState(() {
+            _loading = false;
+            _pinCtl.clear();
+            _showPinError = false;
+            _pinErrorMessage = '';
+          });
+          if (!mounted) return;
+          AppSnackBar.show(
+            context,
+            'Set your personal PIN first.',
+            type: AppSnackBarType.warning,
+          );
+          if (!mounted) return;
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const ResponderPinSetupPage(),
+              settings: RouteSettings(
+                arguments: {
+                  'docId': responderDoc.id,
+                  'responderData': responderData,
+                  'phoneNumber': phone,
+                },
+              ),
+            ),
+          );
+          return;
+        }
+        await _recordSuccessfulApprovedLogin(
+          phoneDigits: phoneInput,
+          responderDocId: responderDoc.id,
+        );
         final sessionData = {...responderData, 'id': responderDoc.id};
         UserSession.setUserData(sessionData);
         _syncNotificationUserId(sessionData);
@@ -499,12 +582,19 @@ class _LoginPageState extends State<LoginPage>
       _syncNotificationUserId(userData);
       _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
+      final userRole = (userData['role'] ?? '').toString().trim().toLowerCase();
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => const MainPage(showWelcomeBackOnLoad: true),
-          ),
-        );
+        if (userRole == 'responder') {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const ResponderMainScreen()),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => const MainPage(showWelcomeBackOnLoad: true),
+            ),
+          );
+        }
       }
     } catch (e) {
       setState(() => _loading = false);
@@ -546,7 +636,6 @@ class _LoginPageState extends State<LoginPage>
         _showPhoneError = false;
         _phoneErrorMessage = '';
       });
-      _requiresOtpForApprovedLogin = true;
     }
   }
 
@@ -573,9 +662,6 @@ class _LoginPageState extends State<LoginPage>
           _showPhoneError = false;
           _phoneErrorMessage = '';
         });
-        _requiresOtpForApprovedLogin = false;
-      } else {
-        _requiresOtpForApprovedLogin = true;
       }
     }
 
@@ -585,6 +671,20 @@ class _LoginPageState extends State<LoginPage>
         if (mounted) {
           setState(() => _showPinSuccess = false);
         }
+      });
+    }
+
+    if (args != null &&
+        args['showRecoverySuccess'] == true &&
+        !_recoverySuccessShown) {
+      _recoverySuccessShown = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        AppSnackBar.show(
+          context,
+          'Account recovered successfully. Please log in with your new number.',
+          type: AppSnackBarType.success,
+        );
       });
     }
   }
@@ -668,18 +768,22 @@ class _LoginPageState extends State<LoginPage>
       final savedPhone = hasTrustedPhone
           ? trustedPhoneDigits.substring(trustedPhoneDigits.length - 10)
           : fallbackSavedPhone;
+      final normalizedTrustedDigits = trustedPhoneDigits ?? '';
+      final trustedPhoneE164 = hasTrustedPhone
+          ? '+$normalizedTrustedDigits'
+          : null;
+      final allowDirectPinFromTrust = trustedPhoneE164 == null
+          ? false
+          : await _canBypassOtpForPhone(phone: trustedPhoneE164);
       if (savedPhone != null && savedPhone.isNotEmpty && mounted) {
         setState(() {
           _phoneCtl.text = _formatPhoneNumber(savedPhone);
           _showSavedPhoneCard = approvedLoginCompleted || hasTrustedPhone;
-          _isPhoneVerifiedForPin = hasTrustedPhone;
+          _isPhoneVerifiedForPin = allowDirectPinFromTrust;
           _isPendingApprovalPhone = false;
           _showPhoneError = false;
           _phoneErrorMessage = '';
         });
-        if (hasTrustedPhone) {
-          _requiresOtpForApprovedLogin = false;
-        }
         // Sync biometrics from Firestore in background.
         unawaited(
           _loadBiometricsFromFirestore(
@@ -970,8 +1074,93 @@ class _LoginPageState extends State<LoginPage>
       }
 
       if (status.hasResponderAccount) {
+        final responderDoc = await _phoneLookupService.getFirstResponderDoc(
+          phone,
+        );
+        if (responderDoc == null) {
+          setState(() {
+            _loading = false;
+            _showPhoneError = true;
+            _phoneErrorMessage =
+                'This number is not registered as a responder.';
+            _isPhoneVerifiedForPin = false;
+          });
+          return;
+        }
+
+        var responderData = responderDoc.data();
+        final responderRole = (responderData['role'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
+        if (responderRole.isNotEmpty && responderRole != 'responder') {
+          setState(() {
+            _loading = false;
+            _showPhoneError = true;
+            _phoneErrorMessage =
+                'This number is not registered as a responder.';
+            _isPhoneVerifiedForPin = false;
+          });
+          return;
+        }
+
+        var hasPinCreated = _responderHasPinCreated(responderData);
+        final canBypassResponderOtp = hasPinCreated
+            ? await _canBypassOtpForPhone(
+                phone: phone,
+                firestoreLastLogin:
+                    responderData['lastLoginTimestamp'] ??
+                    responderData['lastLoginAt'],
+              )
+            : false;
+        final requiresResponderOtp = !canBypassResponderOtp;
+        if (requiresResponderOtp) {
+          final otpVerified = await _startOtpChallenge(
+            phone,
+            flowType: 'login',
+          );
+          if (!mounted) return;
+          if (!otpVerified) {
+            setState(() => _loading = false);
+            return;
+          }
+
+          final refreshedResponderDoc = await _firestore
+              .collection('responders')
+              .doc(responderDoc.id)
+              .get();
+          final refreshedData = refreshedResponderDoc.data();
+          if (refreshedData != null) {
+            responderData = refreshedData;
+            hasPinCreated = _responderHasPinCreated(responderData);
+          }
+        }
+
         await RegistrationPrefs.savePhoneNumber(phoneDigits);
         if (!mounted) return;
+
+        if (!hasPinCreated) {
+          setState(() {
+            _loading = false;
+            _isPhoneVerifiedForPin = false;
+            _isPendingApprovalPhone = false;
+            _showPhoneError = false;
+            _phoneErrorMessage = '';
+          });
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const ResponderPinSetupPage(),
+              settings: RouteSettings(
+                arguments: {
+                  'docId': responderDoc.id,
+                  'responderData': responderData,
+                  'phoneNumber': phone,
+                },
+              ),
+            ),
+          );
+          return;
+        }
 
         setState(() {
           _loading = false;
@@ -981,11 +1170,19 @@ class _LoginPageState extends State<LoginPage>
           _phoneErrorMessage = '';
           _showSavedPhoneCard = true;
         });
-        _requiresOtpForApprovedLogin = false;
         return;
       }
 
-      if (_requiresOtpForApprovedLogin) {
+      final approvedUserDoc = await _phoneLookupService.getFirstApprovedUserDoc(
+        phone,
+      );
+      final canBypassApprovedOtp = approvedUserDoc == null
+          ? false
+          : await _canBypassOtpForPhone(
+              phone: phone,
+              firestoreLastLogin: approvedUserDoc.data()['lastLoginTimestamp'],
+            );
+      if (!canBypassApprovedOtp) {
         final otpVerified = await _startOtpChallenge(phone, flowType: 'login');
         if (!mounted) return;
         if (!otpVerified) {
@@ -1005,7 +1202,6 @@ class _LoginPageState extends State<LoginPage>
         _phoneErrorMessage = '';
         _showSavedPhoneCard = true;
       });
-      _requiresOtpForApprovedLogin = false;
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1055,12 +1251,36 @@ class _LoginPageState extends State<LoginPage>
           authQueries[1] as QueryDocumentSnapshot<Map<String, dynamic>>?;
 
       if (responderDoc != null) {
-        debugPrint('Ã¢Å“â€¦ Responder login successful via PIN!');
         await _ensureFirebaseSession();
-        // Persist phone locally for faster next login.
-        await _recordSuccessfulApprovedLogin(phoneDigits: phoneInput);
-        // Set user session data for responder
         final responderData = responderDoc.data();
+        if (!_responderHasPinCreated(responderData)) {
+          setState(() {
+            _loading = false;
+            _pinCtl.clear();
+            _showPinError = false;
+            _pinErrorMessage = '';
+          });
+          if (!mounted) return;
+          AppSnackBar.show(
+            context,
+            'Set your personal PIN first.',
+            type: AppSnackBarType.warning,
+          );
+          if (!mounted) return;
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const ResponderPinSetupPage(),
+              settings: RouteSettings(
+                arguments: {
+                  'docId': responderDoc.id,
+                  'responderData': responderData,
+                  'phoneNumber': phone,
+                },
+              ),
+            ),
+          );
+          return;
+        }
         if (!_isPinMatch(responderData, pin)) {
           setState(() {
             _loading = false;
@@ -1071,6 +1291,10 @@ class _LoginPageState extends State<LoginPage>
           _resetPinWithError('Wrong PIN');
           return;
         }
+        await _recordSuccessfulApprovedLogin(
+          phoneDigits: phoneInput,
+          responderDocId: responderDoc.id,
+        );
         final sessionData = {...responderData, 'id': responderDoc.id};
         UserSession.setUserData(sessionData);
         _syncNotificationUserId(sessionData);
@@ -1183,12 +1407,19 @@ class _LoginPageState extends State<LoginPage>
       _syncNotificationUserId(userData);
       _finishAutofillContext(); // Trigger "Save to Google" prompt
       setState(() => _loading = false);
+      final userRole = (userData['role'] ?? '').toString().trim().toLowerCase();
       if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => const MainPage(showWelcomeBackOnLoad: true),
-          ),
-        );
+        if (userRole == 'responder') {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const ResponderMainScreen()),
+          );
+        } else {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => const MainPage(showWelcomeBackOnLoad: true),
+            ),
+          );
+        }
       }
     } catch (e) {
       setState(() => _loading = false);
@@ -1714,7 +1945,6 @@ class _LoginPageState extends State<LoginPage>
       _pinErrorMessage = '';
       _pinCtl.clear();
     });
-    _requiresOtpForApprovedLogin = true;
   }
 
   @override
@@ -1955,6 +2185,31 @@ class _LoginPageState extends State<LoginPage>
                                       fontWeight: FontWeight.w700,
                                       color: Colors.white,
                                       fontFamily: 'Roboto',
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Align(
+                                    alignment: Alignment.center,
+                                    child: TextButton(
+                                      onPressed: _loading
+                                          ? null
+                                          : () => Navigator.pushNamed(
+                                              context,
+                                              '/recover-account',
+                                            ),
+                                      style: TextButton.styleFrom(
+                                        padding: EdgeInsets.zero,
+                                        minimumSize: const Size(0, 0),
+                                      ),
+                                      child: Text(
+                                        "Can't access your number? Recover your account",
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: appBlue.withValues(alpha: 0.9),
+                                          fontFamily: 'RobotoCondensed',
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ] else ...[

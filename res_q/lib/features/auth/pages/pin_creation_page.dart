@@ -10,7 +10,6 @@ import '../../../common/theme/app_theme.dart';
 import '../../../common/theme/app_text_styles.dart';
 import '../../../common/constants/app_dimensions.dart';
 import '../../../common/utils/security_hash.dart';
-import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
 
@@ -94,16 +93,6 @@ class _PINCreationPageState extends State<PINCreationPage>
   void dispose() {
     _shakeController.dispose();
     super.dispose();
-  }
-
-  String _formatPhoneForDisplay(String? phone) {
-    if (phone == null || phone.isEmpty) return '';
-    String digits = phone.replaceAll(RegExp(r'\D'), '');
-    if (digits.startsWith('63')) digits = digits.substring(2);
-    if (digits.length == 10) {
-      return '+63 ${digits.substring(0, 3)}-${digits.substring(3, 6)}-${digits.substring(6)}';
-    }
-    return phone;
   }
 
   String get _activePin => _isConfirmingPin ? _confirmPin : _pin;
@@ -519,7 +508,7 @@ class _PINCreationPageState extends State<PINCreationPage>
       children: List.generate(4, (index) {
         final hasValue = activePin.length > index;
         return Container(
-          margin: const EdgeInsets.symmetric(horizontal: 10),
+          margin: const EdgeInsets.symmetric(horizontal: 8),
           width: 20,
           height: 20,
           decoration: BoxDecoration(
@@ -528,7 +517,9 @@ class _PINCreationPageState extends State<PINCreationPage>
                 ? (_showError ? Colors.red : AppTheme.appRed)
                 : Colors.transparent,
             border: Border.all(
-              color: _showError ? Colors.red : AppTheme.appBlack,
+              color: _showError
+                  ? Colors.red
+                  : AppTheme.appBlack.withValues(alpha: 0.35),
               width: 2,
             ),
           ),
@@ -539,189 +530,141 @@ class _PINCreationPageState extends State<PINCreationPage>
 
   @override
   Widget build(BuildContext context) {
+    final rawName = (_userData?['firstName'] ?? _userData?['fullName'] ?? '')
+        .toString();
+    final trimmedName = rawName.trim();
+    final displayName = trimmedName.isEmpty
+        ? 'User'
+        : trimmedName.split(RegExp(r'\s+')).first;
+
     return Scaffold(
       backgroundColor: AppTheme.appOffWhite,
       body: SafeArea(
         child: Column(
           children: [
-            ResqLogoHeader(
-              padding: const EdgeInsets.only(
-                top: AppDimensions.paddingMedium,
-                left: AppDimensions.paddingXLarge,
-                right: AppDimensions.paddingXLarge,
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(
+                  top: AppDimensions.paddingSmall,
+                  left: AppDimensions.paddingXSmall,
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.arrow_back_ios_new, size: 24),
+                  onPressed: () {
+                    if (_isConfirmingPin && !_loading) {
+                      setState(() {
+                        _isConfirmingPin = false;
+                        _confirmPin = '';
+                        _showError = false;
+                        _errorMessage = '';
+                      });
+                      return;
+                    }
+                    Navigator.pop(context);
+                  },
+                  color: AppTheme.appBlack,
+                ),
               ),
-              leading: ResqBackButton.outline(
-                onPressed: () {
-                  if (_isConfirmingPin && !_loading) {
-                    setState(() {
-                      _isConfirmingPin = false;
-                      _confirmPin = '';
-                      _showError = false;
-                      _errorMessage = '';
-                    });
-                    return;
-                  }
-                  Navigator.pop(context);
-                },
-              ),
-              title: Text('CREATE PIN', style: AppTextStyles.authPageTitle),
-              titleSpacing: AppDimensions.paddingSmall,
-              bottomSpacing: AppDimensions.paddingSmall,
             ),
 
-            // Content
             Expanded(
               child: Center(
                 child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppDimensions.paddingXLarge,
+                    vertical: AppDimensions.paddingSmall,
+                  ),
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 360),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppDimensions.paddingXLarge,
-                        vertical: AppDimensions.paddingMedium,
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            _isConfirmingPin
-                                ? 'Confirm your 4-digit PIN'
-                                : 'Set up your 4-digit PIN for fast login',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: AppTheme.appBlack.withValues(alpha: 0.7),
-                              fontFamily: 'RobotoCondensed',
-                            ),
-                            textAlign: TextAlign.center,
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 112,
+                          height: 112,
+                          decoration: BoxDecoration(
+                            color: AppTheme.appRed.withValues(alpha: 0.1),
+                            shape: BoxShape.circle,
                           ),
-
-                          const SizedBox(height: AppDimensions.paddingLarge),
-
-                          // Phone number display
-                          if (_phoneNumber != null && _phoneNumber!.isNotEmpty)
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 14,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppTheme.appOffWhite,
-                                borderRadius: BorderRadius.circular(
-                                  AppDimensions.radiusMedium,
-                                ),
-                                border: Border.all(
-                                  color: AppTheme.appBlack.withValues(
-                                    alpha: 0.2,
-                                  ),
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.phone_android,
-                                    color: AppTheme.appBlack,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Text(
-                                    _formatPhoneForDisplay(_phoneNumber),
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      color: AppTheme.appBlack,
-                                      fontFamily: 'RobotoCondensed',
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                          const SizedBox(height: AppDimensions.paddingXLarge),
-
-                          // PIN label
-                          Text(
-                            _isConfirmingPin
-                                ? 'CONFIRM YOUR PIN'
-                                : 'ENTER YOUR PIN',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: AppTheme.appBlack,
-                              fontFamily: 'Roboto',
-                              letterSpacing: 1,
-                            ),
+                          child: const Icon(
+                            Icons.lock_outline,
+                            size: 46,
+                            color: AppTheme.appRed,
                           ),
-
+                        ),
+                        const SizedBox(height: AppDimensions.paddingXLarge),
+                        Text(
+                          'Welcome, $displayName!',
+                          style: AppTextStyles.heading1.copyWith(
+                            color: AppTheme.appBlack,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: AppDimensions.paddingSmall),
+                        Text(
+                          _isConfirmingPin
+                              ? 'Confirm your personal PIN'
+                              : 'Set your personal PIN',
+                          style: AppTextStyles.inputText.copyWith(
+                            color: AppTheme.appBlack.withValues(alpha: 0.55),
+                            fontSize: 16,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 28),
+                        _loading
+                            ? const SizedBox(
+                                height: 24,
+                                width: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppTheme.appRed,
+                                ),
+                              )
+                            : AnimatedBuilder(
+                                animation: _shakeAnimation,
+                                builder: (context, child) {
+                                  final offset =
+                                      _shakeAnimation.value *
+                                      10 *
+                                      (1 - _shakeAnimation.value) *
+                                      ((_shakeController.value * 8).floor() %
+                                                  2 ==
+                                              0
+                                          ? 1
+                                          : -1);
+                                  return Transform.translate(
+                                    offset: Offset(offset, 0),
+                                    child: child,
+                                  );
+                                },
+                                child: _buildPinDots(),
+                              ),
+                        if (_showError) ...[
                           const SizedBox(height: AppDimensions.paddingMedium),
-
-                          // PIN dots
-                          _loading
-                              ? SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: AppTheme.appRed,
-                                  ),
-                                )
-                              : AnimatedBuilder(
-                                  animation: _shakeAnimation,
-                                  builder: (context, child) {
-                                    final offset =
-                                        _shakeAnimation.value *
-                                        10 *
-                                        (1 - _shakeAnimation.value) *
-                                        ((_shakeController.value * 8).floor() %
-                                                    2 ==
-                                                0
-                                            ? 1
-                                            : -1);
-                                    return Transform.translate(
-                                      offset: Offset(offset, 0),
-                                      child: child,
-                                    );
-                                  },
-                                  child: _buildPinDots(),
-                                ),
-
-                          // Error message
-                          if (_showError) ...[
-                            const SizedBox(height: AppDimensions.paddingMedium),
-                            Text(
-                              _errorMessage,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.red,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-
-                          const SizedBox(height: AppDimensions.paddingXLarge),
-
-                          // Numpad
-                          PinNumpad(
-                            enabled: !_loading,
-                            onKeyTap: _handlePinKey,
-                            actionBackgroundColor: AppTheme.appOffWhite,
-                            textColor: AppTheme.appBlack,
-                          ),
-
-                          const SizedBox(height: AppDimensions.paddingLarge),
-
                           Text(
-                            _isConfirmingPin
-                                ? 'Re-enter the same 4 digits to continue.'
-                                : 'Please remember your PIN.\nYou will need it to login.',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppTheme.appBlack.withValues(alpha: 0.6),
-                              fontFamily: 'RobotoCondensed',
+                            _errorMessage,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.red,
                             ),
                             textAlign: TextAlign.center,
                           ),
                         ],
-                      ),
+                        const SizedBox(height: 28),
+                        PinNumpad(
+                          enabled: !_loading,
+                          onKeyTap: _handlePinKey,
+                          buttonSize: 78,
+                          gap: 12,
+                          actionBackgroundColor: AppTheme.appOffWhite,
+                          textColor: AppTheme.appBlack,
+                        ),
+                        const SizedBox(height: AppDimensions.paddingLarge),
+                      ],
                     ),
                   ),
                 ),

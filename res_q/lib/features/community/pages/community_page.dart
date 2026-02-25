@@ -209,6 +209,8 @@ class _CommunityPageState extends State<CommunityPage>
   static const statusYellow = Color(0xFFFFC806); // Under Review
   static const statusRed = Color(0xFFAC1B22); // Flagged
   static const int _reportFeedLimit = 150;
+  static const String _closedReportInteractionNote =
+      'This report has been closed. Comments and votes are disabled.';
 
   String _selectedFilter = 'All';
   String _selectedCategory = 'All';
@@ -702,6 +704,21 @@ class _CommunityPageState extends State<CommunityPage>
       'commentsList': <Map<String, dynamic>>[],
       'userVote': 'none',
       'name': data['name'] ?? 'Unknown',
+      'submitterPhone':
+          data['contactNumber'] ??
+          data['phoneNumber'] ??
+          data['userPhone'] ??
+          data['submittedByPhone'] ??
+          data['reporterPhone'] ??
+          data['phone'] ??
+          '',
+      'submitterUserId':
+          data['userId'] ??
+          data['uid'] ??
+          data['submittedByUid'] ??
+          data['submittedBy'] ??
+          data['userDocId'] ??
+          '',
       'mediaType': data['mediaType'] ?? 'photo',
     };
   }
@@ -713,6 +730,14 @@ class _CommunityPageState extends State<CommunityPage>
     'Fire',
     'Vehicular',
     'Others',
+  ];
+
+  static const List<String> _statusFilters = [
+    'All',
+    'Approved',
+    'Under Review',
+    'Flagged',
+    'My Reports',
   ];
 
   static const List<String> _timeFilters = [
@@ -742,7 +767,97 @@ class _CommunityPageState extends State<CommunityPage>
     }
   }
 
+  String _normalizeIdentityValue(Object? value) {
+    return (value ?? '').toString().trim().toLowerCase();
+  }
+
+  String _normalizePhoneIdentity(Object? value) {
+    return (value ?? '').toString().replaceAll(RegExp(r'[^0-9]'), '');
+  }
+
+  Set<String> _currentUserPhoneCandidates() {
+    final userData = UserSession.currentUserData;
+    String fallbackUserId = '';
+    try {
+      fallbackUserId = UserSession.getUserId();
+    } catch (_) {}
+    final phones = <String>{
+      _normalizePhoneIdentity(userData?['contactNumber']),
+      _normalizePhoneIdentity(userData?['phoneNumber']),
+      _normalizePhoneIdentity(userData?['phone']),
+      _normalizePhoneIdentity(userData?['mobileNumber']),
+      _normalizePhoneIdentity(userData?['userPhone']),
+      _normalizePhoneIdentity(fallbackUserId),
+    };
+    phones.removeWhere((entry) => entry.isEmpty);
+    return phones;
+  }
+
+  Set<String> _currentUserIdCandidates() {
+    final userData = UserSession.currentUserData;
+    String fallbackUserId = '';
+    try {
+      fallbackUserId = UserSession.getUserId();
+    } catch (_) {}
+    final ids = <String>{
+      _normalizeIdentityValue(userData?['uid']),
+      _normalizeIdentityValue(userData?['userId']),
+      _normalizeIdentityValue(userData?['id']),
+      _normalizeIdentityValue(userData?['docId']),
+      _normalizeIdentityValue(fallbackUserId),
+    };
+    ids.removeWhere((entry) => entry.isEmpty);
+    return ids;
+  }
+
+  String _currentUserDisplayName() {
+    final userData = UserSession.currentUserData;
+    return _normalizeIdentityValue(
+      userData?['fullName'] ??
+          userData?['name'] ??
+          userData?['displayName'] ??
+          userData?['username'],
+    );
+  }
+
+  bool _isCurrentUsersReport(
+    Map<String, dynamic> report, {
+    required Set<String> userPhoneCandidates,
+    required Set<String> userIdCandidates,
+    required String currentUserName,
+  }) {
+    final reportPhone = _normalizePhoneIdentity(
+      report['submitterPhone'] ??
+          report['contactNumber'] ??
+          report['phoneNumber'] ??
+          report['userPhone'],
+    );
+    if (reportPhone.isNotEmpty && userPhoneCandidates.contains(reportPhone)) {
+      return true;
+    }
+
+    final reportUserId = _normalizeIdentityValue(
+      report['submitterUserId'] ?? report['uid'] ?? report['userId'],
+    );
+    if (reportUserId.isNotEmpty && userIdCandidates.contains(reportUserId)) {
+      return true;
+    }
+
+    final reportName = _normalizeIdentityValue(report['name']);
+    if (reportName.isNotEmpty &&
+        currentUserName.isNotEmpty &&
+        reportName == currentUserName) {
+      return true;
+    }
+
+    return false;
+  }
+
   List<Map<String, dynamic>> _computeVisibleReports() {
+    final userPhoneCandidates = _currentUserPhoneCandidates();
+    final userIdCandidates = _currentUserIdCandidates();
+    final currentUserName = _currentUserDisplayName();
+
     final filtered = _reports.where((report) {
       final statusRaw = report['status']?.toString() ?? '';
       final status = _normalizeStatusKey(statusRaw);
@@ -768,6 +883,14 @@ class _CommunityPageState extends State<CommunityPage>
           break;
         case 'Flagged':
           matchesFilter = _isFlaggedStatus(statusRaw);
+          break;
+        case 'My Reports':
+          matchesFilter = _isCurrentUsersReport(
+            report,
+            userPhoneCandidates: userPhoneCandidates,
+            userIdCandidates: userIdCandidates,
+            currentUserName: currentUserName,
+          );
           break;
         default:
           matchesFilter = true;
@@ -812,6 +935,7 @@ class _CommunityPageState extends State<CommunityPage>
       case 'Approved':
       case 'Under Review':
       case 'Flagged':
+      case 'My Reports':
       case 'All':
         return value;
       default:
@@ -842,6 +966,17 @@ class _CommunityPageState extends State<CommunityPage>
     return normalized == 'flagged' ||
         normalized == 'unverified' ||
         normalized == 'admin flagged';
+  }
+
+  bool _isPendingStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'pending' || normalized == 'under review';
+  }
+
+  bool _isInteractionLockedStatus(String status) {
+    return _isApprovedStatus(status) ||
+        _isFlaggedStatus(status) ||
+        _isPendingStatus(status);
   }
 
   String _normalizeStatusLabel(String status) {
@@ -1515,9 +1650,9 @@ class _CommunityPageState extends State<CommunityPage>
   }
 
   void _showReportDetailsDialog(Map<String, dynamic> report) {
-    final statusLower = (report['status'] as String? ?? '').toLowerCase();
-    final isResolved =
-        statusLower == 'resolved' || statusLower == 'incident resolved';
+    final statusRaw = (report['status'] as String? ?? '');
+    final isResolved = _isResolvedStatus(statusRaw);
+    final isInteractionLocked = _isInteractionLockedStatus(statusRaw);
     final mediaUrl = (report['image'] as String? ?? '').trim();
     final resolvedBy =
         (report['resolvedBy'] ??
@@ -1538,10 +1673,16 @@ class _CommunityPageState extends State<CommunityPage>
     final vote = report['userVote'] as String? ?? 'none';
     final bool greenSelected = vote == 'green';
     final bool redSelected = vote == 'red';
-    final Color greenIconColor = greenSelected
+    final Color greenIconColor = isInteractionLocked
+        ? Colors.grey.shade500
+        : greenSelected
         ? appGreen
         : appGreen.withOpacity(0.6);
-    final Color redIconColor = redSelected ? appRed : appRed.withOpacity(0.6);
+    final Color redIconColor = isInteractionLocked
+        ? Colors.grey.shade500
+        : redSelected
+        ? appRed
+        : appRed.withOpacity(0.6);
 
     showDialog(
       context: context,
@@ -1681,6 +1822,17 @@ class _CommunityPageState extends State<CommunityPage>
                             color: appBlack.withOpacity(0.8),
                           ),
                         ),
+                      if (isInteractionLocked) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          _closedReportInteractionNote,
+                          style: TextStyle(
+                            fontFamily: 'RobotoCondensed',
+                            fontSize: 11,
+                            color: appBlack.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1688,7 +1840,9 @@ class _CommunityPageState extends State<CommunityPage>
                           Row(
                             children: [
                               InkWell(
-                                onTap: () => _onGreenFlagPressed(reportIndex),
+                                onTap: isInteractionLocked
+                                    ? null
+                                    : () => _onGreenFlagPressed(reportIndex),
                                 borderRadius: BorderRadius.circular(8),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -1716,7 +1870,9 @@ class _CommunityPageState extends State<CommunityPage>
                               ),
                               const SizedBox(width: 12),
                               InkWell(
-                                onTap: () => _onRedFlagPressed(reportIndex),
+                                onTap: isInteractionLocked
+                                    ? null
+                                    : () => _onRedFlagPressed(reportIndex),
                                 borderRadius: BorderRadius.circular(8),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -1812,6 +1968,14 @@ class _CommunityPageState extends State<CommunityPage>
 
   Future<void> _onGreenFlagPressed(int index) async {
     final report = _reports[index];
+    if (_isInteractionLockedStatus(report['status']?.toString() ?? '')) {
+      AppSnackBar.show(
+        context,
+        _closedReportInteractionNote,
+        type: AppSnackBarType.info,
+      );
+      return;
+    }
     final String vote = report['userVote'];
     final reportId = report['id']?.toString() ?? '';
     int greenCount = _nonNegativeInt(report['greenFlags']);
@@ -1883,6 +2047,14 @@ class _CommunityPageState extends State<CommunityPage>
 
   Future<void> _onRedFlagPressed(int index) async {
     final report = _reports[index];
+    if (_isInteractionLockedStatus(report['status']?.toString() ?? '')) {
+      AppSnackBar.show(
+        context,
+        _closedReportInteractionNote,
+        type: AppSnackBarType.info,
+      );
+      return;
+    }
     final String vote = report['userVote'];
     final reportId = report['id']?.toString() ?? '';
     int greenCount = _nonNegativeInt(report['greenFlags']);
@@ -2112,7 +2284,7 @@ class _CommunityPageState extends State<CommunityPage>
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  children: ['All', 'Approved', 'Under Review', 'Flagged']
+                  children: _statusFilters
                       .map(
                         (status) => ChoiceChip(
                           label: Text(status),
@@ -2636,15 +2808,22 @@ class _CommunityPageState extends State<CommunityPage>
                       final isResolved = _isResolvedStatus(statusRaw);
                       final isApproved = _isApprovedStatus(statusRaw);
                       final isFlagged = _isFlaggedStatus(statusRaw);
+                      final isInteractionLocked = _isInteractionLockedStatus(
+                        statusRaw,
+                      );
                       final reportIndex = reportIndexById[reportId] ?? index;
                       final vote = report['userVote'] as String;
                       final bool greenSelected = vote == 'green';
                       final bool redSelected = vote == 'red';
 
-                      final Color greenIconColor = greenSelected
+                      final Color greenIconColor = isInteractionLocked
+                          ? Colors.grey.shade500
+                          : greenSelected
                           ? appGreen
                           : appGreen.withOpacity(0.6);
-                      final Color redIconColor = redSelected
+                      final Color redIconColor = isInteractionLocked
+                          ? Colors.grey.shade500
+                          : redSelected
                           ? appRed
                           : appRed.withOpacity(0.6);
 
@@ -2859,127 +3038,161 @@ class _CommunityPageState extends State<CommunityPage>
                                     horizontal: 8,
                                     vertical: 4,
                                   ),
-                                  child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceAround,
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      // GREEN FLAG (Verify)
-                                      Expanded(
-                                        child: InkWell(
-                                          onTap: () =>
-                                              _onGreenFlagPressed(reportIndex),
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              vertical: 8,
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.check_circle_outline,
-                                                  size: 20,
-                                                  color: greenIconColor,
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceAround,
+                                        children: [
+                                          // GREEN FLAG (Verify)
+                                          Expanded(
+                                            child: InkWell(
+                                              onTap: isInteractionLocked
+                                                  ? null
+                                                  : () => _onGreenFlagPressed(
+                                                      reportIndex,
+                                                    ),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      vertical: 8,
+                                                    ),
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment.center,
+                                                  children: [
+                                                    Icon(
+                                                      Icons
+                                                          .check_circle_outline,
+                                                      size: 20,
+                                                      color: greenIconColor,
+                                                    ),
+                                                    const SizedBox(width: 4),
+                                                    Text(
+                                                      'Verify ${_nonNegativeInt(report['greenFlags'])}',
+                                                      style: TextStyle(
+                                                        fontFamily:
+                                                            'RobotoCondensed',
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            greenSelected
+                                                            ? FontWeight.w700
+                                                            : FontWeight.w400,
+                                                        color: greenIconColor,
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Verify ${_nonNegativeInt(report['greenFlags'])}',
-                                                  style: TextStyle(
-                                                    fontFamily:
-                                                        'RobotoCondensed',
-                                                    fontSize: 12,
-                                                    fontWeight: greenSelected
-                                                        ? FontWeight.w700
-                                                        : FontWeight.w400,
-                                                    color: greenIconColor,
-                                                  ),
-                                                ),
-                                              ],
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                      ),
 
-                                      // RED FLAG (Report)
-                                      Expanded(
-                                        child: InkWell(
-                                          onTap: () =>
-                                              _onRedFlagPressed(reportIndex),
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              vertical: 8,
-                                            ),
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: [
-                                                Icon(
-                                                  Icons.flag_outlined,
-                                                  size: 20,
-                                                  color: redIconColor,
+                                          // RED FLAG (Report)
+                                          Expanded(
+                                            child: InkWell(
+                                              onTap: isInteractionLocked
+                                                  ? null
+                                                  : () => _onRedFlagPressed(
+                                                      reportIndex,
+                                                    ),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      vertical: 8,
+                                                    ),
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment.center,
+                                                  children: [
+                                                    Icon(
+                                                      Icons.flag_outlined,
+                                                      size: 20,
+                                                      color: redIconColor,
+                                                    ),
+                                                    const SizedBox(width: 4),
+                                                    Text(
+                                                      'Report ${_nonNegativeInt(report['redFlags'])}',
+                                                      style: TextStyle(
+                                                        fontFamily:
+                                                            'RobotoCondensed',
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            redSelected
+                                                            ? FontWeight.w700
+                                                            : FontWeight.w400,
+                                                        color: redIconColor,
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Report ${_nonNegativeInt(report['redFlags'])}',
-                                                  style: TextStyle(
-                                                    fontFamily:
-                                                        'RobotoCondensed',
-                                                    fontSize: 12,
-                                                    fontWeight: redSelected
-                                                        ? FontWeight.w700
-                                                        : FontWeight.w400,
-                                                    color: redIconColor,
-                                                  ),
-                                                ),
-                                              ],
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                      ),
 
-                                      // COMMENTS
-                                      Expanded(
-                                        child: InkWell(
-                                          onTap: () =>
-                                              _openComments(reportIndex),
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                              vertical: 8,
+                                          // COMMENTS
+                                          Expanded(
+                                            child: InkWell(
+                                              onTap: () =>
+                                                  _openComments(reportIndex),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      vertical: 8,
+                                                    ),
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment.center,
+                                                  children: [
+                                                    const Icon(
+                                                      Icons.chat_bubble_outline,
+                                                      size: 20,
+                                                      color: commentBlue,
+                                                    ),
+                                                    const SizedBox(width: 4),
+                                                    Text(
+                                                      'Comment ${report['comments']}',
+                                                      style: const TextStyle(
+                                                        fontFamily:
+                                                            'RobotoCondensed',
+                                                        fontSize: 12,
+                                                        fontWeight:
+                                                            FontWeight.w400,
+                                                        color: commentBlue,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
                                             ),
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.center,
-                                              children: [
-                                                const Icon(
-                                                  Icons.chat_bubble_outline,
-                                                  size: 20,
-                                                  color: commentBlue,
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Comment ${report['comments']}',
-                                                  style: const TextStyle(
-                                                    fontFamily:
-                                                        'RobotoCondensed',
-                                                    fontSize: 12,
-                                                    fontWeight: FontWeight.w400,
-                                                    color: commentBlue,
-                                                  ),
-                                                ),
-                                              ],
+                                          ),
+                                        ],
+                                      ),
+                                      if (isInteractionLocked)
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            left: 8,
+                                            right: 8,
+                                            bottom: 4,
+                                          ),
+                                          child: Text(
+                                            _closedReportInteractionNote,
+                                            style: TextStyle(
+                                              fontFamily: 'RobotoCondensed',
+                                              fontSize: 11,
+                                              color: appBlack.withValues(
+                                                alpha: 0.7,
+                                              ),
                                             ),
                                           ),
                                         ),
-                                      ),
                                     ],
                                   ),
                                 ),
@@ -3021,6 +3234,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   static const appBlack = Color(0xFF212121);
   static const commentBlue = Color(0xFF2563EB);
   static const int _maxReplyDepth = 4;
+  static const String _closedReportInteractionNote =
+      'This report has been closed. Comments and votes are disabled.';
 
   final TextEditingController _commentController = TextEditingController();
   final TextEditingController _replyController = TextEditingController();
@@ -3036,6 +3251,38 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   bool _loading = true;
   bool _isPostingComment = false;
   final _VoteStorageBackend _voteStorageBackend = _VoteStorageBackend();
+
+  String _normalizeStatusKey(String status) {
+    return status
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[_-]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  bool _isApprovedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'approved' || normalized == 'verified';
+  }
+
+  bool _isFlaggedStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'flagged' ||
+        normalized == 'unverified' ||
+        normalized == 'admin flagged';
+  }
+
+  bool _isPendingStatus(String status) {
+    final normalized = _normalizeStatusKey(status);
+    return normalized == 'pending' || normalized == 'under review';
+  }
+
+  bool get _isInteractionLocked {
+    final statusRaw = widget.report['status']?.toString() ?? '';
+    return _isApprovedStatus(statusRaw) ||
+        _isFlaggedStatus(statusRaw) ||
+        _isPendingStatus(statusRaw);
+  }
 
   @override
   void initState() {
@@ -3209,6 +3456,15 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   }
 
   Future<void> _postComment() async {
+    if (_isInteractionLocked) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        _closedReportInteractionNote,
+        type: AppSnackBarType.info,
+      );
+      return;
+    }
     if (_isPostingComment) return;
     final commentText = _commentController.text.trim();
     if (commentText.isEmpty) return;
@@ -3296,6 +3552,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   }
 
   Future<void> _onCommentVerify(int commentIndex) async {
+    if (_isInteractionLocked) return;
     final reportId = widget.report['id']?.toString() ?? '';
     if (reportId.isEmpty) return;
 
@@ -3345,6 +3602,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   }
 
   Future<void> _onCommentReport(int commentIndex) async {
+    if (_isInteractionLocked) return;
     final reportId = widget.report['id']?.toString() ?? '';
     if (reportId.isEmpty) return;
 
@@ -3419,6 +3677,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   }
 
   Future<void> _onReplyVerify(String commentId, String replyId) async {
+    if (_isInteractionLocked) return;
     final reportId = widget.report['id']?.toString() ?? '';
     if (reportId.isEmpty) return;
 
@@ -3471,6 +3730,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   }
 
   Future<void> _onReplyReport(String commentId, String replyId) async {
+    if (_isInteractionLocked) return;
     final reportId = widget.report['id']?.toString() ?? '';
     if (reportId.isEmpty) return;
 
@@ -3621,6 +3881,15 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   }
 
   Future<void> _startReply(String commentId, {String? replyId}) async {
+    if (_isInteractionLocked) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        _closedReportInteractionNote,
+        type: AppSnackBarType.info,
+      );
+      return;
+    }
     final changedTarget =
         _replyingToCommentId != commentId || _replyingToReplyId != replyId;
     if (changedTarget) {
@@ -3642,6 +3911,15 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   }
 
   Future<void> _postReply(String commentId, {String? parentReplyId}) async {
+    if (_isInteractionLocked) {
+      if (!mounted) return;
+      AppSnackBar.show(
+        context,
+        _closedReportInteractionNote,
+        type: AppSnackBarType.info,
+      );
+      return;
+    }
     if (_postingReply[commentId] == true) return;
 
     final replyText = _replyController.text.trim();
@@ -4019,37 +4297,39 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                   spacing: 8,
                   runSpacing: 4,
                   children: [
-                    _buildCommentAction(
-                      icon: Icons.verified,
-                      label: 'Verify ${_nonNegativeInt(reply['greenFlags'])}',
-                      color: appGreen,
-                      selected: verifySelected,
-                      onTap: () => _onReplyVerify(commentId, replyId),
-                    ),
-                    _buildCommentAction(
-                      icon: Icons.flag,
-                      label: 'Report ${_nonNegativeInt(reply['redFlags'])}',
-                      color: appRed,
-                      selected: reportSelected,
-                      onTap: () => _onReplyReport(commentId, replyId),
-                    ),
-                    _buildCommentAction(
-                      icon: Icons.reply,
-                      label: replyCount > 0 ? 'Reply ($replyCount)' : 'Reply',
-                      color: canReplyHere ? commentBlue : Colors.grey,
-                      selected: canReplyHere && showReplyInput,
-                      onTap: () {
-                        if (!canReplyHere) {
-                          AppSnackBar.show(
-                            context,
-                            'Maximum reply depth ($_maxReplyDepth levels) reached.',
-                            type: AppSnackBarType.error,
-                          );
-                          return;
-                        }
-                        _startReply(commentId, replyId: replyId);
-                      },
-                    ),
+                    if (!_isInteractionLocked) ...[
+                      _buildCommentAction(
+                        icon: Icons.verified,
+                        label: 'Verify ${_nonNegativeInt(reply['greenFlags'])}',
+                        color: appGreen,
+                        selected: verifySelected,
+                        onTap: () => _onReplyVerify(commentId, replyId),
+                      ),
+                      _buildCommentAction(
+                        icon: Icons.flag,
+                        label: 'Report ${_nonNegativeInt(reply['redFlags'])}',
+                        color: appRed,
+                        selected: reportSelected,
+                        onTap: () => _onReplyReport(commentId, replyId),
+                      ),
+                      _buildCommentAction(
+                        icon: Icons.reply,
+                        label: replyCount > 0 ? 'Reply ($replyCount)' : 'Reply',
+                        color: canReplyHere ? commentBlue : Colors.grey,
+                        selected: canReplyHere && showReplyInput,
+                        onTap: () {
+                          if (!canReplyHere) {
+                            AppSnackBar.show(
+                              context,
+                              'Maximum reply depth ($_maxReplyDepth levels) reached.',
+                              type: AppSnackBarType.error,
+                            );
+                            return;
+                          }
+                          _startReply(commentId, replyId: replyId);
+                        },
+                      ),
+                    ],
                     if (replyCount > 0)
                       _buildCommentAction(
                         icon: isExpanded
@@ -4062,7 +4342,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                       ),
                   ],
                 ),
-                if (showReplyInput && canReplyHere) ...[
+                if (!_isInteractionLocked && showReplyInput && canReplyHere) ...[
                   const SizedBox(height: 8),
                   _buildReplyComposer(
                     commentId: commentId,
@@ -4116,6 +4396,7 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
+    final interactionsLocked = _isInteractionLocked;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
@@ -4189,6 +4470,21 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                   ],
                 ),
               ),
+              if (interactionsLocked)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _closedReportInteractionNote,
+                      style: TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontSize: 11,
+                        color: appBlack.withValues(alpha: 0.7),
+                      ),
+                    ),
+                  ),
+                ),
 
               const Divider(height: 1),
 
@@ -4217,7 +4513,9 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Be the first to comment!',
+                              interactionsLocked
+                                  ? 'Comments are read-only for this report.'
+                                  : 'Be the first to comment!',
                               style: TextStyle(
                                 fontFamily: 'RobotoCondensed',
                                 fontSize: 12,
@@ -4334,33 +4632,36 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                                         spacing: 8,
                                         runSpacing: 4,
                                         children: [
-                                          _buildCommentAction(
-                                            icon: Icons.verified,
-                                            label:
-                                                'Verify ${_nonNegativeInt(comment['greenFlags'])}',
-                                            color: appGreen,
-                                            selected: verifySelected,
-                                            onTap: () =>
-                                                _onCommentVerify(index),
-                                          ),
-                                          _buildCommentAction(
-                                            icon: Icons.flag,
-                                            label:
-                                                'Report ${_nonNegativeInt(comment['redFlags'])}',
-                                            color: appRed,
-                                            selected: reportSelected,
-                                            onTap: () =>
-                                                _onCommentReport(index),
-                                          ),
-                                          _buildCommentAction(
-                                            icon: Icons.reply,
-                                            label: replyCount > 0
-                                                ? 'Reply ($replyCount)'
-                                                : 'Reply',
-                                            color: commentBlue,
-                                            selected: showReplyInput,
-                                            onTap: () => _startReply(commentId),
-                                          ),
+                                          if (!interactionsLocked) ...[
+                                            _buildCommentAction(
+                                              icon: Icons.verified,
+                                              label:
+                                                  'Verify ${_nonNegativeInt(comment['greenFlags'])}',
+                                              color: appGreen,
+                                              selected: verifySelected,
+                                              onTap: () =>
+                                                  _onCommentVerify(index),
+                                            ),
+                                            _buildCommentAction(
+                                              icon: Icons.flag,
+                                              label:
+                                                  'Report ${_nonNegativeInt(comment['redFlags'])}',
+                                              color: appRed,
+                                              selected: reportSelected,
+                                              onTap: () =>
+                                                  _onCommentReport(index),
+                                            ),
+                                            _buildCommentAction(
+                                              icon: Icons.reply,
+                                              label: replyCount > 0
+                                                  ? 'Reply ($replyCount)'
+                                                  : 'Reply',
+                                              color: commentBlue,
+                                              selected: showReplyInput,
+                                              onTap: () =>
+                                                  _startReply(commentId),
+                                            ),
+                                          ],
                                           if (replyCount > 0)
                                             _buildCommentAction(
                                               icon: isExpanded
@@ -4413,7 +4714,8 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
                                             ),
                                           ),
                                       ],
-                                      if (showReplyInput) ...[
+                                      if (!interactionsLocked &&
+                                          showReplyInput) ...[
                                         const SizedBox(height: 8),
                                         _buildReplyComposer(
                                           commentId: commentId,
@@ -4430,84 +4732,104 @@ class _CommentsBottomSheetState extends State<_CommentsBottomSheet> {
               ),
 
               // Comment input
-              Container(
-                padding: EdgeInsets.only(
-                  left: 12,
-                  right: 12,
-                  top: 8,
-                  bottom: bottomPadding + 12,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border(top: BorderSide(color: Colors.grey[200]!)),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _commentController,
-                        maxLines: null,
-                        inputFormatters: [
-                          LengthLimitingTextInputFormatter(256),
-                        ],
-                        style: const TextStyle(
-                          fontFamily: 'RobotoCondensed',
-                          fontSize: 14,
-                          color: appBlack,
-                        ),
-                        decoration: InputDecoration(
-                          hintText: 'Write a comment...',
-                          hintStyle: TextStyle(
+              if (!interactionsLocked)
+                Container(
+                  padding: EdgeInsets.only(
+                    left: 12,
+                    right: 12,
+                    top: 8,
+                    bottom: bottomPadding + 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border(top: BorderSide(color: Colors.grey[200]!)),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _commentController,
+                          maxLines: null,
+                          inputFormatters: [
+                            LengthLimitingTextInputFormatter(256),
+                          ],
+                          style: const TextStyle(
                             fontFamily: 'RobotoCondensed',
                             fontSize: 14,
-                            color: Colors.grey[400],
+                            color: appBlack,
                           ),
-                          filled: true,
-                          fillColor: Colors.grey[100],
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 10,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(24),
-                            borderSide: BorderSide.none,
+                          decoration: InputDecoration(
+                            hintText: 'Write a comment...',
+                            hintStyle: TextStyle(
+                              fontFamily: 'RobotoCondensed',
+                              fontSize: 14,
+                              color: Colors.grey[400],
+                            ),
+                            filled: true,
+                            fillColor: Colors.grey[100],
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 10,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(24),
+                              borderSide: BorderSide.none,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: _isPostingComment ? null : _postComment,
-                      child: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: _isPostingComment
-                              ? appBlue.withOpacity(0.6)
-                              : appBlue,
-                          shape: BoxShape.circle,
-                        ),
-                        child: _isPostingComment
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.white,
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: _isPostingComment ? null : _postComment,
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: _isPostingComment
+                                ? appBlue.withOpacity(0.6)
+                                : appBlue,
+                            shape: BoxShape.circle,
+                          ),
+                          child: _isPostingComment
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.white,
+                                    ),
                                   ),
+                                )
+                              : const Icon(
+                                  Icons.send,
+                                  color: Colors.white,
+                                  size: 18,
                                 ),
-                              )
-                            : const Icon(
-                                Icons.send,
-                                color: Colors.white,
-                                size: 18,
-                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border(top: BorderSide(color: Colors.grey[200]!)),
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _closedReportInteractionNote,
+                      style: TextStyle(
+                        fontFamily: 'RobotoCondensed',
+                        fontSize: 11,
+                        color: appBlack.withValues(alpha: 0.7),
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
             ],
           ),
         );
