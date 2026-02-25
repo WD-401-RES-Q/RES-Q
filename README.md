@@ -37,7 +37,7 @@ Its goal is to improve situational awareness, accelerate response time, and stre
 - View live responder locations on map
 - Trigger city-wide or barangay-specific alerts
 - Manage and log incident data
-- Access semi-admin dashboard
+- Access responder dashboard
 
 ### For Admins
 

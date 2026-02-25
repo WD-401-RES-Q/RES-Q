@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendPushOnApprovedUserBanUpdate = exports.sendPushOnResponderDeployment = exports.sendPushOnReportCreate = exports.sendPushOnAnnouncementCreate = exports.cleanupOldReports = exports.syncApprovedUsersEncryption = exports.deleteAnnouncementAsAdmin = exports.deleteReportAsAdmin = exports.getDecryptedUsers = exports.getOwnDecryptedProfile = exports.decryptUserData = exports.registerUserEncrypted = void 0;
+exports.sendPushOnApprovedUserBanUpdate = exports.sendPushOnResponderDeployment = exports.sendPushOnReportCreate = exports.sendPushOnAnnouncementCreate = exports.cleanupOldReports = exports.syncApprovedUsersEncryption = exports.deleteAnnouncementAsAdmin = exports.deleteReportAsAdmin = exports.getDecryptedUsers = exports.getOwnDecryptedProfile = exports.decryptUserData = exports.registerUserEncrypted = exports.migrateResponderRoleData = void 0;
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const crypto = require("crypto");
@@ -104,6 +104,146 @@ async function assertAdminAccess(adminIdRaw) {
     }
     return adminId;
 }
+function normalizeRoleValueForMigration(value) {
+    return readTrimmedString(value)
+        .toLowerCase()
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ');
+}
+function isLegacyResponderRoleValue(value) {
+    const normalized = normalizeRoleValueForMigration(value);
+    return normalized === 'semi admin' || normalized === 'semiadmin';
+}
+const LEGACY_ROLE_QUERY_VALUES = [
+    'semi-admin',
+    'semi_admin',
+    'semi admin',
+    'semiadmin',
+    'Semi Admin',
+    'Semi-Admin',
+];
+/**
+ * One-time admin migration:
+ * - Moves docs from legacy `semi_admins` collection into `responders`
+ * - Rewrites legacy role values (`semi-admin`, `semi_admin`, etc.) to `responder`
+ */
+exports.migrateResponderRoleData = functions
+    .region('asia-east2')
+    .https.onCall(async (data, context) => {
+    var _a, _b;
+    const payload = (data !== null && data !== void 0 ? data : {});
+    const dryRun = payload.dryRun === true;
+    await assertAdminAccess(payload.adminId);
+    let scannedDocs = 0;
+    let updatedRoleDocs = 0;
+    let movedLegacyCollectionDocs = 0;
+    let deletedLegacyCollectionDocs = 0;
+    const commitBuffer = async (batch, ops) => {
+        if (!dryRun && ops > 0) {
+            await batch.commit();
+        }
+        return db.batch();
+    };
+    let batch = db.batch();
+    let batchOps = 0;
+    const flushIfNeeded = async (force = false) => {
+        if (batchOps >= 420 || (force && batchOps > 0)) {
+            batch = await commitBuffer(batch, batchOps);
+            batchOps = 0;
+        }
+    };
+    const legacySnapshot = await db.collection('semi_admins').get();
+    scannedDocs += legacySnapshot.size;
+    for (const doc of legacySnapshot.docs) {
+        const docData = ((_a = doc.data()) !== null && _a !== void 0 ? _a : {});
+        const responderRef = db.collection('responders').doc(doc.id);
+        const nextData = Object.assign(Object.assign({}, docData), { role: 'responder' });
+        movedLegacyCollectionDocs += 1;
+        deletedLegacyCollectionDocs += 1;
+        if (normalizeRoleValueForMigration(docData.role) !== 'responder') {
+            updatedRoleDocs += 1;
+        }
+        if (!dryRun) {
+            batch.set(responderRef, nextData, { merge: true });
+            batch.delete(doc.ref);
+            batchOps += 2;
+            await flushIfNeeded();
+        }
+    }
+    const collectionsToNormalize = [
+        'responders',
+        'approved_users',
+        'pending_users',
+        'users',
+    ];
+    for (const collectionName of collectionsToNormalize) {
+        const snapshot = await db.collection(collectionName).get();
+        scannedDocs += snapshot.size;
+        for (const doc of snapshot.docs) {
+            const docData = ((_b = doc.data()) !== null && _b !== void 0 ? _b : {});
+            if (!isLegacyResponderRoleValue(docData.role)) {
+                continue;
+            }
+            updatedRoleDocs += 1;
+            if (!dryRun) {
+                batch.set(doc.ref, { role: 'responder' }, { merge: true });
+                batchOps += 1;
+                await flushIfNeeded();
+            }
+        }
+    }
+    const legacyCommentSnapshot = await db
+        .collectionGroup('comments')
+        .where('role', 'in', LEGACY_ROLE_QUERY_VALUES)
+        .get();
+    scannedDocs += legacyCommentSnapshot.size;
+    for (const doc of legacyCommentSnapshot.docs) {
+        updatedRoleDocs += 1;
+        if (!dryRun) {
+            batch.set(doc.ref, { role: 'responder' }, { merge: true });
+            batchOps += 1;
+            await flushIfNeeded();
+        }
+    }
+    await flushIfNeeded(true);
+    const remainingLegacyRoles = {
+        responders: 0,
+        approved_users: 0,
+        pending_users: 0,
+        users: 0,
+        comments: 0,
+        legacyResponderCollection: 0,
+    };
+    for (const collectionName of collectionsToNormalize) {
+        const remaining = await db
+            .collection(collectionName)
+            .where('role', 'in', LEGACY_ROLE_QUERY_VALUES)
+            .limit(1)
+            .get();
+        remainingLegacyRoles[collectionName] =
+            remaining.size;
+    }
+    const remainingLegacyComments = await db
+        .collectionGroup('comments')
+        .where('role', 'in', LEGACY_ROLE_QUERY_VALUES)
+        .limit(1)
+        .get();
+    remainingLegacyRoles.comments = remainingLegacyComments.size;
+    const remainingLegacyCollection = await db
+        .collection('semi_admins')
+        .limit(1)
+        .get();
+    remainingLegacyRoles.legacyResponderCollection = remainingLegacyCollection.size;
+    return {
+        success: true,
+        dryRun,
+        scannedDocs,
+        updatedRoleDocs,
+        movedLegacyCollectionDocs,
+        deletedLegacyCollectionDocs,
+        remainingLegacyRoles,
+    };
+});
 function parseStorageTarget(rawValue) {
     const raw = readTrimmedString(rawValue);
     if (raw.length === 0) {
@@ -500,7 +640,7 @@ function appendResponderTokenCandidatesFromProfileData(candidates, seen, profile
 }
 async function resolveResponderTokenRecord(reportId, data) {
     var _a, _b, _c, _d;
-    const responderCollections = ['responders', 'semi_admins'];
+    const responderCollections = ['responders'];
     const candidates = buildResponderTokenDocCandidates(data);
     const seen = new Set(candidates);
     let tokenRecord = await getTokenRecordForCandidates(candidates);
@@ -967,6 +1107,15 @@ exports.registerUserEncrypted = functions
         if (!phoneNumber) {
             throw new functions.https.HttpsError('invalid-argument', 'Contact number is required');
         }
+        const emailRaw = payload.email;
+        if (!emailRaw || typeof emailRaw !== 'string') {
+            throw new functions.https.HttpsError('invalid-argument', 'Email is required');
+        }
+        const normalizedEmail = emailRaw.trim().toLowerCase();
+        const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+        if (!emailPattern.test(normalizedEmail)) {
+            throw new functions.https.HttpsError('invalid-argument', 'A valid email is required');
+        }
         // Optional: allow caller to set specific document ID (UID) for idempotent writes.
         const uid = typeof payload.uid === 'string' && payload.uid.trim().length > 0
             ? payload.uid.trim()
@@ -1010,9 +1159,37 @@ exports.registerUserEncrypted = functions
         if (approvedQueries.some((querySnapshot) => !querySnapshot.empty)) {
             throw new functions.https.HttpsError('already-exists', 'This phone number is already registered');
         }
+        const pendingEmailQueries = await Promise.all([
+            db.collection('pending_users')
+                .where('emailLower', '==', normalizedEmail)
+                .limit(1)
+                .get(),
+            db.collection('pending_users')
+                .where('email', '==', normalizedEmail)
+                .limit(1)
+                .get(),
+        ]);
+        if (pendingEmailQueries.some((querySnapshot) => !querySnapshot.empty)) {
+            throw new functions.https.HttpsError('already-exists', 'This email is already registered');
+        }
+        const approvedEmailQueries = await Promise.all([
+            db.collection('approved_users')
+                .where('emailLower', '==', normalizedEmail)
+                .limit(1)
+                .get(),
+            db.collection('approved_users')
+                .where('email', '==', normalizedEmail)
+                .limit(1)
+                .get(),
+        ]);
+        if (approvedEmailQueries.some((querySnapshot) => !querySnapshot.empty)) {
+            throw new functions.https.HttpsError('already-exists', 'This email is already registered');
+        }
         // Normalize user payload and keep plaintext in pending_users.
         const normalizedUserData = EncryptionHelper.normalizeLegacyUserData(payload);
         normalizedUserData.contactNumber = phoneNumber;
+        normalizedUserData.email = normalizedEmail;
+        normalizedUserData.emailLower = normalizedEmail;
         const pendingUserData = Object.assign({}, normalizedUserData);
         pendingUserData.contactNumber_hash = phoneHash;
         if (typeof normalizedUserData.fullName === 'string' && normalizedUserData.fullName.trim().length > 0) {

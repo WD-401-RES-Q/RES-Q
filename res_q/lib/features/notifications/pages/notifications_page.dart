@@ -491,7 +491,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
         .toString()
         .trim()
         .toLowerCase();
-    return role == 'semi-admin' || role == 'semi_admin' || role == 'responder';
+    return role == 'responder';
   }
 
   String _normalizePhoneValue(Object? raw) {

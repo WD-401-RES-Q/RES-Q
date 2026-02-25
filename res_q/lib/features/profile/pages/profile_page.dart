@@ -333,7 +333,7 @@ class _ProfilePageState extends State<ProfilePage>
       }
 
       final role = (sessionData['role'] ?? '').toString().toLowerCase();
-      if (role == 'semi-admin' || role == 'semi_admin' || role == 'responder') {
+      if (role == 'responder') {
         return;
       }
 
@@ -423,9 +423,7 @@ class _ProfilePageState extends State<ProfilePage>
   Future<void> _updateResponderPresenceOnLogout() async {
     final userData = UserSession.currentUserData;
     final role = (userData?['role'] ?? '').toString().toLowerCase();
-    if (!(role == 'semi-admin' ||
-        role == 'semi_admin' ||
-        role == 'responder')) {
+    if (role != 'responder') {
       return;
     }
 
@@ -3217,21 +3215,23 @@ class _ProfilePageState extends State<ProfilePage>
                       radius: 55,
                       backgroundColor: const Color(0xFFAC1B22),
                       backgroundImage: avatarImage,
-                      onBackgroundImageError: (exception, stackTrace) {
-                        if (!mounted) return;
-                        setState(() {
-                          if (hasMemoryPhoto) {
-                            _profilePhotoBytes = null;
-                          } else if (hasLocalPhoto) {
-                            _profilePhoto = null;
-                          } else if (hasRemotePhoto) {
-                            _profilePhotoUrl = null;
-                          }
-                        });
-                        debugPrint(
-                          'Profile avatar load failed. Falling back to initial: $exception',
-                        );
-                      },
+                      onBackgroundImageError: hasProfilePhoto
+                          ? (exception, stackTrace) {
+                              if (!mounted) return;
+                              setState(() {
+                                if (hasMemoryPhoto) {
+                                  _profilePhotoBytes = null;
+                                } else if (hasLocalPhoto) {
+                                  _profilePhoto = null;
+                                } else if (hasRemotePhoto) {
+                                  _profilePhotoUrl = null;
+                                }
+                              });
+                              debugPrint(
+                                'Profile avatar load failed. Falling back to initial: $exception',
+                              );
+                            }
+                          : null,
                       child: hasProfilePhoto
                           ? null
                           : Text(

@@ -5,7 +5,7 @@ import { FirestoreService } from '../../../core/services/firestore.service';
 import { Unsubscribe, collection, getDocs } from 'firebase/firestore';
 import { db } from '../../../core/config/firebase.config';
 
-interface SemiAdminAccount {
+interface ResponderAccount {
   id: string;
   fullName: string;
   name?: string;
@@ -31,7 +31,7 @@ interface SemiAdminAccount {
 })
 export class ResponderAccountsComponent implements OnInit, OnDestroy {
   // Account list
-  accounts: SemiAdminAccount[] = [];
+  accounts: ResponderAccount[] = [];
   isLoadingAccounts = true;
   loadError = '';
 
@@ -43,7 +43,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
   contactNumber = '';
   pin = '';
   password = '';
-  role = 'semi-admin';
+  role = 'responder';
 
   // Form state
   isSubmitting = false;
@@ -84,7 +84,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
     try {
       // Fast initial load using getDocs
       if (!cached || cached.length === 0) {
-        const snapshot = await getDocs(collection(db, 'semi_admins'));
+        const snapshot = await getDocs(collection(db, 'responders'));
         const initialDocs = snapshot.docs.map(doc => this.mapDocToAccount(doc.id, doc.data()));
         this.accounts = initialDocs;
         this.saveToCache(initialDocs);
@@ -94,7 +94,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
 
       // Set up real-time listener for updates
       this.accountsUnsubscribe = this.firestoreService.listenToCollection(
-        'semi_admins',
+        'responders',
         (docs: any[]) => {
           this.accounts = docs.map(doc => this.mapDocToAccount(doc.id, doc));
           this.saveToCache(this.accounts);
@@ -102,7 +102,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
           this.cdr.markForCheck();
         },
         (error: any) => {
-          console.error('Error listening to semi_admins:', error);
+          console.error('Error listening to responders:', error);
           if (!this.accounts.length) {
             this.loadError = 'Failed to load accounts. Please refresh the page.';
           }
@@ -120,13 +120,13 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
     }
   }
 
-  private mapDocToAccount(id: string, doc: any): SemiAdminAccount {
+  private mapDocToAccount(id: string, doc: any): ResponderAccount {
     return {
       id,
       fullName: doc.fullName || doc.name || 'Unknown',
       name: doc.name,
       username: doc.username || '',
-      role: doc.role || 'semi-admin',
+      role: doc.role || 'responder',
       contactNumber: doc.contactNumber || doc.phoneNumber || '',
       phoneNumber: doc.phoneNumber,
       pin: doc.pin || '',
@@ -138,7 +138,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
     };
   }
 
-  private loadFromCache(): SemiAdminAccount[] | null {
+  private loadFromCache(): ResponderAccount[] | null {
     try {
       const cached = localStorage.getItem(this.CACHE_KEY);
       if (cached) {
@@ -153,7 +153,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
     return null;
   }
 
-  private saveToCache(accounts: SemiAdminAccount[]): void {
+  private saveToCache(accounts: ResponderAccount[]): void {
     try {
       const withTimestamp = accounts.map(acc => ({ ...acc, cachedAt: Date.now() }));
       localStorage.setItem(this.CACHE_KEY, JSON.stringify(withTimestamp));
@@ -162,7 +162,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
     }
   }
 
-  trackByAccountId(index: number, account: SemiAdminAccount): string {
+  trackByAccountId(index: number, account: ResponderAccount): string {
     return account.id;
   }
 
@@ -183,7 +183,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
     this.contactNumber = '';
     this.pin = '';
     this.password = '';
-    this.role = 'semi-admin';
+    this.role = 'responder';
     this.successMessage = '';
     this.errorMessage = '';
     this.isSubmitting = false;
@@ -227,7 +227,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
       let existing: any[] = [];
       try {
         const checkPromise = this.firestoreService.queryCollection(
-          'semi_admins',
+          'responders',
           'contactNumber',
           '==',
           normalizedPhone
@@ -262,7 +262,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
         fullName: cleanName,
         name: cleanName,
         username,
-        role: this.role.trim() || 'semi-admin',
+        role: this.role.trim() || 'responder',
         contactNumber: normalizedPhone,
         phoneNumber: normalizedPhone,
         pin: this.pin.trim(),
@@ -272,7 +272,7 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
         isAvailable: false,
       };
 
-      await this.firestoreService.addDocument('semi_admins', docData);
+      await this.firestoreService.addDocument('responders', docData);
 
       this.successMessage = `Account created for ${cleanName}!`;
       this.cdr.markForCheck();
@@ -300,19 +300,19 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
     }
   }
 
-  getStatusClass(account: SemiAdminAccount): string {
+  getStatusClass(account: ResponderAccount): string {
     if (account.isAvailable) return 'status-available';
     if (account.isLoggedIn || account.status === 'online') return 'status-online';
     return 'status-offline';
   }
 
-  getStatusText(account: SemiAdminAccount): string {
+  getStatusText(account: ResponderAccount): string {
     if (account.isAvailable) return 'Available';
     if (account.isLoggedIn || account.status === 'online') return 'Online';
     return 'Offline';
   }
 
-  getAccountInitial(account: SemiAdminAccount): string {
+  getAccountInitial(account: ResponderAccount): string {
     const name = account.fullName || 'U';
     return name.charAt(0).toUpperCase();
   }

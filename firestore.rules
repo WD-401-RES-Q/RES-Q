@@ -50,8 +50,31 @@ service cloud.firestore {
           request.resource.data.status in ['online', 'offline', 'available', 'unavailable', 'busy'];
     }
 
-    // Semi-admin account creation from admin web page.
-    function isValidSemiAdminCreate() {
+    // Responder first-time PIN setup update.
+    function isValidResponderPinSetupUpdate() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly([
+            'pin_hash',
+            'hashedPin',
+            'pin',
+            'hasPinCreated',
+            'pinSetAt',
+            'updatedAt'
+          ]) &&
+          request.resource.data.pin_hash is string &&
+          request.resource.data.pin_hash.matches('^[a-fA-F0-9]{64}$') &&
+          request.resource.data.hashedPin is string &&
+          request.resource.data.hashedPin.matches('^[a-fA-F0-9]{64}$') &&
+          request.resource.data.hasPinCreated == true &&
+          request.resource.data.pinSetAt is timestamp &&
+          request.resource.data.updatedAt is timestamp &&
+          (!request.resource.data.keys().hasAny(['pin']) ||
+            (request.resource.data.pin is string &&
+              request.resource.data.pin.matches('^[0-9]{4}$')));
+    }
+
+    // Responder account creation from admin web page.
+    function isValidResponderCreate() {
       let keys = request.resource.data.keys();
       return keys.hasOnly([
           'fullName',
@@ -173,15 +196,9 @@ service cloud.firestore {
     // Responders collection - allow read for mobile login checks
     match /responders/{docId} {
       allow read: if true;
-      allow update: if isValidResponderPresenceUpdate();
-      allow create, delete: if false; // Only backend scripts
-    }
-
-    // Legacy responders path kept for backward compatibility.
-    match /semi_admins/{docId} {
-      allow read: if true;
-      allow update: if isValidResponderPresenceUpdate();
-      allow create, delete: if false; // Only backend scripts
+      allow create: if isValidResponderCreate();
+      allow update: if isValidResponderPresenceUpdate() || isValidResponderPinSetupUpdate();
+      allow delete: if false; // Only backend scripts
     }
 
     // Users collection - authenticated users can only read/write their own

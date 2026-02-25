@@ -17,6 +17,7 @@ import 'features/auth/pages/pin_creation_page.dart';
 import 'features/auth/pages/forgot_pin_page.dart';
 import 'features/auth/pages/login_success_page.dart';
 import 'features/auth/pages/account_submitted_page.dart';
+import 'features/auth/pages/account_recovery_page.dart';
 // services
 import 'common/services/frame_timing_service.dart';
 import 'common/services/notification_service.dart';
@@ -61,7 +62,6 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
-
   static const bool _showPerformanceOverlay = bool.fromEnvironment(
     'RESQ_SHOW_PERF_OVERLAY',
     defaultValue: false,
@@ -130,6 +130,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         '/otp': (context) => const OTPPage(),
         '/pin-creation': (context) => const PINCreationPage(),
         '/forgot-pin': (context) => const ForgotPinPage(),
+        '/recover-account': (context) => const AccountRecoveryPage(),
         '/login-success': (context) => const LoginSuccessPage(),
         '/account-submitted': (context) => const AccountSubmittedPage(),
         // Backwards-compatible route alias

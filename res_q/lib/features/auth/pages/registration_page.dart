@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:easy_stepper/easy_stepper.dart';
@@ -57,6 +58,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
   final _firstNameCtl = TextEditingController();
   final _lastNameCtl = TextEditingController();
+  final _emailCtl = TextEditingController();
   final _contactCtl = TextEditingController();
   final _addressCtl = TextEditingController();
   final ScrollController _termsScrollController = ScrollController();
@@ -97,6 +99,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
   String? _psaError;
 
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final PhoneLookupService _phoneLookupService = PhoneLookupService.instance;
   final ImagePicker _imagePicker = ImagePicker();
   bool _routeArgsInitialized = false;
@@ -139,6 +142,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
     _firstNameCtl.dispose();
     _lastNameCtl.dispose();
+    _emailCtl.dispose();
     _contactCtl.dispose();
     _addressCtl.dispose();
     _parentFirstNameCtl.dispose();
@@ -308,6 +312,47 @@ class _RegistrationPageState extends State<RegistrationPage> {
       return await _phoneLookupService.hasRegistrationConflict(phone);
     } catch (e) {
       debugPrint('Error checking phone number: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _checkEmailExists(String normalizedEmail) async {
+    try {
+      final approvedByLower = await _firestore
+          .collection('approved_users')
+          .where('emailLower', isEqualTo: normalizedEmail)
+          .limit(1)
+          .get();
+      if (approvedByLower.docs.isNotEmpty) {
+        return true;
+      }
+
+      final pendingByLower = await _firestore
+          .collection('pending_users')
+          .where('emailLower', isEqualTo: normalizedEmail)
+          .limit(1)
+          .get();
+      if (pendingByLower.docs.isNotEmpty) {
+        return true;
+      }
+
+      final approvedExact = await _firestore
+          .collection('approved_users')
+          .where('email', isEqualTo: normalizedEmail)
+          .limit(1)
+          .get();
+      if (approvedExact.docs.isNotEmpty) {
+        return true;
+      }
+
+      final pendingExact = await _firestore
+          .collection('pending_users')
+          .where('email', isEqualTo: normalizedEmail)
+          .limit(1)
+          .get();
+      return pendingExact.docs.isNotEmpty;
+    } catch (e) {
+      debugPrint('Error checking email: $e');
       return false;
     }
   }
@@ -602,6 +647,17 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
   bool _isValidEmail(String email) {
     return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
+  }
+
+  String _normalizeEmail(String email) {
+    return email.trim().toLowerCase();
+  }
+
+  String? _validateRequiredEmail(String? value) {
+    final email = (value ?? '').trim();
+    if (email.isEmpty) return 'Email is required';
+    if (!_isValidEmail(email)) return 'Enter a valid email address';
+    return null;
   }
 
   bool _isValidAddress(String address) {
@@ -994,6 +1050,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
   bool _isAdultInfoComplete() {
     return _validateFirstName(_firstNameCtl.text) == null &&
         _validateLastName(_lastNameCtl.text) == null &&
+        _validateRequiredEmail(_emailCtl.text) == null &&
         validatePhilippinePhone(_contactCtl.text) == null &&
         _validateAddress(_addressCtl.text) == null &&
         _selectedDateOfBirth != null;
@@ -1165,6 +1222,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
       ' ',
     );
     final normalizedAddress = _addressCtl.text.trim();
+    final normalizedEmail = _normalizeEmail(_emailCtl.text);
 
     final normalizedParentFirstName = _parentFirstNameCtl.text
         .trim()
@@ -1180,6 +1238,15 @@ class _RegistrationPageState extends State<RegistrationPage> {
       AppSnackBar.show(
         context,
         'Please complete your information before creating an account.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
+    if (_validateRequiredEmail(normalizedEmail) != null) {
+      AppSnackBar.show(
+        context,
+        'Please enter a valid email address before continuing.',
         type: AppSnackBarType.warning,
       );
       return;
@@ -1275,10 +1342,25 @@ class _RegistrationPageState extends State<RegistrationPage> {
       return;
     }
 
+    final emailExists = await _checkEmailExists(normalizedEmail);
+    if (!mounted) return;
+    if (emailExists) {
+      setState(() => _loading = false);
+      AppSnackBar.show(
+        context,
+        'This email address is already registered. Please use a different email.',
+        type: AppSnackBarType.error,
+        duration: const Duration(seconds: 4),
+      );
+      return;
+    }
+
     final userData = <String, dynamic>{
       'firstName': normalizedFirstName,
       'lastName': normalizedLastName,
       'fullName': '$normalizedFirstName $normalizedLastName',
+      'email': normalizedEmail,
+      'emailLower': normalizedEmail,
       'phoneNumber': phone,
       'contactNumber': phone,
       'address': normalizedAddress,
@@ -1513,6 +1595,16 @@ class _RegistrationPageState extends State<RegistrationPage> {
               ],
             ),
             const SizedBox(height: AppDimensions.paddingMedium),
+            CustomTextFormField(
+              controller: _emailCtl,
+              label: 'EMAIL ADDRESS',
+              hintText: 'e.g. juan@email.com',
+              keyboardType: TextInputType.emailAddress,
+              autofillHints: const [AutofillHints.email],
+              validator: _validateRequiredEmail,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+            ),
+            const SizedBox(height: AppDimensions.paddingMedium),
             CustomPhoneField(
               controller: _contactCtl,
               label: 'PHONE NUMBER',
@@ -1644,6 +1736,16 @@ class _RegistrationPageState extends State<RegistrationPage> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: AppDimensions.paddingMedium),
+              CustomTextFormField(
+                controller: _emailCtl,
+                label: 'EMAIL ADDRESS',
+                hintText: 'e.g. juan@email.com',
+                keyboardType: TextInputType.emailAddress,
+                autofillHints: const [AutofillHints.email],
+                validator: _validateRequiredEmail,
+                autovalidateMode: AutovalidateMode.onUserInteraction,
               ),
               const SizedBox(height: AppDimensions.paddingMedium),
               CustomPhoneField(

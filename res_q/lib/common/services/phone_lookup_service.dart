@@ -42,10 +42,7 @@ class PhoneLookupService {
 
   static const Duration _cacheTtl = Duration(seconds: 12);
   static const Duration _defaultDebounceDelay = Duration(milliseconds: 300);
-  static const List<String> _responderCollections = <String>[
-    'responders',
-    'semi_admins',
-  ];
+  static const List<String> _responderCollections = <String>['responders'];
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Map<String, _PhoneLookupCacheEntry> _statusCache = {};
