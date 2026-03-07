@@ -45,6 +45,7 @@ interface BanReason {
   styleUrls: ['./accounts.component.scss'],
 })
 export class AccountsComponent implements OnInit, OnDestroy {
+    banReasonError: string = '';
   @ViewChild('adminPasswordField') adminPasswordField?: ElementRef<HTMLInputElement>;
   accounts$: Observable<any[]>;
   isLoading$: Observable<boolean>;
@@ -483,8 +484,10 @@ export class AccountsComponent implements OnInit, OnDestroy {
     
     const selectedReasons = this.banReasons.filter(r => r.checked).map(r => r.label);
     if (selectedReasons.length === 0) {
-      alert('Please select at least one reason for banning.');
+      this.banReasonError = 'Please select at least one reason for banning.';
       return;
+    } else {
+      this.banReasonError = '';
     }
     
     this.banDuration = duration;
@@ -704,6 +707,17 @@ export class AccountsComponent implements OnInit, OnDestroy {
       return 'U';
     }
     return name[0].toUpperCase();
+  }
+
+  getAccountStatusClass(account: Account): string {
+    const status = (account.accountStatus || '').toUpperCase();
+    if (status === 'BANNED') {
+      return 'status-banned';
+    }
+    if (status.includes('TEMPORARY') || status.includes('7 DAY')) {
+      return 'status-temporary';
+    }
+    return 'status-active';
   }
 
   getPublicName(
