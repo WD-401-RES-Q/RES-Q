@@ -360,8 +360,10 @@ class CustomPhoneField extends StatelessWidget {
                 color: AppTheme.appOffWhite,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
-                  color: hasError ? Colors.red : Colors.black,
-                  width: 2,
+                  color: hasError
+                      ? Colors.red
+                      : AppTheme.appBlack.withValues(alpha: 0.35),
+                  width: 1,
                 ),
               ),
               child: Row(

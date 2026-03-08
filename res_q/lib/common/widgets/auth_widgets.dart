@@ -132,6 +132,12 @@ class AuthTextField extends StatelessWidget {
   final String? Function(String?)? validator;
   final AutovalidateMode? autovalidateMode;
   final Iterable<String>? autofillHints;
+  final TextStyle? labelTextStyle;
+  final TextStyle? textStyle;
+  final TextStyle? hintTextStyle;
+  final bool reserveErrorSpace;
+  final double reservedErrorHeight;
+  final TextStyle? errorTextStyle;
 
   const AuthTextField({
     super.key,
@@ -146,6 +152,12 @@ class AuthTextField extends StatelessWidget {
     this.validator,
     this.autovalidateMode,
     this.autofillHints,
+    this.labelTextStyle,
+    this.textStyle,
+    this.hintTextStyle,
+    this.reserveErrorSpace = false,
+    this.reservedErrorHeight = 30,
+    this.errorTextStyle,
   });
 
   @override
@@ -157,6 +169,33 @@ class AuthTextField extends StatelessWidget {
       validator: validator == null ? null : (_) => validator!(controller.text),
       autovalidateMode: autovalidateMode,
       builder: (state) {
+        final errorText = state.errorText ?? '';
+        final showError = state.hasError && errorText.trim().isNotEmpty;
+        const defaultErrorTextStyle = TextStyle(
+          fontSize: 11,
+          color: Colors.red,
+          fontWeight: FontWeight.w500,
+        );
+        const defaultLabelTextStyle = TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: AppTheme.appBlack,
+        );
+        final effectiveLabelTextStyle = labelTextStyle ?? defaultLabelTextStyle;
+        const defaultInputTextStyle = TextStyle(
+          fontSize: 13,
+          color: AppTheme.appBlack,
+          fontWeight: FontWeight.w500,
+        );
+        final effectiveInputTextStyle = textStyle ?? defaultInputTextStyle;
+        final effectiveHintTextStyle =
+            hintTextStyle ??
+            TextStyle(
+              fontSize: 12,
+              color: AppTheme.appBlack.withValues(alpha: 0.5),
+              fontWeight: FontWeight.w400,
+            );
+        final effectiveErrorTextStyle = errorTextStyle ?? defaultErrorTextStyle;
         final hasValue = controller.text.trim().isNotEmpty;
         final hasError = state.hasError;
         final isValid = hasValue && !hasError;
@@ -174,22 +213,11 @@ class AuthTextField extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppTheme.appBlack,
-              ),
-            ),
+            Text(label, style: effectiveLabelTextStyle),
             const SizedBox(height: 4),
-            Container(
-              height: 48,
-              clipBehavior: Clip.antiAlias,
+            DecoratedBox(
               decoration: BoxDecoration(
-                color: AppTheme.appOffWhite,
                 borderRadius: BorderRadius.circular(fieldRadius),
-                border: Border.all(color: borderColor, width: 0.7),
                 boxShadow: [
                   BoxShadow(
                     color: shadowColor,
@@ -208,44 +236,59 @@ class AuthTextField extends StatelessWidget {
                 autovalidateMode: AutovalidateMode.disabled,
                 onChanged: (value) => state.didChange(value),
                 textAlignVertical: _fieldTextAlignVertical,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: AppTheme.appBlack,
-                  fontWeight: FontWeight.w500,
-                ),
+                style: effectiveInputTextStyle,
                 decoration: InputDecoration(
                   hintText: hintText ?? label,
-                  hintStyle: TextStyle(
-                    fontSize: 12,
-                    color: AppTheme.appBlack.withValues(alpha: 0.5),
-                    fontWeight: FontWeight.w400,
-                  ),
+                  hintStyle: effectiveHintTextStyle,
                   prefixIcon: prefixIcon,
-                  filled: false,
+                  suffixIcon: suffixIcon,
+                  filled: true,
+                  fillColor: AppTheme.appOffWhite,
                   isDense: false,
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 12,
                     vertical: 14,
                   ),
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  errorBorder: InputBorder.none,
-                  focusedErrorBorder: InputBorder.none,
-                  suffixIcon: suffixIcon,
+                  constraints: const BoxConstraints(minHeight: 48),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(fieldRadius),
+                    borderSide: BorderSide(color: borderColor, width: 1),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(fieldRadius),
+                    borderSide: BorderSide(color: borderColor, width: 1),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(fieldRadius),
+                    borderSide: BorderSide(color: borderColor, width: 1),
+                  ),
+                  errorBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(fieldRadius),
+                    borderSide: BorderSide(color: Colors.red, width: 1),
+                  ),
+                  focusedErrorBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(fieldRadius),
+                    borderSide: BorderSide(color: Colors.red, width: 1),
+                  ),
                 ),
               ),
             ),
-            if (state.hasError) ...[
+            if (reserveErrorSpace || showError) ...[
               const SizedBox(height: 6),
-              Text(
-                state.errorText ?? '',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Colors.red,
-                  fontWeight: FontWeight.w500,
+              SizedBox(
+                height: reserveErrorSpace ? reservedErrorHeight : null,
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: Text(
+                    showError ? errorText : ' ',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: effectiveErrorTextStyle.copyWith(
+                      color: showError
+                          ? (effectiveErrorTextStyle.color ?? Colors.red)
+                          : Colors.transparent,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -551,63 +594,6 @@ class DateOfBirthInput extends StatelessWidget {
   }
 }
 
-/// Terms and Conditions Checkbox
-/// The checkbox is display-only - user must click link and agree via dialog
-class TermsCheckbox extends StatelessWidget {
-  final bool agreed;
-  final VoidCallback onTermsTap;
-
-  const TermsCheckbox({
-    super.key,
-    required this.agreed,
-    required this.onTermsTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        // Display-only checkbox - not directly toggleable
-        IgnorePointer(
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 250),
-            switchInCurve: Curves.easeOutBack,
-            switchOutCurve: Curves.easeIn,
-            transitionBuilder: (child, animation) =>
-                ScaleTransition(scale: animation, child: child),
-            child: Checkbox(
-              key: ValueKey<bool>(agreed),
-              value: agreed,
-              onChanged: null,
-              checkColor: Colors.white,
-              fillColor: WidgetStateProperty.resolveWith((states) {
-                if (states.contains(WidgetState.selected)) {
-                  return AppTheme.appRed;
-                }
-                return AppTheme.appBrightWhite;
-              }),
-            ),
-          ),
-        ),
-        Expanded(
-          child: GestureDetector(
-            onTap: onTermsTap,
-            child: Text(
-              'Read and agree to the Terms and Conditions',
-              style: const TextStyle(
-                fontSize: 11,
-                color: AppTheme.appRed,
-                decoration: TextDecoration.underline,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 /// Phone number formatter for PH format (9XX-XXX-XXXX)
 class PhilippinePhoneFormatter extends TextInputFormatter {
   @override
@@ -662,6 +648,12 @@ class PhoneInputField extends StatelessWidget {
   final AutovalidateMode? autovalidateMode;
   final String label;
   final Iterable<String>? autofillHints;
+  final TextStyle? labelTextStyle;
+  final TextStyle? textStyle;
+  final TextStyle? hintTextStyle;
+  final bool reserveErrorSpace;
+  final double reservedErrorHeight;
+  final TextStyle? errorTextStyle;
 
   const PhoneInputField({
     super.key,
@@ -670,6 +662,12 @@ class PhoneInputField extends StatelessWidget {
     this.autovalidateMode,
     this.label = 'CONTACT NUMBER',
     this.autofillHints,
+    this.labelTextStyle,
+    this.textStyle,
+    this.hintTextStyle,
+    this.reserveErrorSpace = false,
+    this.reservedErrorHeight = 30,
+    this.errorTextStyle,
   });
 
   /// Get the full phone number with +63 prefix
@@ -688,6 +686,32 @@ class PhoneInputField extends StatelessWidget {
       validator: validator == null ? null : (_) => validator!(controller.text),
       autovalidateMode: autovalidateMode,
       builder: (state) {
+        final errorText = state.errorText ?? '';
+        final showError = state.hasError && errorText.trim().isNotEmpty;
+        const defaultErrorTextStyle = TextStyle(
+          fontSize: 11,
+          color: Colors.red,
+          fontWeight: FontWeight.w500,
+        );
+        const defaultLabelTextStyle = TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: AppTheme.appBlack,
+        );
+        final effectiveLabelTextStyle = labelTextStyle ?? defaultLabelTextStyle;
+        const defaultInputTextStyle = TextStyle(
+          fontSize: 13,
+          color: AppTheme.appBlack,
+          fontWeight: FontWeight.w500,
+        );
+        final effectiveInputTextStyle = textStyle ?? defaultInputTextStyle;
+        final effectiveHintTextStyle =
+            hintTextStyle ??
+            TextStyle(
+              fontSize: 12,
+              color: AppTheme.appBlack.withValues(alpha: 0.5),
+            );
+        final effectiveErrorTextStyle = errorTextStyle ?? defaultErrorTextStyle;
         final digits = controller.text.replaceAll(RegExp(r'\D'), '');
         final hasValue = digits.isNotEmpty;
         final hasError = state.hasError;
@@ -703,14 +727,7 @@ class PhoneInputField extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppTheme.appBlack,
-              ),
-            ),
+            Text(label, style: effectiveLabelTextStyle),
             const SizedBox(height: 4),
             Container(
               height: 48,
@@ -732,10 +749,9 @@ class PhoneInputField extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     child: Text(
                       '+63',
-                      style: const TextStyle(
+                      style: effectiveInputTextStyle.copyWith(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: AppTheme.appBlack,
                       ),
                     ),
                   ),
@@ -757,17 +773,10 @@ class PhoneInputField extends StatelessWidget {
                       autofillHints: autofillHints,
                       onChanged: (value) => state.didChange(value),
                       textAlignVertical: _fieldTextAlignVertical,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: AppTheme.appBlack,
-                        fontWeight: FontWeight.w500,
-                      ),
+                      style: effectiveInputTextStyle,
                       decoration: InputDecoration(
                         hintText: 'e.g. 912-345-6789',
-                        hintStyle: TextStyle(
-                          fontSize: 12,
-                          color: AppTheme.appBlack.withValues(alpha: 0.5),
-                        ),
+                        hintStyle: effectiveHintTextStyle,
                         isDense: false,
                         border: InputBorder.none,
                         contentPadding: const EdgeInsets.symmetric(
@@ -780,14 +789,22 @@ class PhoneInputField extends StatelessWidget {
                 ],
               ),
             ),
-            if (state.hasError) ...[
+            if (reserveErrorSpace || showError) ...[
               const SizedBox(height: 6),
-              Text(
-                state.errorText ?? '',
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Colors.red,
-                  fontWeight: FontWeight.w500,
+              SizedBox(
+                height: reserveErrorSpace ? reservedErrorHeight : null,
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: Text(
+                    showError ? errorText : ' ',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: effectiveErrorTextStyle.copyWith(
+                      color: showError
+                          ? (effectiveErrorTextStyle.color ?? Colors.red)
+                          : Colors.transparent,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -1796,313 +1813,5 @@ class _IdVerificationWidgetState extends State<IdVerificationWidget> {
         ),
       ],
     );
-  }
-}
-
-class TermsAndConditionsDialog {
-  static String get termsAndConditionsText => _getTermsAndConditionsText();
-
-  static Future<bool> show(BuildContext context) async {
-    final ScrollController scrollController = ScrollController();
-    bool canAgree = false;
-    bool agreed = false;
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            scrollController.addListener(() {
-              if (scrollController.position.pixels >=
-                  scrollController.position.maxScrollExtent - 20) {
-                if (!canAgree) {
-                  setDialogState(() {
-                    canAgree = true;
-                  });
-                }
-              }
-            });
-
-            return Dialog(
-              backgroundColor: AppTheme.appOffWhite,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(
-                  color: AppTheme.appBlack.withValues(alpha: 0.12),
-                ),
-              ),
-              insetPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 24,
-              ),
-              child: Container(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height * 0.85,
-                  maxWidth: 500,
-                ),
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        const ResqLogo(fontSize: 24),
-                        const Spacer(),
-                        IconButton(
-                          onPressed: () => Navigator.pop(context),
-                          icon: const Icon(Icons.close, color: AppTheme.appRed),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'TERMS AND CONDITIONS',
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.appBlack,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppTheme.appBrightWhite,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: AppTheme.appBlack.withValues(alpha: 0.12),
-                          ),
-                        ),
-                        child: SingleChildScrollView(
-                          controller: scrollController,
-                          child: Text(
-                            _getTermsAndConditionsText(),
-                            style: const TextStyle(
-                              fontSize: 13,
-                              height: 1.6,
-                              color: AppTheme.appBlack,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    if (!canAgree)
-                      Text(
-                        'Scroll to the bottom to continue',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: AppTheme.appBlack.withValues(alpha: 0.55),
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: SizedBox(
-                            height: 42,
-                            child: OutlinedButton(
-                              onPressed: () => Navigator.pop(context),
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(
-                                  color: AppTheme.appRed,
-                                  width: 1.4,
-                                ),
-                                foregroundColor: AppTheme.appRed,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              child: Text(
-                                'CLOSE',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: AppTheme.appRed,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: SizedBox(
-                            height: 42,
-                            child: ElevatedButton(
-                              onPressed: canAgree
-                                  ? () {
-                                      agreed = true;
-                                      Navigator.pop(context);
-                                    }
-                                  : null,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppTheme.appOffYellow,
-                                disabledBackgroundColor: AppTheme.appBlack
-                                    .withValues(alpha: 0.15),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                elevation: 0,
-                              ),
-                              child: Text(
-                                'I AGREE',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: canAgree
-                                      ? Colors.white
-                                      : AppTheme.appBlack.withValues(
-                                          alpha: 0.4,
-                                        ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    scrollController.dispose();
-    return agreed;
-  }
-
-  static String _getTermsAndConditionsText() {
-    return '''TERMS AND CONDITIONS FOR RES-Q DISASTER RESPONSE APP
-
-Last Updated: January 2026
-
-IMPORTANT: Please read these terms carefully before using RES-Q. By clicking "I AGREE," you acknowledge that you have read, understood, and agree to be bound by these Terms and Conditions.
-
-1. ACCEPTANCE OF TERMS
-By creating an account and using the RES-Q emergency and disaster response application, you agree to be bound by these Terms and Conditions. If you do not agree to these terms, please do not use our services.
-
-2. SERVICE DESCRIPTION
-RES-Q is a community-based disaster response and emergency assistance application designed to:
-- Connect users with emergency services and local responders during disasters
-- Facilitate real-time disaster reporting (floods, earthquakes, fires, accidents, etc.)
-- Enable location sharing during emergencies for rescue operations
-- Provide community assistance and coordination during calamities
-- Deliver emergency alerts and notifications
-
-3. USER REGISTRATION AND VERIFICATION
-3.1 You must provide accurate, current, and complete information during registration including a valid government-issued ID.
-3.2 You are responsible for maintaining the confidentiality of your account credentials and PIN.
-3.3 You must be at least 13 years old to use this service.
-3.4 Phone number verification via OTP is required for account activation.
-3.5 Your account is subject to approval by administrators to ensure community safety.
-
-4. EMERGENCY AND DISASTER SERVICES
-4.1 RES-Q is a SUPPLEMENTARY TOOL and should NOT replace official emergency services (911, local emergency hotlines, NDRRMC, LGU disaster offices).
-4.2 In life-threatening situations, ALWAYS contact official emergency services FIRST.
-4.3 We strive for accuracy but cannot guarantee response times, service availability, or emergency responder actions during disasters.
-4.4 Network outages during disasters may affect app functionality.
-
-5. DISASTER REPORTING RESPONSIBILITIES
-5.1 You agree to report disasters and emergencies accurately and truthfully.
-5.2 FALSE DISASTER REPORTS may result in immediate account termination and potential legal action under applicable laws.
-5.3 You are responsible for the accuracy of your location and the information you report.
-5.4 Do not report incidents that have already been resolved or are being handled by authorities.
-
-6. LOCATION SERVICES DURING EMERGENCIES
-6.1 The app requires location access to function properly during emergencies.
-6.2 Your REAL-TIME LOCATION will be automatically shared with:
-    - Emergency responders when you report or are involved in an emergency
-    - Local disaster response teams
-    - Your designated emergency contacts
-    - Responders managing disaster response
-6.3 Location data during active emergencies may be retained for rescue coordination and post-incident analysis.
-6.4 You may disable location sharing in non-emergency situations through app settings.
-
-7. EMERGENCY CONTACT AUTO-NOTIFICATION
-7.1 By agreeing to these terms, you consent to RES-Q automatically notifying your emergency contacts when:
-    - You report a disaster or emergency
-    - You mark yourself as "in danger" or "needs assistance"
-    - You are unresponsive during an active emergency in your area
-    - Authorities request welfare checks
-7.2 Your emergency contacts will receive your location and status updates.
-
-8. DATA COLLECTION AND PRIVACY DURING DISASTERS
-8.1 We collect and store personal information including:
-    - Name, contact details, address, and date of birth
-    - Government ID photos for verification
-    - Location data (especially during emergencies)
-    - Disaster reports and photos you submit
-    - Emergency contacts
-8.2 During active disasters, your data may be shared with:
-    - Local Government Units (LGUs)
-    - Barangay officials
-    - Philippine National Police (PNP)
-    - Bureau of Fire Protection (BFP)
-    - Medical responders
-    - National Disaster Risk Reduction and Management Council (NDRRMC)
-8.3 We use industry-standard security measures to protect your information.
-
-9. COMMUNITY CONDUCT
-9.1 You must respect other users and community members at all times.
-9.2 Prohibited actions include:
-    - Filing false or malicious disaster reports
-    - Harassment of other users or responders
-    - Sharing misleading information about disasters
-    - Interfering with rescue operations
-    - Spam or irrelevant content
-9.3 We reserve the right to remove content and terminate accounts that violate these terms.
-
-10. SMS AND PUSH NOTIFICATIONS
-10.1 You consent to receive SMS messages and push notifications for:
-    - Emergency alerts in your area
-    - Disaster warnings (typhoons, earthquakes, floods, etc.)
-    - Account security notifications
-    - Status updates on your reports
-    - Evacuation notices
-10.2 Critical emergency alerts cannot be disabled for your safety.
-
-11. LIABILITY DISCLAIMER
-11.1 RES-Q is provided "as is" without warranties of any kind.
-11.2 We are NOT liable for:
-    - Delays, failures, or inaccuracies in emergency response
-    - Actions or inactions of emergency responders or other users
-    - Network failures during disasters
-    - Damage or injury resulting from use of the app
-11.3 Use of the app is at your own risk.
-
-12. INTELLECTUAL PROPERTY
-12.1 All app content, features, and functionality are owned by RES-Q.
-12.2 Disaster reports and photos you submit may be used for emergency coordination, public safety announcements, and improving disaster response.
-
-13. ACCOUNT TERMINATION
-13.1 We reserve the right to suspend or terminate accounts for violations of these terms.
-13.2 You may request account deletion through app settings.
-13.3 Termination does not relieve you of obligations incurred before termination.
-13.4 Emergency data may be retained for legal and public safety purposes.
-
-14. MODIFICATIONS TO TERMS
-14.1 We may update these Terms and Conditions at any time.
-14.2 Continued use of the app after changes constitutes acceptance of new terms.
-14.3 Material changes will be notified through the app.
-
-15. INDEMNIFICATION
-You agree to indemnify and hold harmless RES-Q, its developers, affiliates, and partner agencies from any claims, damages, or expenses arising from your use of the service or violation of these terms.
-
-16. GOVERNING LAW
-These terms are governed by the laws of the Republic of the Philippines including the Data Privacy Act of 2012 (RA 10173) and the Philippine Disaster Risk Reduction and Management Act (RA 10121). Any disputes shall be resolved in the appropriate courts of the jurisdiction.
-
-17. CONTACT INFORMATION
-For questions about these Terms and Conditions:
-Email: support@resq-app.com
-
-By clicking "I AGREE," you acknowledge that:
-- You have read and understood these Terms and Conditions
-- You consent to location sharing during emergencies
-- You consent to automatic notification of your emergency contacts
-- You consent to receiving emergency alerts and disaster warnings
-- You understand your responsibilities in accurate disaster reporting''';
   }
 }

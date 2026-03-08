@@ -10,8 +10,11 @@ import '../../../common/theme/app_theme.dart';
 import '../../../common/theme/app_text_styles.dart';
 import '../../../common/constants/app_dimensions.dart';
 import '../../../common/utils/security_hash.dart';
+import '../../../common/services/registration_prefs.dart';
+import '../../../common/services/trusted_device_service.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
+import '../../../common/widgets/auth_widgets.dart';
 
 class PINCreationPage extends StatefulWidget {
   const PINCreationPage({super.key});
@@ -29,15 +32,19 @@ class _PINCreationPageState extends State<PINCreationPage>
   bool _showError = false;
   String _errorMessage = '';
   bool _argsInitialized = false;
+  String _flowType = 'registration';
 
   String? _phoneNumber;
   Map<String, dynamic>? _userData;
   String? _uid;
+  String? _recoverySessionToken;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseFunctions _functions = FirebaseFunctions.instanceFor(
     region: 'asia-east2',
   );
+  final TrustedDeviceService _trustedDeviceService =
+      TrustedDeviceService.instance;
   final LocalAuthentication _localAuth = LocalAuthentication();
   late final AnimationController _shakeController;
   late final Animation<double> _shakeAnimation;
@@ -63,28 +70,41 @@ class _PINCreationPageState extends State<PINCreationPage>
 
     final args = ModalRoute.of(context)?.settings.arguments as Map?;
     if (args != null) {
+      _flowType =
+          (args['flowType'] as String?)?.trim().toLowerCase() ?? 'registration';
       _phoneNumber = args['phoneNumber'] as String?;
       _userData = args['userData'] as Map<String, dynamic>?;
       _uid = args['uid'] as String?;
+      _recoverySessionToken = args['recoverySessionToken'] as String?;
     }
 
     _uid ??= FirebaseAuth.instance.currentUser?.uid;
 
-    final hasRequiredArgs =
-        _phoneNumber != null &&
-        _phoneNumber!.isNotEmpty &&
-        _userData != null &&
-        _uid != null &&
-        _uid!.isNotEmpty;
+    final hasRequiredArgs = _isRecoveryFlow
+        ? _phoneNumber != null &&
+              _phoneNumber!.trim().isNotEmpty &&
+              _recoverySessionToken != null &&
+              _recoverySessionToken!.trim().isNotEmpty
+        : _phoneNumber != null &&
+              _phoneNumber!.isNotEmpty &&
+              _userData != null &&
+              _uid != null &&
+              _uid!.isNotEmpty;
     if (!hasRequiredArgs) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         AppSnackBar.show(
           context,
-          'Registration session expired. Please start again.',
+          _isRecoveryFlow
+              ? 'Recovery session expired. Please start account recovery again.'
+              : 'Registration session expired. Please start again.',
           type: AppSnackBarType.warning,
         );
-        Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          _isRecoveryFlow ? '/recover-account' : '/register',
+          (_) => false,
+        );
       });
     }
   }
@@ -96,6 +116,20 @@ class _PINCreationPageState extends State<PINCreationPage>
   }
 
   String get _activePin => _isConfirmingPin ? _confirmPin : _pin;
+  bool get _isRecoveryFlow => _flowType == 'account-recovery';
+
+  void _handleBackPressed() {
+    if (_isConfirmingPin && !_loading) {
+      setState(() {
+        _isConfirmingPin = false;
+        _confirmPin = '';
+        _showError = false;
+        _errorMessage = '';
+      });
+      return;
+    }
+    Navigator.pop(context);
+  }
 
   void _triggerShake() {
     _shakeController
@@ -378,23 +412,116 @@ class _PINCreationPageState extends State<PINCreationPage>
     try {
       await FirebaseAuth.instance.signOut();
     } catch (e) {
-      debugPrint('Sign-out after registration failed: $e');
+      debugPrint('Sign-out after auth flow failed: $e');
     }
   }
 
-  Future<void> _createPin() async {
-    if (_phoneNumber == null || _userData == null) {
+  String _recoveryErrorMessage(FirebaseFunctionsException error) {
+    if (error.message != null && error.message!.trim().isNotEmpty) {
+      return error.message!.trim();
+    }
+
+    switch (error.code) {
+      case 'deadline-exceeded':
+        return 'Recovery session expired. Please restart account recovery.';
+      case 'permission-denied':
+        return 'Recovery verification failed. Please verify OTP again.';
+      case 'failed-precondition':
+        return 'Recovery session is no longer valid. Please restart recovery.';
+      case 'not-found':
+        return 'Recovery session not found. Please restart account recovery.';
+      case 'already-exists':
+        return 'Phone number already in use. Please try another one.';
+      case 'invalid-argument':
+        return 'Invalid recovery details. Please try again.';
+      default:
+        return 'Failed to save your new PIN. Please try again.';
+    }
+  }
+
+  Future<void> _completeRecoveryPinReset() async {
+    final sessionToken = _recoverySessionToken?.trim() ?? '';
+    final phoneNumber = _phoneNumber?.trim() ?? '';
+    if (sessionToken.isEmpty || phoneNumber.isEmpty) {
       if (mounted) {
         AppSnackBar.show(
           context,
-          'Registration session expired. Please start again.',
+          'Recovery session expired. Please start account recovery again.',
           type: AppSnackBarType.warning,
         );
-        Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          '/recover-account',
+          (_) => false,
+        );
       }
       return;
     }
 
+    setState(() => _loading = true);
+
+    try {
+      final callable = _functions.httpsCallable('completeAccountRecovery');
+      final response = await callable.call({
+        'sessionToken': sessionToken,
+        'phoneNumber': phoneNumber,
+        'pin': _pin,
+      });
+
+      final data = response.data is Map
+          ? Map<String, dynamic>.from(response.data as Map)
+          : <String, dynamic>{};
+      final returnedPhone = data['phoneNumber']?.toString().trim() ?? '';
+      final persistedPhone = returnedPhone.isNotEmpty
+          ? returnedPhone
+          : phoneNumber;
+
+      await RegistrationPrefs.savePhoneNumber(persistedPhone);
+      await _trustedDeviceService.markTrusted(persistedPhone);
+
+      if (!mounted) return;
+      setState(() => _loading = false);
+      await _endTemporaryAuthSession();
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/login',
+        (_) => false,
+        arguments: {'showRecoverySuccess': true},
+      );
+    } on FirebaseFunctionsException catch (error) {
+      final message = _recoveryErrorMessage(error);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _showError = true;
+          _errorMessage = message;
+          _pin = '';
+          _confirmPin = '';
+          _isConfirmingPin = false;
+        });
+        AppSnackBar.show(context, message, type: AppSnackBarType.error);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _showError = true;
+          _errorMessage = 'Failed to save your new PIN. Please try again.';
+          _pin = '';
+          _confirmPin = '';
+          _isConfirmingPin = false;
+        });
+        AppSnackBar.show(
+          context,
+          'Failed to save your new PIN. Please try again.',
+          type: AppSnackBarType.error,
+        );
+      }
+    }
+  }
+
+  Future<void> _createPin() async {
     if (_pin.length != 4) {
       setState(() {
         _showError = true;
@@ -409,6 +536,23 @@ class _PINCreationPageState extends State<PINCreationPage>
         _errorMessage = 'PIN must contain only numbers';
         _pin = '';
       });
+      return;
+    }
+
+    if (_isRecoveryFlow) {
+      await _completeRecoveryPinReset();
+      return;
+    }
+
+    if (_phoneNumber == null || _userData == null) {
+      if (mounted) {
+        AppSnackBar.show(
+          context,
+          'Registration session expired. Please start again.',
+          type: AppSnackBarType.warning,
+        );
+        Navigator.pushNamedAndRemoveUntil(context, '/register', (_) => false);
+      }
       return;
     }
 
@@ -536,36 +680,33 @@ class _PINCreationPageState extends State<PINCreationPage>
     final displayName = trimmedName.isEmpty
         ? 'User'
         : trimmedName.split(RegExp(r'\s+')).first;
+    final headingText = _isRecoveryFlow
+        ? 'Secure your account'
+        : 'Welcome, $displayName!';
+    final subtitleText = _isRecoveryFlow
+        ? (_isConfirmingPin
+              ? 'Confirm your new 4-digit PIN'
+              : 'Create your new 4-digit PIN')
+        : (_isConfirmingPin
+              ? 'Confirm your personal PIN'
+              : 'Set your personal PIN');
+    final pageTitle = _isConfirmingPin ? 'CONFIRM PIN' : 'SET PIN';
 
     return Scaffold(
       backgroundColor: AppTheme.appOffWhite,
       body: SafeArea(
         child: Column(
           children: [
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.only(
-                  top: AppDimensions.paddingSmall,
-                  left: AppDimensions.paddingXSmall,
-                ),
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_back_ios_new, size: 24),
-                  onPressed: () {
-                    if (_isConfirmingPin && !_loading) {
-                      setState(() {
-                        _isConfirmingPin = false;
-                        _confirmPin = '';
-                        _showError = false;
-                        _errorMessage = '';
-                      });
-                      return;
-                    }
-                    Navigator.pop(context);
-                  },
-                  color: AppTheme.appBlack,
-                ),
+            ResqLogoHeader(
+              padding: const EdgeInsets.only(
+                top: AppDimensions.paddingMedium,
+                left: AppDimensions.paddingXLarge,
+                right: AppDimensions.paddingXLarge,
               ),
+              leading: ResqBackButton.outline(onPressed: _handleBackPressed),
+              title: Text(pageTitle, style: AppTextStyles.authPageTitle),
+              titleSpacing: AppDimensions.paddingSmall,
+              bottomSpacing: AppDimensions.paddingSmall,
             ),
 
             Expanded(
@@ -594,7 +735,7 @@ class _PINCreationPageState extends State<PINCreationPage>
                         ),
                         const SizedBox(height: AppDimensions.paddingXLarge),
                         Text(
-                          'Welcome, $displayName!',
+                          headingText,
                           style: AppTextStyles.heading1.copyWith(
                             color: AppTheme.appBlack,
                             fontSize: 24,
@@ -604,9 +745,7 @@ class _PINCreationPageState extends State<PINCreationPage>
                         ),
                         const SizedBox(height: AppDimensions.paddingSmall),
                         Text(
-                          _isConfirmingPin
-                              ? 'Confirm your personal PIN'
-                              : 'Set your personal PIN',
+                          subtitleText,
                           style: AppTextStyles.inputText.copyWith(
                             color: AppTheme.appBlack.withValues(alpha: 0.55),
                             fontSize: 16,

@@ -1,5 +1,13 @@
 {
   "projects": {
     "default": "res-q-93ca6"
+  },
+  "targets": {},
+  "etags": {
+    "res-q-93ca6": {
+      "extensionInstances": {
+        "firestore-send-email": "136bfb80a459201dd2c184a7073db65ecce9bc44b139c83ee5790b28d43eb7e3"
+      }
+    }
   }
 }
