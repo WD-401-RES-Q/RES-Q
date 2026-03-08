@@ -51,6 +51,10 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
   successMessage = '';
   errorMessage = '';
 
+  // Delete state
+  accountToDelete: ResponderAccount | null = null;
+  isDeleting = false;
+
   private accountsUnsubscribe?: Unsubscribe;
   private readonly CACHE_KEY = 'responder_accounts_cache';
 
@@ -345,5 +349,42 @@ export class ResponderAccountsComponent implements OnInit, OnDestroy {
       .replace(/[^a-z0-9]+/g, '.')
       .replace(/^\.+|\.+$/g, '');
     return base || 'responder';
+  }
+
+  confirmDelete(account: ResponderAccount): void {
+    this.accountToDelete = account;
+  }
+
+  cancelDelete(): void {
+    this.accountToDelete = null;
+  }
+
+  async deleteAccount(): Promise<void> {
+    if (!this.accountToDelete || this.isDeleting) return;
+
+    const accountId = this.accountToDelete.id;
+    const accountName = this.accountToDelete.fullName;
+    this.isDeleting = true;
+    this.cdr.markForCheck();
+
+    try {
+      await this.firestoreService.deleteDocument('responders', accountId);
+      this.accounts = this.accounts.filter((a) => a.id !== accountId);
+      this.saveToCache(this.accounts);
+      this.accountToDelete = null;
+      this.cdr.markForCheck();
+    } catch (error: any) {
+      console.error('Failed to delete responder account:', error);
+      const msg = error?.message || '';
+      const code = error?.code || '';
+      if (msg.toLowerCase().includes('permission') || code.includes('permission')) {
+        alert('Permission denied. Check Firestore rules.');
+      } else {
+        alert(`Failed to delete account: ${code || msg || 'Unknown error'}`);
+      }
+    } finally {
+      this.isDeleting = false;
+      this.cdr.markForCheck();
+    }
   }
 }

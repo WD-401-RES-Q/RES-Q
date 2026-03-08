@@ -1316,28 +1316,24 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     isInsideGeofence: boolean,
     priority?: string | null,
   ): Record<string, number | string> {
-    // Priority-based colors (when deployed with priority)
-    const priorityColors: Record<string, { normal: string; selected: string }> = {
-      High: { normal: '#EA580C', selected: '#C2410C' },        // Orange
-      Medium: { normal: '#CA8A04', selected: '#A16207' },      // Yellow/Amber
-      Low: { normal: '#2563EB', selected: '#1D4ED8' },         // Blue
+    // Priority-based border colors
+    const priorityColors: Record<string, string> = {
+      High: '#AC1B22',    // Red
+      Medium: '#EA580C',  // Orange
+      Low: '#FACC15',     // Yellow
     };
 
-    let color: string;
-    if (priority && priorityColors[priority]) {
-      color = isSelected ? priorityColors[priority].selected : priorityColors[priority].normal;
-    } else if (!isInsideGeofence) {
-      color = isSelected ? '#92400E' : '#B45309'; // Outside geofence - amber
-    } else {
-      color = isSelected ? '#7F1D1D' : '#AC1B22'; // Default - RESQ red
-    }
+    // Default to white fill, border color based on priority
+    const borderColor = priority && priorityColors[priority]
+      ? priorityColors[priority]
+      : '#9CA3AF'; // Gray for no priority
 
     return {
       radius: isSelected ? 9 : 7,
-      color,
-      fillColor: color,
-      fillOpacity: isSelected ? 1 : 0.9,
-      weight: isSelected ? 3 : 2,
+      color: borderColor,
+      fillColor: '#FFFFFF',
+      fillOpacity: isSelected ? 1 : 0.95,
+      weight: isSelected ? 4 : 3,
     };
   }
 

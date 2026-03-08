@@ -66,6 +66,29 @@
         <span class="logged-status" [class.logged-in]="account.isLoggedIn">
           {{ account.isLoggedIn ? '● Logged In' : '○ Logged Out' }}
         </span>
+        <button class="btn-delete" (click)="confirmDelete(account)" title="Delete account">
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div class="modal-overlay" *ngIf="accountToDelete" (click)="cancelDelete()">
+    <div class="modal-content modal-delete" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2>Delete Account</h2>
+        <button class="modal-close" (click)="cancelDelete()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to delete <strong>{{ accountToDelete.fullName }}</strong>?</p>
+        <p class="warning-text">This action cannot be undone.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="cancelDelete()" [disabled]="isDeleting">Cancel</button>
+        <button class="btn btn-danger" (click)="deleteAccount()" [disabled]="isDeleting">
+          {{ isDeleting ? 'Deleting...' : 'Delete' }}
+        </button>
       </div>
     </div>
   </div>
@@ -124,17 +147,6 @@
               [disabled]="isSubmitting"
             />
           </div>
-        </div>
-
-        <div class="form-group">
-          <label for="role">Role</label>
-          <input
-            id="role"
-            type="text"
-            [(ngModel)]="role"
-            placeholder="responder"
-            [disabled]="isSubmitting"
-          />
         </div>
 
         <p class="feedback success" *ngIf="successMessage">{{ successMessage }}</p>

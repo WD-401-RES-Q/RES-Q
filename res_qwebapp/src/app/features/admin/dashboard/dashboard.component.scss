@@ -125,7 +125,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    color: #ffffff;
+    color: #1f2937;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
     min-height: 72px;
     gap: 6px;
     text-align: center;
@@ -161,25 +164,25 @@
     font-family: 'Roboto', sans-serif;
   }
 
-  /* Brand color blocks (using your palette + helpers) - lowered opacity */
-  .cat-other {
-    background: rgba(0, 164, 88, 0.65);
+  /* Brand color blocks - white background with colored icons */
+  .cat-other .cat-icon {
+    color: #00a458;
   }
 
-  .cat-vehicular {
-    background: rgba(240, 144, 2, 0.65);
+  .cat-vehicular .cat-icon {
+    color: #f09002;
   }
 
-  .cat-fire {
-    background: rgba(172, 27, 34, 0.65);
+  .cat-fire .cat-icon {
+    color: #ac1b22;
   }
 
-  .cat-earthquake {
-    background: rgba(139, 69, 19, 0.65);
+  .cat-earthquake .cat-icon {
+    color: #8b4513;
   }
 
-  .cat-flood {
-    background: rgba(60, 131, 237, 0.65);
+  .cat-flood .cat-icon {
+    color: #3c83ed;
   }
 
   /* TOTAL REPORTS AREA */

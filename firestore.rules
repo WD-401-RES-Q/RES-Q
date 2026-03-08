@@ -198,7 +198,7 @@ service cloud.firestore {
       allow read: if true;
       allow create: if isValidResponderCreate();
       allow update: if isValidResponderPresenceUpdate() || isValidResponderPinSetupUpdate();
-      allow delete: if false; // Only backend scripts
+      allow delete: if true; // Allow admin webapp to delete responder accounts
     }
 
     // Users collection - authenticated users can only read/write their own
