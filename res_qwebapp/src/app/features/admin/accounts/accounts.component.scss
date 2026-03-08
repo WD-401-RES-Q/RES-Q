@@ -1,8 +1,6 @@
 .accounts-page {
-  --account-card-height: 460px;
-  --account-details-height: 200px;
   padding: 24px;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   font-family: "Roboto Condensed", sans-serif;
   color: var(--text-dark, #212121);
@@ -89,15 +87,11 @@
   }
 
   /* Layout */
-  .accounts-layout {
+  .accounts-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 22px;
+    gap: 20px;
     align-items: start;
-  }
-
-  .accounts-page.details-hidden .accounts-layout {
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   }
 
   .cards-pagination {
@@ -150,138 +144,148 @@
     cursor: not-allowed;
   }
 
-  .account-profile-card {
+  .account-card {
     background: #ffffff;
     border-radius: 16px;
-    border: 1px solid #e5e7eb;
-    padding: 18px;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    height: var(--account-card-height);
-  }
-
-  .profile-head {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 12px;
-  }
-
-  .profile-head-main {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
-  }
-
-  .profile-avatar {
-    width: 72px;
-    height: 72px;
-    border-radius: 50%;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
     overflow: hidden;
-    background: linear-gradient(135deg, #ac1b22, #d7353f);
-    border: 2px solid #f1f5f9;
-    box-shadow: 0 6px 14px rgba(172, 27, 34, 0.2);
-    display: inline-flex;
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+
+  .account-card:hover {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 18px;
+    background: linear-gradient(135deg, #f8fafc, #f1f5f9);
+    border-bottom: 1px solid #e2e8f0;
+  }
+
+  .avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ac1b22, #d12c35);
+    color: #fff;
+    display: flex;
     align-items: center;
     justify-content: center;
+    font-size: 20px;
+    font-weight: 700;
+    font-family: 'Roboto', sans-serif;
     flex-shrink: 0;
+    overflow: hidden;
   }
 
-  .profile-avatar img {
+  .avatar img {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    display: block;
   }
 
-  .profile-avatar span {
-    color: #ffffff;
-    font-size: 26px;
-    font-weight: 800;
-    font-family: "Roboto", sans-serif;
-  }
-
-  .profile-head-text {
+  .card-identity {
+    flex: 1;
     min-width: 0;
   }
 
-  .profile-head-text h2 {
-    margin: 0;
-    font-size: 22px;
-    font-weight: 800;
-    color: #111827;
-    line-height: 1.2;
-    word-break: break-word;
+  .card-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1f2937;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .profile-head-text p {
-    margin: 4px 0 0 0;
+  .card-username {
     font-size: 13px;
     color: #6b7280;
-    word-break: break-word;
-  }
-
-  .encrypted-text {
-    font-family: inherit;
-    font-size: inherit;
-    font-weight: inherit;
-    letter-spacing: 0;
-    word-break: break-word;
-    overflow-wrap: break-word;
-  }
-
-  .card-detail-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    height: 100%;
-    width: 100%;
-  }
-
-  .card-detail-grid p {
-    margin: 3px 0;
-    line-height: 1.35;
-    font-size: 15px;
-  }
-
-  .detail-grid p strong {
-    font-size: 15px;
-    line-height: 1.35;
-  }
-
-  .detail-grid p span {
-    font-size: 15px;
-    line-height: 1.35;
-  }
-
-  .detail-id-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .details-shell {
-    position: relative;
-    flex: 1 1 auto;
-    min-height: var(--account-details-height);
-    display: flex;
-    border-radius: 12px;
+    white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  .details-shell--locked {
-    min-height: var(--account-details-height);
+  .card-details {
+    padding: 14px 18px;
+    position: relative;
+  }
+
+  .card-details--locked {
+    min-height: 180px;
+  }
+
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #f3f4f6;
+  }
+
+  .detail-row:last-child {
+    border-bottom: none;
+  }
+
+  .detail-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .detail-value {
+    font-size: 14px;
+    color: #1f2937;
+    font-family: 'Roboto Condensed', sans-serif;
+    text-align: right;
+  }
+
+  .card-footer {
+    padding: 12px 18px;
+    background: #f9fafb;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    gap: 8px;
+  }
+
+  // Status badges
+  .status-badge {
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+
+  .status-active {
+    background: #d1fae5;
+    color: #059669;
+  }
+
+  .status-banned {
+    background: #fee2e2;
+    color: #b91c1c;
+  }
+
+  .status-temporary {
+    background: #fef3c7;
+    color: #d97706;
   }
 
   .details-cover {
     position: absolute;
     inset: 0;
-    border-radius: 12px;
-    background: #f7f8f3;
+    border-radius: 8px;
+    background: rgba(247, 248, 243, 0.95);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -294,67 +298,62 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-  }
-
-  .details-lock-btn--overlay {
-    width: 128px;
-    height: 128px;
-    border-radius: 999px;
-    background: radial-gradient(circle at 35% 30%, #d93740, #ac1b22 66%);
-    box-shadow: 0 16px 24px rgba(172, 27, 34, 0.28);
-    color: #ffffff;
     flex-direction: column;
-    gap: 8px;
-    border: 3px solid rgba(255, 255, 255, 0.86);
+    gap: 6px;
+    padding: 16px 24px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #ac1b22, #d12c35);
+    color: #fff;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
   }
 
-  .details-lock-btn--overlay:hover {
-    transform: translateY(-1px) scale(1.01);
-    box-shadow: 0 20px 28px rgba(172, 27, 34, 0.35);
+  .details-lock-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(172, 27, 34, 0.3);
   }
 
-  .details-lock-btn--overlay .lock-icon {
-    font-size: 34px;
+  .details-lock-btn .lock-icon {
+    font-size: 24px;
     line-height: 1;
   }
 
-  .details-lock-btn--overlay .lock-label {
+  .details-lock-btn .lock-label {
     font-family: "Roboto", sans-serif;
-    font-size: 13px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-  }
-
-  .card-actions {
-    margin-top: 2px;
-    padding-top: 2px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
   }
 
   .btn {
-    padding: 8px 12px;
-    border-radius: 8px;
+    padding: 10px 16px;
+    border-radius: 10px;
     border: none;
     font-size: 13px;
     font-weight: 700;
     cursor: pointer;
     font-family: "Roboto", sans-serif;
+    transition: all 0.15s ease;
+    flex: 1;
   }
 
   .btn-ban {
-    background-color: var(--resq-red, var(--resq-red, #AC1B22));
+    background: linear-gradient(135deg, #ac1b22, #d12c35);
     color: white;
   }
 
   .btn-ban:hover {
-    background-color: #8f161c;
+    background: linear-gradient(135deg, #8f161c, #b91c26);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(172, 27, 34, 0.25);
   }
 
-  .btn.big {
-    width: 100%;
-    padding: 12px 14px;
-    font-size: 14px;
-    margin-top: 8px;
+  .btn-unban {
+    background: #e5e7eb;
+    color: #374151;
+  }
+
+  .btn-unban:hover {
+    background: #d1d5db;
   }
 
   .detail-grid p {
@@ -366,23 +365,24 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 128px;
-    padding: 6px 12px;
+    min-width: 60px;
+    padding: 4px 10px;
     box-sizing: border-box;
-    border-radius: 999px;
-    background: #e8fff1;
-    color: #0f7a38;
-    font-weight: 700 !important;
+    border-radius: 6px;
+    background: #d1fae5;
+    color: #059669;
+    font-weight: 600 !important;
     border: none;
     cursor: pointer;
     font-family: "Roboto Condensed", sans-serif !important;
-    font-size: 13px !important;
+    font-size: 12px !important;
     line-height: 1.2;
   }
 
   .id-badge.missing {
     background: #fee2e2;
     color: #b91c1c;
+    cursor: default;
   }
 
   .id-link {
@@ -395,8 +395,7 @@
   }
 
   .id-link:hover {
-    background: #d9f9e4;
-    text-decoration: underline;
+    background: #a7f3d0;
   }
 
   .id-modal {

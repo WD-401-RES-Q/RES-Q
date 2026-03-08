@@ -46,73 +46,83 @@
     <p>No approved accounts yet.</p>
   </div>
 
-  <div *ngIf="accounts.length > 0" class="accounts-layout">
-    <article class="account-profile-card" *ngFor="let acc of paginatedAccounts; trackBy: trackById">
-      <div class="profile-head">
-        <div class="profile-head-main">
-          <div class="profile-avatar">
-            <img
-              *ngIf="getProfilePhotoUrl(acc) as photoUrl; else avatarInitial"
-              [src]="photoUrl"
-              [alt]="getPublicName(acc, { fallback: 'Encrypted account' }) + ' profile'"
-            />
-            <ng-template #avatarInitial>
-              <span>{{ getAccountInitial(acc) }}</span>
-            </ng-template>
-          </div>
-          <div class="profile-head-text">
-            <h2>{{ getDisplayValue(acc, 'fullName') }}</h2>
-          </div>
+  <div *ngIf="accounts.length > 0" class="accounts-grid">
+    <div class="account-card" *ngFor="let acc of paginatedAccounts; trackBy: trackById">
+      <div class="card-header">
+        <div class="avatar">
+          <img
+            *ngIf="getProfilePhotoUrl(acc) as photoUrl; else avatarInitial"
+            [src]="photoUrl"
+            [alt]="getPublicName(acc, { fallback: 'Encrypted account' }) + ' profile'"
+          />
+          <ng-template #avatarInitial>
+            <span>{{ getAccountInitial(acc) }}</span>
+          </ng-template>
         </div>
+        <div class="card-identity">
+          <div class="card-name">{{ getDisplayValue(acc, 'fullName') }}</div>
+          <div class="card-username">{{ getDisplayValue(acc, 'email') }}</div>
+        </div>
+        <span class="status-badge" [ngClass]="getAccountStatusClass(acc)">
+          {{ acc.accountStatus || 'Active' }}
+        </span>
       </div>
 
-      <div class="details-shell" [class.details-shell--locked]="!isAccountUnlocked(acc.id)">
-        <div class="detail-grid card-detail-grid">
-          <p><strong>Address:</strong> <span class="encrypted-text">{{ getDisplayValue(acc, 'address') }}</span></p>
-          <p><strong>Birthdate:</strong> <span class="encrypted-text">{{ getDisplayValue(acc, 'dateOfBirth') }}</span></p>
-          <p><strong>Phone:</strong> <span class="encrypted-text">{{ getDisplayValue(acc, 'contactNumber') }}</span></p>
-          <p><strong>Status:</strong> {{ acc.accountStatus || 'N/A' }}</p>
-          <p><strong>Approved By:</strong> {{ isAccountUnlocked(acc.id) ? (acc.approvedBy || 'N/A') : '[ENCRYPTED]' }}</p>
-          <p><strong>Approved On:</strong> {{ isAccountUnlocked(acc.id) ? (getApprovedDate(acc) ? (getApprovedDate(acc) | date:'medium') : 'N/A') : '[ENCRYPTED]' }}</p>
-          <p><strong>Email:</strong> <span class="encrypted-text">{{ getDisplayValue(acc, 'email') }}</span></p>
-          <p class="detail-id-row" *ngIf="isAccountUnlocked(acc.id)">
-            <strong>Valid ID:</strong>
-            <button *ngIf="getIdPhotoUrl(acc)" type="button" class="id-badge id-link" (click)="openIdModal(acc)">Uploaded (View)</button>
+      <div class="card-details" [class.card-details--locked]="!isAccountUnlocked(acc.id)">
+        <div class="detail-row">
+          <span class="detail-label">Address</span>
+          <span class="detail-value">{{ getDisplayValue(acc, 'address') }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Birthdate</span>
+          <span class="detail-value">{{ getDisplayValue(acc, 'dateOfBirth') }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Phone</span>
+          <span class="detail-value">{{ getDisplayValue(acc, 'contactNumber') }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Approved By</span>
+          <span class="detail-value">{{ isAccountUnlocked(acc.id) ? (acc.approvedBy || 'N/A') : '[ENCRYPTED]' }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">Approved On</span>
+          <span class="detail-value">{{ isAccountUnlocked(acc.id) ? (getApprovedDate(acc) ? (getApprovedDate(acc) | date:'mediumDate') : 'N/A') : '[ENCRYPTED]' }}</span>
+        </div>
+        <div class="detail-row" *ngIf="isAccountUnlocked(acc.id)">
+          <span class="detail-label">Valid ID</span>
+          <span class="detail-value">
+            <button *ngIf="getIdPhotoUrl(acc)" type="button" class="id-badge id-link" (click)="openIdModal(acc)">View</button>
             <span *ngIf="!getIdPhotoUrl(acc)" class="id-badge missing">Missing</span>
-          </p>
-          <p class="detail-id-row" *ngIf="isAccountUnlocked(acc.id)">
-            <strong>Selfie with ID:</strong>
-            <button
-              *ngIf="getSelfieWithIdUrl(acc)"
-              type="button"
-              class="id-badge id-link"
-              (click)="openSelfieWithIdModal(acc)"
-            >
-              Uploaded (View)
-            </button>
+          </span>
+        </div>
+        <div class="detail-row" *ngIf="isAccountUnlocked(acc.id)">
+          <span class="detail-label">Selfie with ID</span>
+          <span class="detail-value">
+            <button *ngIf="getSelfieWithIdUrl(acc)" type="button" class="id-badge id-link" (click)="openSelfieWithIdModal(acc)">View</button>
             <span *ngIf="!getSelfieWithIdUrl(acc)" class="id-badge missing">Missing</span>
-          </p>
+          </span>
         </div>
 
         <div class="details-cover" *ngIf="!isAccountUnlocked(acc.id)">
           <button
             type="button"
-            class="details-lock-btn details-lock-btn--overlay"
+            class="details-lock-btn"
             (click)="openDecryptModal(acc.id)"
             aria-label="Unlock user details"
             title="Unlock user details"
           >
-            <span class="lock-icon" aria-hidden="true">&#128274;</span>
+            <span class="lock-icon" aria-hidden="true">🔒</span>
             <span class="lock-label">UNLOCK</span>
           </button>
         </div>
       </div>
 
-      <div class="card-actions">
-        <button *ngIf="isTemporaryBan(acc)" type="button" class="btn btn-ban big" (click)="openUnbanConfirmation(acc)">Revert Ban</button>
-        <button *ngIf="acc.accountStatus !== 'BANNED'" type="button" class="btn btn-ban big" (click)="ban(acc)">Ban Account</button>
+      <div class="card-footer">
+        <button *ngIf="isTemporaryBan(acc)" type="button" class="btn btn-unban" (click)="openUnbanConfirmation(acc)">Revert Ban</button>
+        <button *ngIf="acc.accountStatus !== 'BANNED'" type="button" class="btn btn-ban" (click)="ban(acc)">Ban Account</button>
       </div>
-    </article>
+    </div>
   </div>
 
   <div
@@ -189,6 +199,7 @@
         </label>
       </div>
 
+      <div class="modal-error" *ngIf="banReasonError">{{ banReasonError }}</div>
       <div class="modal-actions">
         <button type="button" class="btn-modal btn-permanent" (click)="confirmBan('permanent')">PERMANENT</button>
         <button type="button" class="btn-modal btn-yes" (click)="confirmBan('7days')">7 DAYS</button>
