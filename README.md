@@ -211,7 +211,7 @@ For detailed information about specific features and workflows, please refer to:
 - **Mobile:** Flutter & Dart
 - **Web Dashboard:** Angular & TypeScript
 - **Backend:** Firebase (Firestore, Authentication, Storage, Hosting)
-- **Maps:** Google Maps API
+- **Maps:** OpenStreetMap (`flutter_map` on mobile, Leaflet on web)
 - **SMS Notifications:** Semaphore/Twilio API
 
 ---
