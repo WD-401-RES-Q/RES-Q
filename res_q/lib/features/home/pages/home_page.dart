@@ -4,18 +4,19 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../common/services/app_asset_precache_service.dart';
 import '../../../common/services/notification_service.dart';
 import '../../../common/services/registration_prefs.dart';
 import '../../../common/services/shell_navigation_service.dart';
+import '../../../common/services/trusted_device_service.dart';
 import '../../../common/services/user_session.dart';
 import '../../../common/utils/security_hash.dart';
 import '../../../common/widgets/bottom_nav_bar.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/mandatory_permission_gate.dart';
-import '../../auth/pages/login_page.dart';
 
 import '../../community/pages/community_page.dart';
 import '../../notifications/pages/notifications_page.dart';
@@ -289,7 +290,15 @@ class _MainPageState extends State<MainPage> {
       context: context,
       barrierDismissible: false,
       builder: (dialogContext) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: const Color(0xFFF7F8F3),
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: const Color(0xFF212121).withValues(alpha: 0.25),
+            width: 1,
+          ),
+        ),
         child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
@@ -313,7 +322,7 @@ class _MainPageState extends State<MainPage> {
               Text(
                 title,
                 style: const TextStyle(
-                  fontSize: 22,
+                  fontSize: 21,
                   fontWeight: FontWeight.w900,
                   color: Color(0xFFAC1B22),
                   letterSpacing: 1.0,
@@ -362,19 +371,21 @@ class _MainPageState extends State<MainPage> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFFAC1B22),
                     foregroundColor: Colors.white,
+                    elevation: 0,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(28),
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: const Text(
-                    'OK',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 28,
+                      vertical: 12,
+                    ),
+                    textStyle: const TextStyle(
+                      fontWeight: FontWeight.w800,
                       fontSize: 16,
-                      letterSpacing: 1.0,
+                      letterSpacing: 0.8,
                     ),
                   ),
+                  child: const Text('OK'),
                 ),
               ),
             ],
@@ -382,6 +393,24 @@ class _MainPageState extends State<MainPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _clearLocalAuthArtifactsForBan() async {
+    try {
+      await Future.wait<void>([
+        RegistrationPrefs.clearPhoneNumber(),
+        RegistrationPrefs.setApprovedLoginCompleted(false),
+        TrustedDeviceService.instance.clearTrustedDevice(),
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('biometrics_enabled');
+      await prefs.remove('biometrics_phone');
+      NotificationService().dispose();
+      UserSession.clear();
+      await FirebaseAuth.instance.signOut();
+    } catch (error) {
+      debugPrint('Failed to clear banned-account auth artifacts: $error');
+    }
   }
 
   Future<void> _enforceBanLogout({
@@ -400,15 +429,9 @@ class _MainPageState extends State<MainPage> {
         banReasons: banReasons,
         bannedUntil: bannedUntil,
       );
-      NotificationService().dispose();
-      UserSession.clear();
-      await RegistrationPrefs.setApprovedLoginCompleted(false);
-      await FirebaseAuth.instance.signOut();
+      await _clearLocalAuthArtifactsForBan();
       if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginPage()),
-        (_) => false,
-      );
+      Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
     } catch (error) {
       debugPrint('Failed to enforce banned-account logout: $error');
       _enforcingBanLogout = false;

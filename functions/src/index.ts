@@ -30,6 +30,13 @@ const ALERT_NOTIFICATION_CHANNEL_ID = 'resq_emergency_alerts';
 const PUSH_TOPIC_ANNOUNCEMENTS = 'announcements';
 const PUSH_TOPIC_REPORTS = 'reports';
 const USER_TOKENS_COLLECTION = 'user_tokens';
+const RECOVERY_REQUESTS_COLLECTION = 'account_recovery_requests';
+const RECOVERY_MAIL_COLLECTION = 'mail';
+const RECOVERY_ACCOUNT_COLLECTIONS = ['approved_users', 'pending_users', 'responders'];
+const RECOVERY_OTP_TTL_MS = 10 * 60 * 1000;
+const RECOVERY_SESSION_TTL_MS = 20 * 60 * 1000;
+const RECOVERY_RESEND_COOLDOWN_MS = 45 * 1000;
+const RECOVERY_MAX_VERIFY_ATTEMPTS = 5;
 const INVALID_FCM_TOKEN_ERROR_CODES = new Set([
   'messaging/invalid-registration-token',
   'messaging/registration-token-not-registered',
@@ -40,6 +47,10 @@ type FcmDataPayload = Record<string, string>;
 type ParsedStorageTarget = {
   bucketName?: string;
   objectPath: string;
+};
+type RecoveryAccountMatch = {
+  collection: string;
+  doc: FirebaseFirestore.QueryDocumentSnapshot;
 };
 
 function readTrimmedString(value: unknown): string {
@@ -118,6 +129,188 @@ function normalizePhoneLikeValue(value: string): string {
 
 function normalizeAdminRole(value: unknown): string {
   return readTrimmedString(value).toLowerCase();
+}
+
+function normalizeRecoveryEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isValidEmailAddress(value: string): boolean {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
+}
+
+function hashSha256(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function hashRecoveryOtpCode(
+  pepper: string,
+  challengeId: string,
+  otpCode: string,
+): string {
+  return hashSha256(`${pepper}:${challengeId}:${otpCode}`);
+}
+
+function hashRecoverySessionToken(pepper: string, sessionToken: string): string {
+  return hashSha256(`${pepper}:session:${sessionToken}`);
+}
+
+function generateRecoveryOtpCode(): string {
+  return (100000 + crypto.randomInt(900000)).toString();
+}
+
+function readRecoveryOtpPepper(): string {
+  const pepper = readTrimmedString(functions.config().recovery?.otp_pepper);
+  if (pepper.length < 16) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'Server recovery OTP configuration is missing.',
+    );
+  }
+  return pepper;
+}
+
+function normalizePhilippineMobile(value: unknown): string | null {
+  const raw = readTrimmedString(value);
+  if (raw.length === 0) {
+    return null;
+  }
+
+  const digits = raw.replace(/[^0-9]/g, '');
+  let localDigits = '';
+  if (digits.length === 10) {
+    localDigits = digits;
+  } else if (digits.length === 11 && digits.startsWith('0')) {
+    localDigits = digits.slice(1);
+  } else if (digits.length === 12 && digits.startsWith('63')) {
+    localDigits = digits.slice(2);
+  } else {
+    return null;
+  }
+
+  if (!/^9[0-9]{9}$/.test(localDigits)) {
+    return null;
+  }
+  return `+63${localDigits}`;
+}
+
+function buildRecoveryOtpEmailPayload(otpCode: string): {
+  subject: string;
+  text: string;
+  html: string;
+} {
+  const subject = 'RES-Q Account Recovery Code';
+  const text =
+    `Your RES-Q account recovery code is ${otpCode}. ` +
+    'This code expires in 10 minutes. If you did not request this, ignore this email.';
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #212121; line-height: 1.5;">
+      <h2 style="margin: 0 0 12px;">RES-Q Account Recovery</h2>
+      <p style="margin: 0 0 12px;">Use this verification code to continue account recovery:</p>
+      <p style="margin: 0 0 12px; font-size: 24px; font-weight: 700; letter-spacing: 4px;">${otpCode}</p>
+      <p style="margin: 0 0 8px;">This code expires in <strong>10 minutes</strong>.</p>
+      <p style="margin: 0; color: #666;">If you did not request this, you can safely ignore this email.</p>
+    </div>
+  `.trim();
+  return { subject, text, html };
+}
+
+async function enqueueRecoveryOtpEmail(email: string, otpCode: string): Promise<void> {
+  const message = buildRecoveryOtpEmailPayload(otpCode);
+  await db.collection(RECOVERY_MAIL_COLLECTION).add({
+    to: [email],
+    message,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+async function findAccountByEmailInCollection(
+  collectionName: string,
+  normalizedEmail: string,
+  rawEmail: string,
+): Promise<FirebaseFirestore.QueryDocumentSnapshot | null> {
+  const candidatePairs: Array<[string, string]> = [
+    ['emailLower', normalizedEmail],
+    ['email', normalizedEmail],
+    ['emailAddress', normalizedEmail],
+  ];
+  if (rawEmail !== normalizedEmail) {
+    candidatePairs.push(['email', rawEmail], ['emailAddress', rawEmail]);
+  }
+
+  for (const [field, value] of candidatePairs) {
+    const query = await db
+      .collection(collectionName)
+      .where(field, '==', value)
+      .limit(1)
+      .get();
+    if (!query.empty) {
+      return query.docs[0];
+    }
+  }
+  return null;
+}
+
+async function findRecoveryAccountByEmail(
+  rawEmail: string,
+): Promise<RecoveryAccountMatch | null> {
+  const normalizedEmail = normalizeRecoveryEmail(rawEmail);
+  for (const collectionName of RECOVERY_ACCOUNT_COLLECTIONS) {
+    const doc = await findAccountByEmailInCollection(
+      collectionName,
+      normalizedEmail,
+      rawEmail,
+    );
+    if (doc != null) {
+      return {
+        collection: collectionName,
+        doc,
+      };
+    }
+  }
+  return null;
+}
+
+async function hasRecoveryPhoneConflict(
+  phoneNumber: string,
+  excludedAccountKeys: Set<string>,
+): Promise<boolean> {
+  const phoneHash = EncryptionHelper.hashForLookup(phoneNumber);
+  for (const collectionName of RECOVERY_ACCOUNT_COLLECTIONS) {
+    const snapshots = await Promise.all([
+      db
+        .collection(collectionName)
+        .where('contactNumber_hash', '==', phoneHash)
+        .limit(8)
+        .get(),
+      db
+        .collection(collectionName)
+        .where('contactNumber', '==', phoneNumber)
+        .limit(8)
+        .get(),
+      db
+        .collection(collectionName)
+        .where('phoneNumber', '==', phoneNumber)
+        .limit(8)
+        .get(),
+    ]);
+
+    const seenIds = new Set<string>();
+    for (const snapshot of snapshots) {
+      for (const doc of snapshot.docs) {
+        const uniqueKey = `${collectionName}:${doc.id}`;
+        if (seenIds.has(uniqueKey)) {
+          continue;
+        }
+        seenIds.add(uniqueKey);
+        if (excludedAccountKeys.has(uniqueKey)) {
+          continue;
+        }
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 async function assertAdminAccess(adminIdRaw: unknown): Promise<string> {
@@ -1541,6 +1734,549 @@ export const registerUserEncrypted = functions
       throw new functions.https.HttpsError(
         'internal',
         'Failed to register user'
+      );
+    }
+  });
+
+/**
+ * Sends an email OTP for account recovery and creates/refreshes a recovery challenge.
+ * Email delivery relies on the Firestore Trigger Email extension writing from `mail`.
+ */
+export const requestAccountRecoveryOtp = functions
+  .region('asia-east2')
+  .https.onCall(async (data, context) => {
+    try {
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const rawEmail = readTrimmedString(payload.email);
+      if (!isValidEmailAddress(rawEmail)) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          'A valid email address is required.',
+        );
+      }
+
+      const normalizedEmail = normalizeRecoveryEmail(rawEmail);
+      const matchedAccount = await findRecoveryAccountByEmail(rawEmail);
+      if (!matchedAccount) {
+        throw new functions.https.HttpsError(
+          'not-found',
+          'No account found with this email address.',
+        );
+      }
+
+      const requestedChallengeId = readTrimmedString(payload.challengeId);
+      const nowMs = Date.now();
+      let challengeRef = db.collection(RECOVERY_REQUESTS_COLLECTION).doc();
+      let existingChallengeData: FirestoreData | null = null;
+
+      if (requestedChallengeId.length > 0) {
+        const existingRef = db
+          .collection(RECOVERY_REQUESTS_COLLECTION)
+          .doc(requestedChallengeId);
+        const existingSnapshot = await existingRef.get();
+        if (existingSnapshot.exists) {
+          const existingData = (existingSnapshot.data() ?? {}) as FirestoreData;
+          const sameEmail =
+            readTrimmedString(existingData.emailLower) === normalizedEmail;
+          const sameAccount =
+            readTrimmedString(existingData.accountCollection) ===
+              matchedAccount.collection &&
+            readTrimmedString(existingData.accountDocId) === matchedAccount.doc.id;
+          const consumedAtMs = toTimestampMillis(existingData.consumedAt);
+          if (sameEmail && sameAccount && consumedAtMs == null) {
+            challengeRef = existingRef;
+            existingChallengeData = existingData;
+          }
+        }
+      }
+
+      if (existingChallengeData) {
+        const lastSentAtMs = toTimestampMillis(existingChallengeData.lastSentAt);
+        if (
+          lastSentAtMs != null &&
+          nowMs - lastSentAtMs < RECOVERY_RESEND_COOLDOWN_MS
+        ) {
+          const remainingMs =
+            RECOVERY_RESEND_COOLDOWN_MS - (nowMs - lastSentAtMs);
+          const waitSeconds = Math.ceil(remainingMs / 1000);
+          throw new functions.https.HttpsError(
+            'resource-exhausted',
+            `Please wait ${waitSeconds}s before requesting another code.`,
+          );
+        }
+      }
+
+      const otpPepper = readRecoveryOtpPepper();
+      const otpCode = generateRecoveryOtpCode();
+      const otpHash = hashRecoveryOtpCode(otpPepper, challengeRef.id, otpCode);
+
+      const writePayload: Record<string, unknown> = {
+        email: rawEmail,
+        emailLower: normalizedEmail,
+        accountCollection: matchedAccount.collection,
+        accountDocId: matchedAccount.doc.id,
+        otpHash,
+        verifyAttempts: 0,
+        expiresAt: admin.firestore.Timestamp.fromMillis(
+          nowMs + RECOVERY_OTP_TTL_MS,
+        ),
+        lastSentAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        verifiedAt: admin.firestore.FieldValue.delete(),
+        sessionTokenHash: admin.firestore.FieldValue.delete(),
+        sessionExpiresAt: admin.firestore.FieldValue.delete(),
+        consumedAt: admin.firestore.FieldValue.delete(),
+      };
+      if (!existingChallengeData) {
+        writePayload.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      }
+
+      await challengeRef.set(writePayload, { merge: true });
+      await enqueueRecoveryOtpEmail(rawEmail, otpCode);
+
+      const response: Record<string, unknown> = {
+        success: true,
+        challengeId: challengeRef.id,
+        expiresInSeconds: Math.floor(RECOVERY_OTP_TTL_MS / 1000),
+        message: 'Verification code sent to your email.',
+      };
+      if (process.env.FUNCTIONS_EMULATOR === 'true') {
+        response.debugOtp = otpCode;
+      }
+      return response;
+    } catch (error) {
+      console.error('requestAccountRecoveryOtp failed:', error);
+      if (error instanceof functions.https.HttpsError) {
+        throw error;
+      }
+      throw new functions.https.HttpsError(
+        'internal',
+        'Failed to send account recovery code.',
+      );
+    }
+  });
+
+/**
+ * Verifies a recovery OTP and returns a short-lived recovery session token.
+ */
+export const verifyAccountRecoveryOtp = functions
+  .region('asia-east2')
+  .https.onCall(async (data, context) => {
+    try {
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const challengeId = readTrimmedString(payload.challengeId);
+      const otpCode = readTrimmedString(payload.otpCode);
+
+      if (challengeId.length === 0) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          'challengeId is required.',
+        );
+      }
+      if (!/^[0-9]{6}$/.test(otpCode)) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          'OTP must be a 6-digit code.',
+        );
+      }
+
+      const challengeRef = db
+        .collection(RECOVERY_REQUESTS_COLLECTION)
+        .doc(challengeId);
+      const challengeSnapshot = await challengeRef.get();
+      if (!challengeSnapshot.exists) {
+        throw new functions.https.HttpsError(
+          'not-found',
+          'Recovery session not found. Please request a new code.',
+        );
+      }
+
+      const challengeData = (challengeSnapshot.data() ?? {}) as FirestoreData;
+      if (toTimestampMillis(challengeData.consumedAt) != null) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Recovery session has already been used.',
+        );
+      }
+
+      const expiresAtMs = toTimestampMillis(challengeData.expiresAt);
+      if (expiresAtMs == null || Date.now() > expiresAtMs) {
+        throw new functions.https.HttpsError(
+          'deadline-exceeded',
+          'Code expired. Please request a new code.',
+        );
+      }
+
+      const verifyAttempts =
+        typeof challengeData.verifyAttempts === 'number'
+          ? challengeData.verifyAttempts
+          : 0;
+      if (verifyAttempts >= RECOVERY_MAX_VERIFY_ATTEMPTS) {
+        throw new functions.https.HttpsError(
+          'resource-exhausted',
+          'Too many incorrect attempts. Request a new code.',
+        );
+      }
+
+      const otpPepper = readRecoveryOtpPepper();
+      const expectedHash = readTrimmedString(challengeData.otpHash);
+      const incomingHash = hashRecoveryOtpCode(otpPepper, challengeId, otpCode);
+      if (expectedHash.length === 0 || expectedHash !== incomingHash) {
+        const nextAttempts = verifyAttempts + 1;
+        await challengeRef.set(
+          {
+            verifyAttempts: nextAttempts,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+
+        if (nextAttempts >= RECOVERY_MAX_VERIFY_ATTEMPTS) {
+          throw new functions.https.HttpsError(
+            'resource-exhausted',
+            'Too many incorrect attempts. Request a new code.',
+          );
+        }
+
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'Incorrect code. Please try again.',
+        );
+      }
+
+      const sessionSecret = crypto.randomBytes(24).toString('hex');
+      const sessionToken = `${challengeId}.${sessionSecret}`;
+      const sessionTokenHash = hashRecoverySessionToken(otpPepper, sessionToken);
+      await challengeRef.set(
+        {
+          verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          sessionTokenHash,
+          sessionExpiresAt: admin.firestore.Timestamp.fromMillis(
+            Date.now() + RECOVERY_SESSION_TTL_MS,
+          ),
+          otpHash: admin.firestore.FieldValue.delete(),
+        },
+        { merge: true },
+      );
+
+      return {
+        success: true,
+        sessionToken,
+        expiresInSeconds: Math.floor(RECOVERY_SESSION_TTL_MS / 1000),
+      };
+    } catch (error) {
+      console.error('verifyAccountRecoveryOtp failed:', error);
+      if (error instanceof functions.https.HttpsError) {
+        throw error;
+      }
+      throw new functions.https.HttpsError(
+        'internal',
+        'Failed to verify recovery code.',
+      );
+    }
+  });
+
+/**
+ * Completes account recovery by updating phone and PIN after OTP verification.
+ */
+export const completeAccountRecovery = functions
+  .region('asia-east2')
+  .https.onCall(async (data, context) => {
+    try {
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const sessionToken = readTrimmedString(payload.sessionToken);
+      const pin = readTrimmedString(payload.pin);
+      const normalizedPhone = normalizePhilippineMobile(payload.phoneNumber);
+
+      if (sessionToken.length === 0) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          'sessionToken is required.',
+        );
+      }
+      if (normalizedPhone == null) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          'A valid Philippine mobile number is required.',
+        );
+      }
+      if (!/^[0-9]{4}$/.test(pin)) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          'PIN must be a 4-digit code.',
+        );
+      }
+
+      const tokenSeparatorIndex = sessionToken.indexOf('.');
+      if (
+        tokenSeparatorIndex <= 0 ||
+        tokenSeparatorIndex >= sessionToken.length - 1
+      ) {
+        throw new functions.https.HttpsError(
+          'invalid-argument',
+          'Invalid recovery session token.',
+        );
+      }
+
+      const challengeId = sessionToken.slice(0, tokenSeparatorIndex);
+      const challengeRef = db
+        .collection(RECOVERY_REQUESTS_COLLECTION)
+        .doc(challengeId);
+      const challengeSnapshot = await challengeRef.get();
+      if (!challengeSnapshot.exists) {
+        throw new functions.https.HttpsError(
+          'not-found',
+          'Recovery session not found. Please restart recovery.',
+        );
+      }
+
+      const challengeData = (challengeSnapshot.data() ?? {}) as FirestoreData;
+      if (toTimestampMillis(challengeData.consumedAt) != null) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Recovery session has already been used.',
+        );
+      }
+
+      const otpPepper = readRecoveryOtpPepper();
+      const expectedSessionHash = readTrimmedString(challengeData.sessionTokenHash);
+      if (expectedSessionHash.length === 0) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Recovery session is not verified.',
+        );
+      }
+
+      const incomingSessionHash = hashRecoverySessionToken(
+        otpPepper,
+        sessionToken,
+      );
+      if (incomingSessionHash !== expectedSessionHash) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'Invalid recovery session. Please verify your code again.',
+        );
+      }
+
+      const sessionExpiresAtMs = toTimestampMillis(challengeData.sessionExpiresAt);
+      if (sessionExpiresAtMs == null || Date.now() > sessionExpiresAtMs) {
+        throw new functions.https.HttpsError(
+          'deadline-exceeded',
+          'Recovery session expired. Please verify your code again.',
+        );
+      }
+
+      const accountCollection = readTrimmedString(challengeData.accountCollection);
+      const accountDocId = readTrimmedString(challengeData.accountDocId);
+      if (
+        !RECOVERY_ACCOUNT_COLLECTIONS.includes(accountCollection) ||
+        accountDocId.length === 0
+      ) {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Recovery target account is invalid.',
+        );
+      }
+
+      const accountRef = db.collection(accountCollection).doc(accountDocId);
+      const accountSnapshot = await accountRef.get();
+      if (!accountSnapshot.exists) {
+        throw new functions.https.HttpsError(
+          'not-found',
+          'Account record not found.',
+        );
+      }
+
+      const accountData = (accountSnapshot.data() ?? {}) as FirestoreData;
+      type RecoveryUpdateTarget = {
+        collection: string;
+        ref: FirebaseFirestore.DocumentReference;
+      };
+      const updateTargets = new Map<string, RecoveryUpdateTarget>();
+      const addUpdateTarget = (collectionName: string, docId: string) => {
+        if (
+          !RECOVERY_ACCOUNT_COLLECTIONS.includes(collectionName) ||
+          docId.trim().length === 0
+        ) {
+          return;
+        }
+        const key = `${collectionName}:${docId}`;
+        if (updateTargets.has(key)) {
+          return;
+        }
+        updateTargets.set(key, {
+          collection: collectionName,
+          ref: db.collection(collectionName).doc(docId),
+        });
+      };
+
+      addUpdateTarget(accountCollection, accountDocId);
+
+      // Mirror updates to equivalent account docs (same id across collections).
+      for (const collectionName of RECOVERY_ACCOUNT_COLLECTIONS) {
+        if (collectionName === accountCollection) {
+          continue;
+        }
+        const sameIdDoc = await db.collection(collectionName).doc(accountDocId).get();
+        if (sameIdDoc.exists) {
+          addUpdateTarget(collectionName, accountDocId);
+        }
+      }
+
+      // Mirror updates for docs sharing the same recovery email.
+      const rawChallengeEmail = readTrimmedString(challengeData.email);
+      const normalizedChallengeEmail = rawChallengeEmail.length > 0
+        ? normalizeRecoveryEmail(rawChallengeEmail)
+        : '';
+      const emailCandidates = new Set<string>();
+      if (rawChallengeEmail.length > 0) {
+        emailCandidates.add(rawChallengeEmail);
+      }
+      if (normalizedChallengeEmail.length > 0) {
+        emailCandidates.add(normalizedChallengeEmail);
+      }
+      const accountEmail = readTrimmedString(accountData.email);
+      if (accountEmail.length > 0) {
+        emailCandidates.add(accountEmail);
+        emailCandidates.add(normalizeRecoveryEmail(accountEmail));
+      }
+      const accountEmailLower = readTrimmedString(accountData.emailLower);
+      if (accountEmailLower.length > 0) {
+        emailCandidates.add(accountEmailLower);
+      }
+      const accountEmailAddress = readTrimmedString(accountData.emailAddress);
+      if (accountEmailAddress.length > 0) {
+        emailCandidates.add(accountEmailAddress);
+        emailCandidates.add(normalizeRecoveryEmail(accountEmailAddress));
+      }
+
+      for (const collectionName of RECOVERY_ACCOUNT_COLLECTIONS) {
+        for (const emailCandidate of emailCandidates) {
+          const normalizedEmailCandidate = normalizeRecoveryEmail(emailCandidate);
+          const emailQueries = await Promise.all([
+            db
+              .collection(collectionName)
+              .where('emailLower', '==', normalizedEmailCandidate)
+              .limit(8)
+              .get(),
+            db
+              .collection(collectionName)
+              .where('email', '==', emailCandidate)
+              .limit(8)
+              .get(),
+            db
+              .collection(collectionName)
+              .where('emailAddress', '==', emailCandidate)
+              .limit(8)
+              .get(),
+          ]);
+          for (const emailQuery of emailQueries) {
+            for (const doc of emailQuery.docs) {
+              addUpdateTarget(collectionName, doc.id);
+            }
+          }
+        }
+      }
+
+      // Mirror updates for docs still linked by previous phone number.
+      const previousPhoneCandidates = new Set<string>();
+      const normalizedContactNumber = normalizePhilippineMobile(
+        accountData.contactNumber,
+      );
+      if (normalizedContactNumber != null) {
+        previousPhoneCandidates.add(normalizedContactNumber);
+      }
+      const normalizedStoredPhone = normalizePhilippineMobile(accountData.phoneNumber);
+      if (normalizedStoredPhone != null) {
+        previousPhoneCandidates.add(normalizedStoredPhone);
+      }
+
+      for (const previousPhone of previousPhoneCandidates) {
+        const previousPhoneHash = EncryptionHelper.hashForLookup(previousPhone);
+        for (const collectionName of RECOVERY_ACCOUNT_COLLECTIONS) {
+          const phoneQueries = await Promise.all([
+            db
+              .collection(collectionName)
+              .where('contactNumber_hash', '==', previousPhoneHash)
+              .limit(8)
+              .get(),
+            db
+              .collection(collectionName)
+              .where('contactNumber', '==', previousPhone)
+              .limit(8)
+              .get(),
+            db
+              .collection(collectionName)
+              .where('phoneNumber', '==', previousPhone)
+              .limit(8)
+              .get(),
+          ]);
+          for (const phoneQuery of phoneQueries) {
+            for (const doc of phoneQuery.docs) {
+              addUpdateTarget(collectionName, doc.id);
+            }
+          }
+        }
+      }
+
+      const excludedAccountKeys = new Set<string>(updateTargets.keys());
+      const hasConflict = await hasRecoveryPhoneConflict(
+        normalizedPhone,
+        excludedAccountKeys,
+      );
+      if (hasConflict) {
+        throw new functions.https.HttpsError(
+          'already-exists',
+          'Phone number already in use. Please try another one.',
+        );
+      }
+
+      const hashedPin = hashSha256(pin);
+      const baseAccountUpdates: Record<string, unknown> = {
+        contactNumber: normalizedPhone,
+        phoneNumber: normalizedPhone,
+        contactNumber_hash: EncryptionHelper.hashForLookup(normalizedPhone),
+        pin_hash: hashedPin,
+        hashedPin: hashedPin,
+        pinCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+      const batch = db.batch();
+      for (const target of updateTargets.values()) {
+        const accountUpdates: Record<string, unknown> = {
+          ...baseAccountUpdates,
+        };
+        if (target.collection === 'responders') {
+          accountUpdates.hasPinCreated = true;
+          accountUpdates.pinSetAt = admin.firestore.FieldValue.serverTimestamp();
+        }
+        batch.set(target.ref, accountUpdates, { merge: true });
+      }
+      batch.set(
+        challengeRef,
+        {
+          consumedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          sessionTokenHash: admin.firestore.FieldValue.delete(),
+          sessionExpiresAt: admin.firestore.FieldValue.delete(),
+        },
+        { merge: true },
+      );
+      await batch.commit();
+
+      return {
+        success: true,
+        phoneNumber: normalizedPhone,
+      };
+    } catch (error) {
+      console.error('completeAccountRecovery failed:', error);
+      if (error instanceof functions.https.HttpsError) {
+        throw error;
+      }
+      throw new functions.https.HttpsError(
+        'internal',
+        'Failed to complete account recovery.',
       );
     }
   });

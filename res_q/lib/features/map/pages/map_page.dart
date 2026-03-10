@@ -12,7 +12,9 @@ import 'package:latlong2/latlong.dart';
 import '../../../common/services/angeles_geofence_service.dart';
 import '../../../common/services/frame_timing_service.dart';
 import '../../../common/services/route_weather_cache_service.dart';
+import '../../../common/services/user_session.dart';
 import '../../../common/theme/app_theme.dart';
+import '../../../common/utils/incident_icon_resolver.dart';
 
 void _debugLog(Object? message) {
   if (kDebugMode) {
@@ -86,11 +88,15 @@ class _MapPageState extends State<MapPage> {
   );
   static const Duration _routeRecalcMinInterval = Duration(milliseconds: 900);
   static const double _routeRecalcMinMoveMeters = 8.0;
+  late final String _viewerRole;
 
   @override
   void initState() {
     super.initState();
     FrameTimingService.instance.setCurrentScreen('MapPage');
+    _viewerRole = normalizeIncidentViewerRole(
+      (UserSession.currentUserData?['role'] ?? '').toString(),
+    );
     // Initialize with user location (simulated)
     _userLocation = _initialCenter;
     _subscribeToReports();
@@ -803,13 +809,14 @@ class _MapPageState extends State<MapPage> {
     final isCheckStatus = _isResolvedStatus(statusLower);
     final markerSize = isCheckStatus ? 56.0 : 72.0;
     final badge = _buildStatusBadge(statusLower, markerSize);
+    final priority = _priorityValueFromReport(data);
     final baseContent = GestureDetector(
       onTap: () => _showIncidentInfo(data),
       child: Stack(
         clipBehavior: Clip.none,
         children: [
           _buildIncidentAsset(
-            _getMarkerAssetForIncidentType(incidentType),
+            resolveIncidentIcon(incidentType, priority, _viewerRole),
             width: markerSize,
             height: markerSize,
           ),
@@ -866,6 +873,25 @@ class _MapPageState extends State<MapPage> {
         ),
       );
     }
+  }
+
+  String _priorityValueFromReport(Map<String, dynamic> data) {
+    final candidates = <Object?>[
+      data['priority'],
+      data['deploymentPriority'],
+      data['priorityLabel'],
+      data['verdictPriority'],
+      data['severity'],
+    ];
+
+    for (final candidate in candidates) {
+      if (candidate == null) continue;
+      final normalized = normalizeIncidentPriority(candidate.toString());
+      if (normalized != 'NONE') {
+        return normalized;
+      }
+    }
+    return 'NONE';
   }
 
   void _updateIncidentMarkerForReport({
@@ -1375,33 +1401,14 @@ class _MapPageState extends State<MapPage> {
     }
   }
 
-  String _getMarkerAssetForIncidentType(String type) {
-    switch (type.toUpperCase()) {
-      case 'FIRE':
-        return 'assets/icons/locations/LOC-FIRE.svg';
-      case 'FLOOD':
-        return 'assets/icons/locations/LOC-FLOOD.svg';
-      case 'EARTHQUAKE':
-        return 'assets/icons/locations/LOC-EARTHQUAKE.svg';
-      case 'VEHICULAR':
-        return 'assets/icons/locations/LOC-CRASH.svg';
-      case 'ROAD OBSTRUCTION':
-        return 'assets/icons/locations/LOC-OTHERS.svg';
-      default:
-        return 'assets/icons/locations/LOC-OTHERS.svg';
-    }
-  }
-
   Widget _buildIncidentAsset(
     String assetPath, {
     required double width,
     required double height,
   }) {
-    final resolvedPath = _resolveIconAssetPath(assetPath);
-
-    if (resolvedPath.toLowerCase().endsWith('.svg')) {
+    if (assetPath.toLowerCase().endsWith('.svg')) {
       return SvgPicture.asset(
-        resolvedPath,
+        assetPath,
         width: width,
         height: height,
         fit: BoxFit.contain,
@@ -1411,22 +1418,12 @@ class _MapPageState extends State<MapPage> {
     }
 
     return Image.asset(
-      resolvedPath,
+      assetPath,
       width: width,
       height: height,
       fit: BoxFit.contain,
-      errorBuilder: (_, __, ___) => _missingIcon(),
+      errorBuilder: (context, error, stackTrace) => _missingIcon(),
     );
-  }
-
-  String _resolveIconAssetPath(String assetPath) {
-    final lower = assetPath.toLowerCase();
-    if (lower.endsWith('.svg') &&
-        (lower.contains('/icons/buttons/') ||
-            lower.contains('/icons/locations/'))) {
-      return assetPath.substring(0, assetPath.length - 4) + '.png';
-    }
-    return assetPath;
   }
 
   Widget _missingIcon() {

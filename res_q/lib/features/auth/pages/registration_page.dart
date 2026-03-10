@@ -8,16 +8,20 @@ import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../common/constants/app_dimensions.dart';
 import '../../../common/services/phone_lookup_service.dart';
 import '../../../common/services/registration_prefs.dart';
+import '../../../common/services/trusted_device_service.dart';
+import '../../../common/services/user_session.dart';
 import '../../../common/theme/app_text_styles.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
 import '../../../common/widgets/auth_widgets.dart';
 import '../../../common/widgets/custom_form_fields.dart';
+import '../../../common/widgets/terms_and_conditions_widget.dart';
 
 class RegistrationPage extends StatefulWidget {
   const RegistrationPage({super.key});
@@ -61,15 +65,14 @@ class _RegistrationPageState extends State<RegistrationPage> {
   final _emailCtl = TextEditingController();
   final _contactCtl = TextEditingController();
   final _addressCtl = TextEditingController();
-  final ScrollController _termsScrollController = ScrollController();
+  final ValueNotifier<bool> _termsAgreed = ValueNotifier<bool>(false);
+  final ValueNotifier<String?> _termsError = ValueNotifier<String?>(null);
 
   final _parentFirstNameCtl = TextEditingController();
   final _parentLastNameCtl = TextEditingController();
   final _parentContactCtl = TextEditingController();
 
   bool _loading = false;
-  bool _agree = false;
-  bool _termsScrollCompleted = false;
   bool _ageGateCompleted = true;
   bool _isMinor = true;
   int _adultStep = 0;
@@ -90,7 +93,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
   bool _uploadingPsa = false;
 
   String? _dobError;
-  String? _termsError;
   String? _idPhotoError;
   String? _parentIdPhotoError;
   String? _adultIdTypeError;
@@ -110,7 +112,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
   void initState() {
     super.initState();
     _contactCtl.addListener(_onContactChanged);
-    _termsScrollController.addListener(_onTermsScroll);
   }
 
   @override
@@ -137,8 +138,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
   void dispose() {
     _phoneLookupService.cancelDebounce(_phoneLookupScopeKey);
     _contactCtl.removeListener(_onContactChanged);
-    _termsScrollController.removeListener(_onTermsScroll);
-    _termsScrollController.dispose();
+    _termsAgreed.dispose();
+    _termsError.dispose();
 
     _firstNameCtl.dispose();
     _lastNameCtl.dispose();
@@ -169,17 +170,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
         _parentIdPhotoError = null;
       }
     });
-  }
-
-  void _onTermsScroll() {
-    if (_termsScrollCompleted || !_termsScrollController.hasClients) return;
-    final position = _termsScrollController.position;
-    if (position.maxScrollExtent <= 0 ||
-        position.pixels >= position.maxScrollExtent - 20) {
-      setState(() {
-        _termsScrollCompleted = true;
-      });
-    }
   }
 
   int _calculateAge(DateTime birthDate) {
@@ -286,10 +276,9 @@ class _RegistrationPageState extends State<RegistrationPage> {
       _ageGateCompleted = true;
       _adultStep = 0;
       _minorStep = 0;
-      _agree = false;
       _dobError = null;
-      _termsScrollCompleted = false;
-      _termsError = null;
+      _termsAgreed.value = false;
+      _termsError.value = null;
       if (!_isMinor) {
         _parentFirstNameCtl.clear();
         _parentLastNameCtl.clear();
@@ -298,11 +287,6 @@ class _RegistrationPageState extends State<RegistrationPage> {
         _parentSelfieWithIdUrl = null;
         _parentIdType = null;
         _psaBirthCertificateUrl = null;
-      }
-    });
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_termsScrollController.hasClients) {
-        _termsScrollController.jumpTo(0);
       }
     });
   }
@@ -314,6 +298,187 @@ class _RegistrationPageState extends State<RegistrationPage> {
       debugPrint('Error checking phone number: $e');
       return false;
     }
+  }
+
+  String _formatBanUntil(DateTime? bannedUntil) {
+    if (bannedUntil == null) {
+      return '';
+    }
+    final date = DateTime(
+      bannedUntil.year,
+      bannedUntil.month,
+      bannedUntil.day,
+      bannedUntil.hour,
+      bannedUntil.minute,
+    );
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    final year = date.year.toString();
+    final hour24 = date.hour;
+    final hour12 = hour24 == 0 ? 12 : (hour24 > 12 ? hour24 - 12 : hour24);
+    final minute = date.minute.toString().padLeft(2, '0');
+    final meridiem = hour24 >= 12 ? 'PM' : 'AM';
+    return '$month/$day/$year $hour12:$minute $meridiem';
+  }
+
+  Future<void> _showBannedAccountDialog({
+    required bool isPermanentBan,
+    DateTime? bannedUntil,
+    List<String> banReasons = const <String>[],
+  }) async {
+    if (!mounted) return;
+
+    final reasonText = banReasons.isEmpty ? '' : banReasons.join(', ');
+    final formattedUntil = _formatBanUntil(bannedUntil);
+    final title = isPermanentBan
+        ? 'ACCOUNT PERMANENTLY BANNED'
+        : 'ACCOUNT TEMPORARILY BANNED';
+    final subtitle = isPermanentBan
+        ? 'Your account is permanently banned and cannot access RES-Q.'
+        : 'Your account is temporarily banned and cannot access RES-Q right now.';
+    final untilText = isPermanentBan || formattedUntil.isEmpty
+        ? ''
+        : 'Ban ends on: $formattedUntil';
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => Dialog(
+        backgroundColor: AppTheme.appOffWhite,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(
+            color: AppTheme.appBlack.withValues(alpha: 0.25),
+            width: 1,
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: AppTheme.appRed.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: AppTheme.appRed, width: 2),
+                ),
+                child: const Icon(
+                  Icons.block,
+                  size: 48,
+                  color: AppTheme.appRed,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 21,
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.appRed,
+                  letterSpacing: 1.0,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.appBlack.withValues(alpha: 0.85),
+                  height: 1.35,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              if (untilText.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  untilText,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.appBlack,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              if (reasonText.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'Reason(s): $reasonText',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.appBlack.withValues(alpha: 0.8),
+                    height: 1.3,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.appRed,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 28,
+                      vertical: 12,
+                    ),
+                    textStyle: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  child: const Text('OK'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _clearLocalAuthArtifactsForBan() async {
+    try {
+      await Future.wait<void>([
+        RegistrationPrefs.clearPhoneNumber(),
+        RegistrationPrefs.setApprovedLoginCompleted(false),
+        TrustedDeviceService.instance.clearTrustedDevice(),
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('biometrics_enabled');
+      await prefs.remove('biometrics_phone');
+      UserSession.clear();
+      await _auth.signOut();
+    } catch (e) {
+      debugPrint('Failed to clear banned-account auth artifacts: $e');
+    }
+  }
+
+  Future<void> _handleBannedAccount({
+    required bool isPermanentBan,
+    DateTime? bannedUntil,
+    List<String> banReasons = const <String>[],
+  }) async {
+    await _showBannedAccountDialog(
+      isPermanentBan: isPermanentBan,
+      bannedUntil: bannedUntil,
+      banReasons: banReasons,
+    );
+    await _clearLocalAuthArtifactsForBan();
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
   }
 
   Future<bool> _checkEmailExists(String normalizedEmail) async {
@@ -772,32 +937,26 @@ class _RegistrationPageState extends State<RegistrationPage> {
     );
   }
 
-  Widget _buildInlineTermsAndAgreement({bool fillAvailableSpace = false}) {
+  Widget _buildInlineTermsAndAgreement() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'TERMS AND CONDITIONS',
-          style: AppTextStyles.authLabel.copyWith(fontWeight: FontWeight.w700),
+        TermsAndConditionsWidget(
+          enabled: !_loading,
+          initiallyAgreed: _termsAgreed.value,
+          onAgreementChanged: (agreed) {
+            _termsAgreed.value = agreed;
+            if (agreed && _termsError.value != null) {
+              _termsError.value = null;
+            }
+          },
         ),
-        const SizedBox(height: 10),
-        TermsCheckbox(
-          agreed: _agree,
-          onTermsTap: _loading
-              ? () {}
-              : () async {
-                  FocusManager.instance.primaryFocus?.unfocus();
-                  final agreed = await TermsAndConditionsDialog.show(context);
-                  if (!mounted) return;
-                  if (agreed) {
-                    setState(() {
-                      _agree = true;
-                      _termsError = null;
-                    });
-                  }
-                },
+        ValueListenableBuilder<String?>(
+          valueListenable: _termsError,
+          builder: (context, message, _) {
+            return RegistrationValidationMessage(message: message);
+          },
         ),
-        RegistrationValidationMessage(message: _termsError),
       ],
     );
   }
@@ -1036,12 +1195,11 @@ class _RegistrationPageState extends State<RegistrationPage> {
     }
 
     if (step == 4) {
-      setState(() {
-        _termsError = _agree
-            ? null
-            : 'Please read and agree to the Terms and Conditions.';
-      });
-      return _agree;
+      final agreed = _termsAgreed.value;
+      _termsError.value = agreed
+          ? null
+          : 'Please read and agree to the Terms and Conditions.';
+      return agreed;
     }
 
     return false;
@@ -1252,10 +1410,8 @@ class _RegistrationPageState extends State<RegistrationPage> {
       return;
     }
 
-    if (!_agree) {
-      setState(() {
-        _termsError = 'Please read and agree to the Terms and Conditions.';
-      });
+    if (!_termsAgreed.value) {
+      _termsError.value = 'Please read and agree to the Terms and Conditions.';
       return;
     }
 
@@ -1328,6 +1484,21 @@ class _RegistrationPageState extends State<RegistrationPage> {
 
     await RegistrationPrefs.savePhoneNumber(phoneDigits);
     if (!mounted) return;
+
+    final accountStatus = await _phoneLookupService.lookupAccountStatus(
+      phone,
+      useCache: false,
+    );
+    if (!mounted) return;
+    if (accountStatus.isBannedAccount) {
+      setState(() => _loading = false);
+      await _handleBannedAccount(
+        isPermanentBan: accountStatus.isPermanentBan,
+        bannedUntil: accountStatus.bannedUntil,
+        banReasons: accountStatus.banReasons,
+      );
+      return;
+    }
 
     final phoneExists = await _checkPhoneNumberExists(phone);
     if (!mounted) return;
@@ -1660,7 +1831,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
       );
     }
 
-    return _buildInlineTermsAndAgreement(fillAvailableSpace: true);
+    return _buildInlineTermsAndAgreement();
   }
 
   Widget _buildAdultBackButton() {
@@ -1700,7 +1871,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
   }
 
   String get _adultPrimaryLabel => _adultStep < 2 ? 'NEXT' : 'CREATE';
-  bool get _adultPrimaryEnabled => _adultStep < 2 || _agree;
+  bool get _adultPrimaryEnabled => _adultStep < 2 || _termsAgreed.value;
 
   Widget _buildMinorStepContent() {
     switch (_minorStep) {
@@ -1917,7 +2088,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
         );
       case 4:
       default:
-        return _buildInlineTermsAndAgreement(fillAvailableSpace: true);
+        return _buildInlineTermsAndAgreement();
     }
   }
 
@@ -1926,7 +2097,7 @@ class _RegistrationPageState extends State<RegistrationPage> {
     return 'CREATE';
   }
 
-  bool get _minorPrimaryEnabled => _minorStep < 4 || _agree;
+  bool get _minorPrimaryEnabled => _minorStep < 4 || _termsAgreed.value;
 
   bool get _isTermsStepActive =>
       _ageGateCompleted &&
@@ -2023,31 +2194,40 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                       ? AppDimensions.paddingSmall
                                       : AppDimensions.paddingLarge,
                                 ),
-                                Row(
-                                  children: [
-                                    Expanded(child: _buildAdultBackButton()),
-                                    const SizedBox(
-                                      width: AppDimensions.paddingSmall,
-                                    ),
-                                    Expanded(
-                                      child: ResqPillButton(
-                                        label: _adultPrimaryLabel,
-                                        loading: _loading,
-                                        onPressed:
-                                            (_loading || !_adultPrimaryEnabled)
-                                            ? null
-                                            : _nextAdultStepOrSubmit,
-                                        height: 48,
-                                        radius: 30,
-                                        backgroundColor: AppTheme.appOffYellow,
-                                        shadowColor: AppTheme.appBlack
-                                            .withValues(alpha: 0.1),
-                                        shadowBlurRadius: 8,
-                                        shadowOffset: const Offset(0, 2),
-                                        textStyle: AppTextStyles.authButton,
-                                      ),
-                                    ),
-                                  ],
+                                ValueListenableBuilder<bool>(
+                                  valueListenable: _termsAgreed,
+                                  builder: (context, _, child) {
+                                    return Row(
+                                      children: [
+                                        Expanded(
+                                          child: _buildAdultBackButton(),
+                                        ),
+                                        const SizedBox(
+                                          width: AppDimensions.paddingSmall,
+                                        ),
+                                        Expanded(
+                                          child: ResqPillButton(
+                                            label: _adultPrimaryLabel,
+                                            loading: _loading,
+                                            onPressed:
+                                                (_loading ||
+                                                    !_adultPrimaryEnabled)
+                                                ? null
+                                                : _nextAdultStepOrSubmit,
+                                            height: 48,
+                                            radius: 30,
+                                            backgroundColor:
+                                                AppTheme.appOffYellow,
+                                            shadowColor: AppTheme.appBlack
+                                                .withValues(alpha: 0.1),
+                                            shadowBlurRadius: 8,
+                                            shadowOffset: const Offset(0, 2),
+                                            textStyle: AppTextStyles.authButton,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                               ],
 
@@ -2062,31 +2242,40 @@ class _RegistrationPageState extends State<RegistrationPage> {
                                       ? AppDimensions.paddingSmall
                                       : AppDimensions.paddingLarge,
                                 ),
-                                Row(
-                                  children: [
-                                    Expanded(child: _buildMinorBackButton()),
-                                    const SizedBox(
-                                      width: AppDimensions.paddingSmall,
-                                    ),
-                                    Expanded(
-                                      child: ResqPillButton(
-                                        label: _minorPrimaryLabel,
-                                        loading: _loading,
-                                        onPressed:
-                                            (_loading || !_minorPrimaryEnabled)
-                                            ? null
-                                            : _nextMinorStepOrSubmit,
-                                        height: 48,
-                                        radius: 30,
-                                        backgroundColor: AppTheme.appOffYellow,
-                                        shadowColor: AppTheme.appBlack
-                                            .withValues(alpha: 0.1),
-                                        shadowBlurRadius: 8,
-                                        shadowOffset: const Offset(0, 2),
-                                        textStyle: AppTextStyles.authButton,
-                                      ),
-                                    ),
-                                  ],
+                                ValueListenableBuilder<bool>(
+                                  valueListenable: _termsAgreed,
+                                  builder: (context, _, child) {
+                                    return Row(
+                                      children: [
+                                        Expanded(
+                                          child: _buildMinorBackButton(),
+                                        ),
+                                        const SizedBox(
+                                          width: AppDimensions.paddingSmall,
+                                        ),
+                                        Expanded(
+                                          child: ResqPillButton(
+                                            label: _minorPrimaryLabel,
+                                            loading: _loading,
+                                            onPressed:
+                                                (_loading ||
+                                                    !_minorPrimaryEnabled)
+                                                ? null
+                                                : _nextMinorStepOrSubmit,
+                                            height: 48,
+                                            radius: 30,
+                                            backgroundColor:
+                                                AppTheme.appOffYellow,
+                                            shadowColor: AppTheme.appBlack
+                                                .withValues(alpha: 0.1),
+                                            shadowBlurRadius: 8,
+                                            shadowOffset: const Offset(0, 2),
+                                            textStyle: AppTextStyles.authButton,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                               ],
                             ],

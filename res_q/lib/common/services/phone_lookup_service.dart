@@ -42,7 +42,10 @@ class PhoneLookupService {
 
   static const Duration _cacheTtl = Duration(seconds: 12);
   static const Duration _defaultDebounceDelay = Duration(milliseconds: 300);
-  static const List<String> _responderCollections = <String>['responders'];
+  static const List<String> _responderCollections = <String>[
+    'responders',
+    'semi_admins',
+  ];
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Map<String, _PhoneLookupCacheEntry> _statusCache = {};
@@ -113,15 +116,37 @@ class PhoneLookupService {
         .get();
   }
 
+  bool _isPermissionDenied(Object error) {
+    return error is FirebaseException && error.code == 'permission-denied';
+  }
+
+  Future<QuerySnapshot<Map<String, dynamic>>?>
+  _queryCollectionByPhoneIfAllowed({
+    required String collection,
+    required String phone,
+  }) async {
+    try {
+      return await _queryCollectionByPhone(
+        collection: collection,
+        phone: phone,
+      );
+    } catch (error) {
+      if (_isPermissionDenied(error)) {
+        return null;
+      }
+      rethrow;
+    }
+  }
+
   Future<QuerySnapshot<Map<String, dynamic>>?> _queryFirstResponderByPhone(
     String phone,
   ) async {
     for (final collection in _responderCollections) {
-      final query = await _queryCollectionByPhone(
+      final query = await _queryCollectionByPhoneIfAllowed(
         collection: collection,
         phone: phone,
       );
-      if (query.docs.isNotEmpty) {
+      if (query != null && query.docs.isNotEmpty) {
         return query;
       }
     }
@@ -173,15 +198,21 @@ class PhoneLookupService {
   Future<PhoneLookupResult> _lookupAccountStatusUncached(String phone) async {
     final queries = await Future.wait<dynamic>([
       _queryFirstResponderByPhone(phone),
-      _queryCollectionByPhone(collection: 'approved_users', phone: phone),
-      _queryCollectionByPhone(collection: 'pending_users', phone: phone),
+      _queryCollectionByPhoneIfAllowed(
+        collection: 'approved_users',
+        phone: phone,
+      ),
+      _queryCollectionByPhoneIfAllowed(
+        collection: 'pending_users',
+        phone: phone,
+      ),
     ]);
 
     final responderQuery = queries[0] as QuerySnapshot<Map<String, dynamic>>?;
-    final approvedQuery = queries[1] as QuerySnapshot<Map<String, dynamic>>;
-    final pendingQuery = queries[2] as QuerySnapshot<Map<String, dynamic>>;
+    final approvedQuery = queries[1] as QuerySnapshot<Map<String, dynamic>>?;
+    final pendingQuery = queries[2] as QuerySnapshot<Map<String, dynamic>>?;
     Map<String, dynamic> approvedData = const <String, dynamic>{};
-    if (approvedQuery.docs.isNotEmpty) {
+    if (approvedQuery != null && approvedQuery.docs.isNotEmpty) {
       approvedData = approvedQuery.docs.first.data();
     }
     final isBanned = _isBannedStatus(approvedData['accountStatus']);
@@ -194,8 +225,9 @@ class PhoneLookupService {
     return PhoneLookupResult(
       hasResponderAccount:
           responderQuery != null && responderQuery.docs.isNotEmpty,
-      hasApprovedAccount: approvedQuery.docs.isNotEmpty,
-      isPendingAccount: pendingQuery.docs.isNotEmpty,
+      hasApprovedAccount:
+          approvedQuery != null && approvedQuery.docs.isNotEmpty,
+      isPendingAccount: pendingQuery != null && pendingQuery.docs.isNotEmpty,
       isBannedAccount: isBanned,
       isPermanentBan: isPermanentBan,
       bannedUntil: _toDateTime(approvedData['bannedUntil']),
@@ -224,11 +256,11 @@ class PhoneLookupService {
   Future<QueryDocumentSnapshot<Map<String, dynamic>>?> getFirstApprovedUserDoc(
     String phone,
   ) async {
-    final approvedQuery = await _queryCollectionByPhone(
+    final approvedQuery = await _queryCollectionByPhoneIfAllowed(
       collection: 'approved_users',
       phone: phone,
     );
-    if (approvedQuery.docs.isEmpty) {
+    if (approvedQuery == null || approvedQuery.docs.isEmpty) {
       return null;
     }
     return approvedQuery.docs.first;

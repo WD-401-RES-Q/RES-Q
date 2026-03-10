@@ -9,7 +9,9 @@ import 'package:local_auth/local_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../common/widgets/app_buttons.dart';
 import '../../../common/widgets/app_snackbar.dart';
+import '../../../common/constants/app_dimensions.dart';
 import '../../../common/theme/app_text_styles.dart';
+import '../../../common/widgets/auth_widgets.dart';
 import '../../responder/pages/responder_main_page.dart';
 import '../../home/pages/home_page.dart';
 import '../../../common/services/user_session.dart';
@@ -18,7 +20,6 @@ import '../../../common/services/trusted_device_service.dart';
 import '../../../common/services/notification_service.dart';
 import '../../../common/services/phone_lookup_service.dart';
 import '../../../common/utils/security_hash.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'responder_pin_setup_page.dart';
 
 class LoginPage extends StatefulWidget {
@@ -37,6 +38,10 @@ class _LoginPageState extends State<LoginPage>
   static const Duration _otpBypassWindow = Duration(days: 30);
   static const bool _enableResponderBootstrap = false;
   static const String _responderBootstrapDoneKey = 'responder_bootstrap_done';
+  static const String _semiAdminsCollection = 'semi_admins';
+  static const String _respondersCollection = 'responders';
+  static const double _phoneErrorSlotHeight = 16;
+  static const double _pinErrorSlotHeight = 18;
 
   final _formKey = GlobalKey<FormState>();
   bool _loading = false;
@@ -53,6 +58,7 @@ class _LoginPageState extends State<LoginPage>
   bool _isPendingApprovalPhone = false;
   bool _isBanDialogVisible = false;
   bool _isPendingDialogVisible = false;
+  bool _isSwitchAccountDialogVisible = false;
   bool _showSavedPhoneCard = false;
   bool _isPhoneVerifiedForPin = false;
 
@@ -218,7 +224,88 @@ class _LoginPageState extends State<LoginPage>
   }
 
   bool _responderHasPinCreated(Map<String, dynamic> responderData) {
-    return responderData['hasPinCreated'] == true;
+    if (responderData['hasPinCreated'] == true) {
+      return true;
+    }
+
+    final pinHash = responderData['pin_hash']?.toString().trim() ?? '';
+    if (pinHash.isNotEmpty) {
+      return true;
+    }
+
+    final pin = responderData['pin']?.toString().trim() ?? '';
+    return pin.length == 4;
+  }
+
+  bool _isResponderRole(String role) {
+    final normalized = role.trim().toLowerCase().replaceAll(
+      RegExp(r'[^a-z]'),
+      '',
+    );
+    return normalized == 'responder' || normalized == 'semiadmin';
+  }
+
+  Future<void> _syncSemiAdminsToResponders() async {
+    try {
+      final semiAdminsSnapshot = await _firestore
+          .collection(_semiAdminsCollection)
+          .get();
+      if (semiAdminsSnapshot.docs.isEmpty) return;
+
+      final batch = _firestore.batch();
+      var syncedCount = 0;
+
+      for (final semiAdminDoc in semiAdminsSnapshot.docs) {
+        final sourceData = Map<String, dynamic>.from(semiAdminDoc.data());
+        if (sourceData.isEmpty) {
+          continue;
+        }
+
+        final contactNumber = (sourceData['contactNumber'] ?? '')
+            .toString()
+            .trim();
+        if (contactNumber.isEmpty) {
+          continue;
+        }
+
+        final patch = <String, dynamic>{
+          ...sourceData,
+          'sourceCollection': _semiAdminsCollection,
+          'sourceDocId': semiAdminDoc.id,
+          'contactNumber': contactNumber,
+          'lastSyncedAt': FieldValue.serverTimestamp(),
+        };
+
+        final role = (patch['role'] ?? '').toString().trim();
+        if (role.isNotEmpty) {
+          patch['role'] = role;
+        }
+        patch.putIfAbsent('isLoggedIn', () => false);
+        patch.putIfAbsent('isAvailable', () => false);
+        patch.putIfAbsent('status', () => 'offline');
+
+        if (patch['hasPinCreated'] != true) {
+          final pinHash = patch['pin_hash']?.toString().trim() ?? '';
+          final pin = patch['pin']?.toString().trim() ?? '';
+          if (pinHash.isNotEmpty || pin.length == 4) {
+            patch['hasPinCreated'] = true;
+          }
+        }
+
+        final targetRef = _firestore
+            .collection(_respondersCollection)
+            .doc(semiAdminDoc.id);
+        batch.set(targetRef, patch, SetOptions(merge: true));
+        syncedCount++;
+      }
+
+      if (syncedCount > 0) {
+        await batch.commit();
+        debugPrint('Synced $syncedCount semi-admin docs into responders');
+      }
+    } catch (e) {
+      debugPrint('Failed to sync semi-admin docs into responders: $e');
+    }
   }
 
   Future<void> _saveApprovedLoginState(String phoneDigits) async {
@@ -584,7 +671,7 @@ class _LoginPageState extends State<LoginPage>
       setState(() => _loading = false);
       final userRole = (userData['role'] ?? '').toString().trim().toLowerCase();
       if (mounted) {
-        if (userRole == 'responder') {
+        if (_isResponderRole(userRole)) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const ResponderMainScreen()),
           );
@@ -709,6 +796,7 @@ class _LoginPageState extends State<LoginPage>
 
   Future<void> _initialize() async {
     await _loadSavedData();
+    unawaited(_syncSemiAdminsToResponders());
     if (mounted) {
       setState(() => _initializing = false);
     }
@@ -1093,7 +1181,7 @@ class _LoginPageState extends State<LoginPage>
             .toString()
             .trim()
             .toLowerCase();
-        if (responderRole.isNotEmpty && responderRole != 'responder') {
+        if (responderRole.isNotEmpty && !_isResponderRole(responderRole)) {
           setState(() {
             _loading = false;
             _showPhoneError = true;
@@ -1204,13 +1292,15 @@ class _LoginPageState extends State<LoginPage>
       });
     } catch (e) {
       if (!mounted) return;
+      final message = _lookupFailureMessage(e);
       setState(() {
         _loading = false;
         _showPhoneError = true;
-        _phoneErrorMessage = 'Unable to check account. Please try again.';
+        _phoneErrorMessage = message;
         _isPhoneVerifiedForPin = false;
       });
-      AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
+      debugPrint('Login account lookup failed: $e');
+      AppSnackBar.show(context, message, type: AppSnackBarType.error);
     }
   }
 
@@ -1409,7 +1499,7 @@ class _LoginPageState extends State<LoginPage>
       setState(() => _loading = false);
       final userRole = (userData['role'] ?? '').toString().trim().toLowerCase();
       if (mounted) {
-        if (userRole == 'responder') {
+        if (_isResponderRole(userRole)) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const ResponderMainScreen()),
           );
@@ -1425,7 +1515,9 @@ class _LoginPageState extends State<LoginPage>
       setState(() => _loading = false);
       _resetPinWithError('Error occurred. Please try again.');
       if (mounted) {
-        AppSnackBar.show(context, 'Error: $e', type: AppSnackBarType.error);
+        final message = _lookupFailureMessage(e);
+        debugPrint('PIN verification failed: $e');
+        AppSnackBar.show(context, message, type: AppSnackBarType.error);
       }
     }
   }
@@ -1588,6 +1680,13 @@ class _LoginPageState extends State<LoginPage>
     return data['bannedUntil'] == null;
   }
 
+  String _lookupFailureMessage(Object error) {
+    if (error is FirebaseException && error.code == 'permission-denied') {
+      return 'Account check is temporarily unavailable. Please try again.';
+    }
+    return 'Unable to check account. Please try again.';
+  }
+
   DateTime? _parseBanUntil(dynamic value) {
     if (value == null) return null;
     if (value is Timestamp) return value.toDate();
@@ -1663,8 +1762,11 @@ class _LoginPageState extends State<LoginPage>
         context: context,
         barrierDismissible: false,
         builder: (dialogContext) => Dialog(
+          backgroundColor: appOffWhite,
+          surfaceTintColor: Colors.transparent,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: appBlack.withValues(alpha: 0.25), width: 1),
           ),
           child: Padding(
             padding: const EdgeInsets.all(24.0),
@@ -1685,7 +1787,7 @@ class _LoginPageState extends State<LoginPage>
                 Text(
                   title,
                   style: const TextStyle(
-                    fontSize: 22,
+                    fontSize: 21,
                     fontWeight: FontWeight.w900,
                     color: appBlue,
                     letterSpacing: 1.0,
@@ -1733,20 +1835,22 @@ class _LoginPageState extends State<LoginPage>
                     onPressed: () => Navigator.of(dialogContext).pop(),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: appBlue,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(28),
                       ),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                    ),
-                    child: const Text(
-                      'OK',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 28,
+                        vertical: 12,
+                      ),
+                      textStyle: const TextStyle(
+                        fontWeight: FontWeight.w800,
                         fontSize: 16,
-                        letterSpacing: 1.0,
+                        letterSpacing: 0.8,
                       ),
                     ),
+                    child: const Text('OK'),
                   ),
                 ),
               ],
@@ -1754,6 +1858,7 @@ class _LoginPageState extends State<LoginPage>
           ),
         ),
       );
+      await _clearLocalAuthArtifactsForBan();
     } finally {
       if (mounted) {
         setState(() {
@@ -1857,10 +1962,6 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
-  Widget _logo() {
-    return SvgPicture.asset('assets/icons/logo/RES-Q_LOGO.svg', height: 40);
-  }
-
   void _handlePinKey(String value) {
     if (_loading) return;
     if (!_isPinUnlocked) {
@@ -1934,6 +2035,82 @@ class _LoginPageState extends State<LoginPage>
     return '+63 ${_formatPhoneNumber(digits)}';
   }
 
+  Future<void> _showSwitchAccountConfirmationDialog() async {
+    if (!mounted || _isSwitchAccountDialogVisible) return;
+
+    _isSwitchAccountDialogVisible = true;
+    try {
+      final shouldContinue = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          backgroundColor: appOffWhite,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(22),
+            side: BorderSide(color: appBlack.withValues(alpha: 0.25), width: 1),
+          ),
+          title: const Text(
+            'Switch account?',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              color: appBlack,
+              fontSize: 20,
+            ),
+          ),
+          content: Text(
+            'You are switching accounts. Do you want to continue?',
+            style: TextStyle(
+              color: appBlack.withValues(alpha: 0.9),
+              height: 1.35,
+              fontSize: 14,
+            ),
+          ),
+          actionsPadding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              style: TextButton.styleFrom(
+                foregroundColor: appBlack,
+                textStyle: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
+              ),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: appBlue,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(28),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 28,
+                  vertical: 12,
+                ),
+                textStyle: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
+                ),
+              ),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldContinue == true && mounted) {
+        _enablePhoneFieldEditing();
+      }
+    } finally {
+      _isSwitchAccountDialogVisible = false;
+    }
+  }
+
   void _enablePhoneFieldEditing() {
     setState(() {
       _showSavedPhoneCard = false;
@@ -1947,6 +2124,38 @@ class _LoginPageState extends State<LoginPage>
     });
   }
 
+  Future<void> _clearLocalAuthArtifactsForBan() async {
+    try {
+      await Future.wait<void>([
+        RegistrationPrefs.clearPhoneNumber(),
+        RegistrationPrefs.setApprovedLoginCompleted(false),
+        _trustedDeviceService.clearTrustedDevice(),
+      ]);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('biometrics_enabled');
+      await prefs.remove('biometrics_phone');
+      UserSession.clear();
+      NotificationService().dispose();
+      await FirebaseAuth.instance.signOut();
+    } catch (e) {
+      debugPrint('Failed to clear banned-account auth artifacts: $e');
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _showSavedPhoneCard = false;
+      _isPhoneVerifiedForPin = false;
+      _isPendingApprovalPhone = false;
+      _showPhoneError = false;
+      _phoneErrorMessage = '';
+      _showPinError = false;
+      _pinErrorMessage = '';
+      _phoneCtl.clear();
+      _pinCtl.clear();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1954,32 +2163,30 @@ class _LoginPageState extends State<LoginPage>
       body: SafeArea(
         child: Column(
           children: [
-            // Fixed logo at top
-            Padding(
-              padding: const EdgeInsets.only(top: 24),
-              child: Column(
-                children: [
-                  _logo(),
-                  const SizedBox(height: 12),
-                  Text('LOGIN', style: AppTextStyles.authPageTitle),
-                ],
+            ResqLogoHeader(
+              padding: const EdgeInsets.only(
+                top: AppDimensions.paddingMedium,
+                left: AppDimensions.paddingXLarge,
+                right: AppDimensions.paddingXLarge,
               ),
+              title: Text('LOGIN', style: AppTextStyles.authPageTitle),
+              titleSpacing: AppDimensions.paddingSmall,
+              bottomSpacing: AppDimensions.paddingSmall,
             ),
 
             // Scrollable content
             Expanded(
               child: SingleChildScrollView(
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: GestureDetector(
-                    onTap: () => FocusScope.of(context).unfocus(),
-                    behavior: HitTestBehavior.opaque,
+                child: GestureDetector(
+                  onTap: () => FocusScope.of(context).unfocus(),
+                  behavior: HitTestBehavior.opaque,
+                  child: Center(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 360),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 16,
+                          horizontal: AppDimensions.paddingXLarge,
+                          vertical: AppDimensions.paddingMedium,
                         ),
                         child: AutofillGroup(
                           child: Form(
@@ -2006,7 +2213,7 @@ class _LoginPageState extends State<LoginPage>
                                       borderRadius: BorderRadius.circular(18),
                                       border: Border.all(
                                         color: appBlack.withValues(alpha: 0.3),
-                                        width: 2,
+                                        width: 1,
                                       ),
                                     ),
                                     child: Row(
@@ -2038,7 +2245,11 @@ class _LoginPageState extends State<LoginPage>
                                           ),
                                         ),
                                         IconButton(
-                                          onPressed: _enablePhoneFieldEditing,
+                                          onPressed: () {
+                                            unawaited(
+                                              _showSwitchAccountConfirmationDialog(),
+                                            );
+                                          },
                                           icon: const Icon(
                                             Icons.edit_outlined,
                                             color: appBlack,
@@ -2050,122 +2261,165 @@ class _LoginPageState extends State<LoginPage>
                                     ),
                                   )
                                 else
-                                  Container(
-                                    height: 56,
-                                    decoration: BoxDecoration(
-                                      color: appOffWhite,
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: Colors.black,
-                                        width: 2,
+                                  TextFormField(
+                                    controller: _phoneCtl,
+                                    textAlign: TextAlign.left,
+                                    textAlignVertical: TextAlignVertical.center,
+                                    keyboardType: TextInputType.phone,
+                                    autofillHints: const [
+                                      AutofillHints.telephoneNumber,
+                                    ],
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly,
+                                      LengthLimitingTextInputFormatter(10),
+                                      TextInputFormatter.withFunction((
+                                        oldValue,
+                                        newValue,
+                                      ) {
+                                        return TextEditingValue(
+                                          text: _formatPhoneNumber(
+                                            newValue.text,
+                                          ),
+                                          selection: TextSelection.collapsed(
+                                            offset: _formatPhoneNumber(
+                                              newValue.text,
+                                            ).length,
+                                          ),
+                                        );
+                                      }),
+                                    ],
+                                    style: const TextStyle(
+                                      fontFamily: 'RobotoCondensed',
+                                      fontWeight: FontWeight.w400,
+                                      fontSize: 14,
+                                      color: appBlack,
+                                    ),
+                                    decoration: InputDecoration(
+                                      hintText: '912-345-6789',
+                                      hintStyle: TextStyle(
+                                        fontFamily: 'RobotoCondensed',
+                                        fontWeight: FontWeight.w400,
+                                        fontSize: 14,
+                                        color: appBlack.withValues(alpha: 0.5),
+                                      ),
+                                      filled: true,
+                                      fillColor: appOffWhite,
+                                      isDense: false,
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 12,
+                                            vertical: 16,
+                                          ),
+                                      constraints: const BoxConstraints(
+                                        minHeight: 56,
+                                      ),
+                                      prefixIconConstraints:
+                                          const BoxConstraints(minWidth: 0),
+                                      prefixIcon: Padding(
+                                        padding: const EdgeInsets.only(
+                                          left: 12,
+                                          right: 8,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(
+                                              Icons.phone_outlined,
+                                              color: Colors.black,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              '+63',
+                                              style: TextStyle(
+                                                fontFamily: 'RobotoCondensed',
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 14,
+                                                color: appBlack,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Container(
+                                              width: 1,
+                                              height: 28,
+                                              color: Colors.black,
+                                            ),
+                                            const SizedBox(width: 4),
+                                          ],
+                                        ),
+                                      ),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: appBlack.withValues(
+                                            alpha: 0.35,
+                                          ),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      enabledBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: appBlack.withValues(
+                                            alpha: 0.35,
+                                          ),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: appBlack.withValues(
+                                            alpha: 0.35,
+                                          ),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      errorBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: Colors.red,
+                                          width: 1,
+                                        ),
+                                      ),
+                                      focusedErrorBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide(
+                                          color: Colors.red,
+                                          width: 1,
+                                        ),
+                                      ),
+                                      errorText: _showPhoneError ? '' : null,
+                                      errorStyle: const TextStyle(
+                                        fontSize: 0,
+                                        height: 0,
                                       ),
                                     ),
-                                    child: Row(
-                                      children: [
-                                        // Phone icon
-                                        const Padding(
-                                          padding: EdgeInsets.only(left: 12),
-                                          child: Icon(
-                                            Icons.phone_outlined,
-                                            color: Colors.black,
-                                          ),
-                                        ),
-                                        // +63 prefix
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                          ),
-                                          child: Text(
-                                            '+63',
-                                            style: TextStyle(
-                                              fontFamily: 'RobotoCondensed',
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 14,
-                                              color: appBlack,
-                                            ),
-                                          ),
-                                        ),
-                                        // Divider
-                                        Container(
-                                          width: 1.5,
-                                          height: 28,
-                                          color: Colors.black,
-                                        ),
-                                        // Phone input field
-                                        Expanded(
-                                          child: TextFormField(
-                                            controller: _phoneCtl,
-                                            textAlign: TextAlign.left,
-                                            textAlignVertical:
-                                                TextAlignVertical.center,
-                                            keyboardType: TextInputType.phone,
-                                            autofillHints: const [
-                                              AutofillHints.telephoneNumber,
-                                            ],
-                                            inputFormatters: [
-                                              FilteringTextInputFormatter
-                                                  .digitsOnly,
-                                              LengthLimitingTextInputFormatter(
-                                                10,
-                                              ),
-                                              TextInputFormatter.withFunction((
-                                                oldValue,
-                                                newValue,
-                                              ) {
-                                                return TextEditingValue(
-                                                  text: _formatPhoneNumber(
-                                                    newValue.text,
-                                                  ),
-                                                  selection:
-                                                      TextSelection.collapsed(
-                                                        offset:
-                                                            _formatPhoneNumber(
-                                                              newValue.text,
-                                                            ).length,
-                                                      ),
-                                                );
-                                              }),
-                                            ],
-                                            style: const TextStyle(
-                                              fontFamily: 'RobotoCondensed',
-                                              fontWeight: FontWeight.w400,
-                                              fontSize: 14,
-                                              color: appBlack,
-                                            ),
-                                            decoration: InputDecoration(
-                                              hintText: '912-345-6789',
-                                              hintStyle: TextStyle(
-                                                fontFamily: 'RobotoCondensed',
-                                                fontWeight: FontWeight.w400,
-                                                fontSize: 14,
-                                                color: appBlack.withValues(
-                                                  alpha: 0.5,
-                                                ),
-                                              ),
-                                              border: InputBorder.none,
-                                              contentPadding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 12,
-                                                    vertical: 16,
-                                                  ),
-                                            ),
-                                            onChanged: _onPhoneChanged,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                                    onChanged: _onPhoneChanged,
                                   ),
-                                // Show phone error message below phone input, outside the box
-                                if (_showPhoneError) ...[
+                                // Reserve a stable phone-error slot to prevent
+                                // layout jumps when validation state changes.
+                                if (!_isPinUnlocked) ...[
                                   const SizedBox(height: 6),
                                   Padding(
                                     padding: const EdgeInsets.only(left: 4),
-                                    child: Text(
-                                      _phoneErrorMessage,
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.red,
+                                    child: SizedBox(
+                                      height: _phoneErrorSlotHeight,
+                                      child: Align(
+                                        alignment: Alignment.topLeft,
+                                        child: Text(
+                                          _showPhoneError
+                                              ? _phoneErrorMessage
+                                              : ' ',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600,
+                                            color: _showPhoneError
+                                                ? Colors.red
+                                                : Colors.transparent,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -2275,18 +2529,23 @@ class _LoginPageState extends State<LoginPage>
                                     ),
                                   ),
 
-                                  if (_showPinError) ...[
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      _pinErrorMessage,
-                                      style: const TextStyle(
+                                  const SizedBox(height: 12),
+                                  SizedBox(
+                                    height: _pinErrorSlotHeight,
+                                    child: Text(
+                                      _showPinError ? _pinErrorMessage : ' ',
+                                      style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.w600,
-                                        color: Colors.red,
+                                        color: _showPinError
+                                            ? Colors.red
+                                            : Colors.transparent,
                                       ),
                                       textAlign: TextAlign.center,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                  ],
+                                  ),
                                   const SizedBox(height: 24),
 
                                   PinNumpad(

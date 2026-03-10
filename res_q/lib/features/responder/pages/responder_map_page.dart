@@ -19,6 +19,7 @@ import '../../../common/services/route_weather_cache_service.dart';
 import '../../../common/theme/app_theme.dart';
 import '../../../common/services/location_service.dart';
 import '../../../common/services/user_session.dart';
+import '../../../common/utils/incident_icon_resolver.dart';
 
 void _debugLog(Object? message) {
   if (kDebugMode) {
@@ -76,6 +77,8 @@ class _ResponderMapPageState extends State<ResponderMapPage>
   final ValueNotifier<LatLng?> _trackingUserLocationNotifier =
       ValueNotifier<LatLng?>(null);
   final ValueNotifier<Offset> _weatherCardOffset = ValueNotifier(Offset.zero);
+  final Map<String, StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
+  _prioritySubscriptions = {};
   late final AnimationController _pinBounceController;
   bool _showWeatherCard = false;
   bool _isWeatherLoading = false;
@@ -161,11 +164,15 @@ class _ResponderMapPageState extends State<ResponderMapPage>
   LatLng? _pendingResponderLocationWritePoint;
   String? _pendingResponderLocationWriteReportId;
   final Set<String> _autoOnSceneInFlightReportIds = <String>{};
+  late final String _viewerRole;
 
   @override
   void initState() {
     super.initState();
     FrameTimingService.instance.setCurrentScreen('ResponderMapPage');
+    _viewerRole = normalizeIncidentViewerRole(
+      (UserSession.currentUserData?['role'] ?? 'responder').toString(),
+    );
     _pendingFocusReportId = widget.initialReportId?.trim();
     _subscribeToReportsRealtime();
     // Initialize with user location (simulated)
@@ -198,6 +205,10 @@ class _ResponderMapPageState extends State<ResponderMapPage>
     _viewportRefreshDebounce?.cancel();
     _routeRecalcDebounce?.cancel();
     _reportsSubscription?.cancel();
+    for (final subscription in _prioritySubscriptions.values) {
+      subscription.cancel();
+    }
+    _prioritySubscriptions.clear();
     _responderLocationSub?.cancel();
     _responderLocationFallbackTimer?.cancel();
     _assignmentAlertTimer?.cancel();
@@ -257,11 +268,9 @@ class _ResponderMapPageState extends State<ResponderMapPage>
     required double width,
     required double height,
   }) {
-    final resolvedPath = _resolveIconAssetPath(assetPath);
-
-    if (resolvedPath.toLowerCase().endsWith('.svg')) {
+    if (assetPath.toLowerCase().endsWith('.svg')) {
       return SvgPicture.asset(
-        resolvedPath,
+        assetPath,
         width: width,
         height: height,
         fit: BoxFit.contain,
@@ -271,22 +280,12 @@ class _ResponderMapPageState extends State<ResponderMapPage>
     }
 
     return Image.asset(
-      resolvedPath,
+      assetPath,
       width: width,
       height: height,
       fit: BoxFit.contain,
-      errorBuilder: (_, __, ___) => _missingIcon(),
+      errorBuilder: (context, error, stackTrace) => _missingIcon(),
     );
-  }
-
-  String _resolveIconAssetPath(String assetPath) {
-    final lower = assetPath.toLowerCase();
-    if (lower.endsWith('.svg') &&
-        (lower.contains('/icons/buttons/') ||
-            lower.contains('/icons/locations/'))) {
-      return assetPath.substring(0, assetPath.length - 4) + '.png';
-    }
-    return assetPath;
   }
 
   Widget _missingIcon() {
@@ -346,11 +345,105 @@ class _ResponderMapPageState extends State<ResponderMapPage>
       }
     }
 
+    _syncPriorityFieldListeners();
+
     if (!mounted) return;
     setState(_refreshMarkerLists);
     _syncAutoAssignedReport(snapshot);
     unawaited(_tryOpenPendingReport());
     _debugLog('Loaded ${_reportsById.length} reports from Firestore');
+  }
+
+  String _priorityValueFromReport(Map<String, dynamic> data) {
+    final candidates = <Object?>[
+      data['priority'],
+      data['deploymentPriority'],
+      data['priorityLabel'],
+      data['verdictPriority'],
+      data['severity'],
+    ];
+
+    for (final candidate in candidates) {
+      if (candidate == null) continue;
+      final normalized = normalizeIncidentPriority(candidate.toString());
+      if (normalized != 'NONE') {
+        return normalized;
+      }
+    }
+    return 'NONE';
+  }
+
+  String _resolveIncidentIconForReport({
+    required String incidentType,
+    required Map<String, dynamic> data,
+  }) {
+    return resolveIncidentIcon(
+      incidentType,
+      _priorityValueFromReport(data),
+      _viewerRole,
+    );
+  }
+
+  bool get _usesPriorityDrivenIcons => _viewerRole != 'user';
+
+  void _syncPriorityFieldListeners() {
+    final reportIds = _reportsById.entries
+        .where((entry) => _isAssignedToCurrentResponder(entry.value))
+        .map((entry) => entry.key)
+        .toSet();
+    final staleIds = _prioritySubscriptions.keys
+        .where((id) => !reportIds.contains(id))
+        .toList();
+
+    for (final id in staleIds) {
+      _prioritySubscriptions.remove(id)?.cancel();
+    }
+
+    if (!_usesPriorityDrivenIcons) {
+      for (final subscription in _prioritySubscriptions.values) {
+        subscription.cancel();
+      }
+      _prioritySubscriptions.clear();
+      return;
+    }
+
+    for (final id in reportIds) {
+      _prioritySubscriptions[id] ??= FirebaseFirestore.instance
+          .collection('reports')
+          .doc(id)
+          .snapshots()
+          .listen(
+            (snapshot) {
+              if (!mounted) return;
+
+              final data = snapshot.data();
+              if (data == null) {
+                _reportsById.remove(id);
+                _incidentMarkerCache.remove(id);
+                _reporterMarkerCache.remove(id);
+                _prioritySubscriptions.remove(id)?.cancel();
+                setState(_refreshMarkerLists);
+                return;
+              }
+
+              final existing = _reportsById[id];
+              if (existing == null) return;
+
+              final previousPriority = _priorityValueFromReport(existing);
+              final nextPriority = _priorityValueFromReport(data);
+              if (previousPriority == nextPriority) {
+                return;
+              }
+
+              _reportsById[id] = data;
+              _updateMarkersForReport(reportId: id, data: data);
+              setState(_refreshMarkerLists);
+            },
+            onError: (error) {
+              _debugLog('Priority listener failed for report $id: $error');
+            },
+          );
+    }
   }
 
   Future<void> _tryOpenPendingReport() async {
@@ -452,7 +545,10 @@ class _ResponderMapPageState extends State<ResponderMapPage>
       width: markerSize,
       height: markerSize,
       child: _buildIncidentMarker(
-        assetPath: _getMarkerAssetForIncidentType(incidentType),
+        assetPath: _resolveIncidentIconForReport(
+          incidentType: incidentType,
+          data: data,
+        ),
         data: data,
         reportId: reportId,
         position: incidentPoint,
@@ -1420,23 +1516,6 @@ class _ResponderMapPageState extends State<ResponderMapPage>
         return 'Thunderstorm';
       default:
         return 'Cloudy';
-    }
-  }
-
-  String _getMarkerAssetForIncidentType(String type) {
-    switch (type.toUpperCase()) {
-      case 'FIRE':
-        return 'assets/icons/locations/LOC-FIRE.svg';
-      case 'FLOOD':
-        return 'assets/icons/locations/LOC-FLOOD.svg';
-      case 'EARTHQUAKE':
-        return 'assets/icons/locations/LOC-EARTHQUAKE.svg';
-      case 'VEHICULAR':
-        return 'assets/icons/locations/LOC-CRASH.svg';
-      case 'ROAD OBSTRUCTION':
-        return 'assets/icons/locations/LOC-OTHERS.svg';
-      default:
-        return 'assets/icons/locations/LOC-OTHERS.svg';
     }
   }
 
