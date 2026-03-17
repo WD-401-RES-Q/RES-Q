@@ -7,12 +7,20 @@
       </div>
       <div class="map-legend" aria-label="Map legend">
         <div class="legend-item">
-          <span class="legend-dot report"></span>
-          Report location
+          <span class="legend-dot report" style="background:#FFFFFF;border:2px solid #9CA3AF;"></span>
+          Pending report
         </div>
         <div class="legend-item">
-          <span class="legend-dot reporter"></span>
-          Reporter location
+          <span class="legend-dot" style="background:#DC2626;border:2px solid #991B1B;"></span>
+          High priority
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot" style="background:#EA580C;border:2px solid #C2410C;"></span>
+          Medium priority
+        </div>
+        <div class="legend-item">
+          <span class="legend-dot" style="background:#FBBF24;border:2px solid #D97706;"></span>
+          Low priority
         </div>
         <div class="legend-item">
           <span class="legend-dot responder"></span>
@@ -21,10 +29,6 @@
         <div class="legend-item">
           <span class="legend-dot fence"></span>
           Angeles geofence
-        </div>
-        <div class="legend-item">
-          <span class="legend-dot outside"></span>
-          Outside geofence
         </div>
       </div>
     </div>
@@ -162,7 +166,7 @@
               type="button"
               class="priority-btn"
               [class.active]="deploymentPriority === 'High'"
-              (click)="deploymentPriority = 'High'"
+              (click)="setDeploymentPriority('High')"
             >
               <span class="priority-dot high"></span>
               High
@@ -171,7 +175,7 @@
               type="button"
               class="priority-btn"
               [class.active]="deploymentPriority === 'Medium'"
-              (click)="deploymentPriority = 'Medium'"
+              (click)="setDeploymentPriority('Medium')"
             >
               <span class="priority-dot medium"></span>
               Medium
@@ -180,7 +184,7 @@
               type="button"
               class="priority-btn"
               [class.active]="deploymentPriority === 'Low'"
-              (click)="deploymentPriority = 'Low'"
+              (click)="setDeploymentPriority('Low')"
             >
               <span class="priority-dot low"></span>
               Low
