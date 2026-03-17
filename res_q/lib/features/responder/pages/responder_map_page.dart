@@ -2944,15 +2944,8 @@ class _ResponderMapPageState extends State<ResponderMapPage>
         _estimatedTime = _calculateEstimatedTime(distance);
       }
 
-      // Add destination marker only to avoid extra blue pin overlays.
-      _routeMarkers.add(
-        Marker(
-          point: destination,
-          width: 40,
-          height: 40,
-          child: const Icon(Icons.flag, color: Colors.red, size: 40),
-        ),
-      );
+      // Destination pin is already rendered by the _incidentMarkers layer,
+      // so we do not add a duplicate marker here to avoid overlap/stacking.
 
       // Add route polylines with subtle casing for visibility
       _routePolylines.addAll([
@@ -3485,17 +3478,22 @@ class _ResponderMapPageState extends State<ResponderMapPage>
                 if (_routePolylines.isNotEmpty)
                   PolylineLayer(polylines: _routePolylines),
 
-                // Incident markers
+                // Proximity circle (25 m) — always visible when location known
+                _ProximityCircleLayer(
+                  userLocationListenable: _trackingUserLocationNotifier,
+                  radiusMeters: _autoOnSceneDistanceMeters,
+                ),
+
+                // Incident markers (includes destination pin)
                 MarkerLayer(markers: _incidentMarkers),
 
-                // Route markers (user location and destination)
+                // Route markers
                 if (_routeMarkers.isNotEmpty)
                   MarkerLayer(markers: _routeMarkers),
 
-                // User location marker when tracking
+                // Responder blue circle — always visible when location known
                 _TrackingUserMarkerLayer(
                   userLocationListenable: _trackingUserLocationNotifier,
-                  isTracking: _isTracking,
                 ),
 
                 // Attribution (required for OSM)
@@ -3793,21 +3791,49 @@ class _ResponderMapPageState extends State<ResponderMapPage>
   }
 }
 
-class _TrackingUserMarkerLayer extends StatelessWidget {
-  const _TrackingUserMarkerLayer({
+class _ProximityCircleLayer extends StatelessWidget {
+  const _ProximityCircleLayer({
     required this.userLocationListenable,
-    required this.isTracking,
+    required this.radiusMeters,
   });
 
   final ValueListenable<LatLng?> userLocationListenable;
-  final bool isTracking;
+  final double radiusMeters;
 
   @override
   Widget build(BuildContext context) {
-    if (!isTracking) {
-      return const SizedBox.shrink();
-    }
+    return ValueListenableBuilder<LatLng?>(
+      valueListenable: userLocationListenable,
+      builder: (context, location, _) {
+        if (location == null) {
+          return const SizedBox.shrink();
+        }
+        return CircleLayer(
+          circles: [
+            CircleMarker(
+              point: location,
+              radius: radiusMeters,
+              useRadiusInMeter: true,
+              color: const Color(0xFF0B5FFF).withValues(alpha: 0.10),
+              borderColor: const Color(0xFF0B5FFF).withValues(alpha: 0.50),
+              borderStrokeWidth: 2.0,
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
 
+class _TrackingUserMarkerLayer extends StatelessWidget {
+  const _TrackingUserMarkerLayer({
+    required this.userLocationListenable,
+  });
+
+  final ValueListenable<LatLng?> userLocationListenable;
+
+  @override
+  Widget build(BuildContext context) {
     return ValueListenableBuilder<LatLng?>(
       valueListenable: userLocationListenable,
       builder: (context, location, _) {
@@ -3818,9 +3844,24 @@ class _TrackingUserMarkerLayer extends StatelessWidget {
           markers: [
             Marker(
               point: location,
-              width: 50,
-              height: 50,
-              child: const Icon(Icons.navigation, color: Colors.blue, size: 40),
+              width: 22,
+              height: 22,
+              child: Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0B5FFF),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 3),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x40000000),
+                      blurRadius: 4,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         );

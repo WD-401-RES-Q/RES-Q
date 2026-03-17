@@ -108,6 +108,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
   private responderMarkerByReportId = new Map<string, any>();
   private reportMarkerByReportId = new Map<string, any>();
   private reporterMarkerByReportId = new Map<string, any>();
+  private pendingPriorityByReportId = new Map<string, DeploymentPriority>();
   private selectedRouteCasing?: any;
   private selectedRouteLine?: any;
 
@@ -235,6 +236,10 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
 
   selectReportForDispatch(reportId: string): void {
     this.selectedReportId = reportId;
+    const savedPriority = this.pendingPriorityByReportId.get(reportId);
+    if (savedPriority) {
+      this.deploymentPriority = savedPriority;
+    }
     const track = this.reports.find((entry) => entry.reportId === reportId);
     const hasReporterLocation =
       !!track &&
@@ -247,6 +252,19 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
 
   selectResponder(responderId: string): void {
     this.selectedResponderId = responderId;
+  }
+
+  setDeploymentPriority(priority: DeploymentPriority): void {
+    this.deploymentPriority = priority;
+    if (this.selectedReportId) {
+      const isPending = this.pendingReports.some(
+        (r) => r.reportId === this.selectedReportId,
+      );
+      if (isPending) {
+        this.pendingPriorityByReportId.set(this.selectedReportId, priority);
+        this.refreshReportMarker(this.selectedReportId);
+      }
+    }
   }
 
   get selectedTrack(): ResponderTrack | null {
@@ -350,9 +368,6 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       `<div style="margin-top:2px;color:#6b7280;font-size:12px;">Barangay: ${barangay}</div>` +
       `<div style="margin-top:2px;color:#6b7280;font-size:12px;">Status: ${status}</div>` +
       `<div style="margin-top:2px;color:#6b7280;font-size:12px;">Reported: ${this.escapeHtml(this.formatPopupTimestamp(track.reportedAt))}</div>` +
-      `<div style="margin-top:2px;color:${this.getGeofencePopupColor(reportGeofence)};font-size:12px;">Report geofence: ${this.escapeHtml(this.getGeofenceLabel(reportGeofence))}</div>` +
-      `<div style="margin-top:2px;color:${this.getGeofencePopupColor(reporterGeofence)};font-size:12px;">Reporter geofence: ${this.escapeHtml(this.getGeofenceLabel(reporterGeofence))}</div>` +
-      `<div style="margin-top:2px;color:${this.getGeofencePopupColor(responderGeofence)};font-size:12px;">Responder geofence: ${this.escapeHtml(this.getGeofenceLabel(responderGeofence))}</div>` +
       (details ? `<div style="margin-top:6px;color:#374151;font-size:12px;">${details}</div>` : '') +
       mediaHtml +
       `</div>`
@@ -484,7 +499,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
         respondingAt: serverTimestamp(),
         responderAssignedAt: serverTimestamp(),
         deployedBy: this.getCurrentAdminName(),
-        deploymentPriority: this.deploymentPriority,
+        deploymentPriority: this.pendingPriorityByReportId.get(selectedReportId) ?? this.deploymentPriority,
         updatedAt: serverTimestamp(),
       };
 
@@ -509,6 +524,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
         12000,
         'Deployment sync timed out. Check connection, then refresh.',
       );
+      this.pendingPriorityByReportId.delete(selectedReportId);
       this.selectedId = selectedReportId;
       this.focusResponder(selectedReportId);
     } catch (error) {
@@ -711,7 +727,8 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       status === 'resolved' ||
       status === 'incident resolved' ||
       status === 'flagged' ||
-      status === 'unverified'
+      status === 'unverified' ||
+      status === 'archived'
     );
   }
 
@@ -796,6 +813,10 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
 
         snapshot.docs.forEach((snapshotDoc) => {
           const data = snapshotDoc.data() as any;
+
+          if (data?.isArchived === true) {
+            return;
+          }
 
           const statusLower = this.normalizeStatus(data?.status);
           const responderStatusLower = this.normalizeStatus(data?.responderStatus);
@@ -960,6 +981,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
           this.updateLiveIndicator();
           this.respondersRaw = nextResponders;
           this.syncDerivedState();
+          this.updateMarkers();
           if (this.isListening) {
             this.mapLoadError = '';
           }
@@ -1110,6 +1132,22 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       });
   }
 
+  private getEffectivePriority(track: ResponderTrack): string | null {
+    return this.pendingPriorityByReportId.get(track.reportId) ?? track.deploymentPriority ?? null;
+  }
+
+  private refreshReportMarker(reportId: string): void {
+    const marker = this.reportMarkerByReportId.get(reportId);
+    if (!marker) return;
+    const track = this.reports.find((t) => t.reportId === reportId);
+    if (!track) return;
+    const isSelected = reportId === this.selectedId;
+    const isInside = this.isReportInsideGeofence(track);
+    marker.setStyle(
+      this.getReportMarkerStyle(isSelected, isInside, this.getEffectivePriority(track)),
+    );
+  }
+
   private ensureMapRenders(): void {
     if (!this.map) return;
     const invalidate = () => this.map?.invalidateSize();
@@ -1153,23 +1191,21 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
 
     for (const track of this.reports) {
       const reportPopupContent = this.buildReportPopup(track, 'Report location');
-      const reporterPopupContent = this.buildReportPopup(track, 'Reporter location');
       const isReportInside = this.isReportInsideGeofence(track);
-      const isReporterInside = this.isReporterInsideGeofence(track);
       const isResponderInside = this.isResponderInsideGeofence(track);
 
       const reportExisting = this.reportMarkerByReportId.get(track.reportId);
       if (reportExisting) {
         reportExisting.setLatLng([track.reportLocationLat, track.reportLocationLng]);
         reportExisting.setPopupContent(reportPopupContent);
-        reportExisting.setStyle(this.getReportMarkerStyle(false, isReportInside, track.deploymentPriority));
+        reportExisting.setStyle(this.getReportMarkerStyle(false, isReportInside, this.getEffectivePriority(track)));
         if (typeof reportExisting.setTooltipContent === 'function') {
           reportExisting.setTooltipContent(this.getReportTooltipLabel(isReportInside));
         }
       } else {
         const reportMarker = L.circleMarker(
           [track.reportLocationLat, track.reportLocationLng],
-          this.getReportMarkerStyle(false, isReportInside, track.deploymentPriority),
+          this.getReportMarkerStyle(false, isReportInside, this.getEffectivePriority(track)),
         );
         reportMarker.on('click', () => {
           this.ngZone.run(() => this.focusResponder(track.reportId, 'report'));
@@ -1182,42 +1218,6 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
         });
         reportMarker.addTo(this.reportLayer);
         this.reportMarkerByReportId.set(track.reportId, reportMarker);
-      }
-
-      if (
-        typeof track.reporterLocationLat === 'number' &&
-        typeof track.reporterLocationLng === 'number'
-      ) {
-        const reporterExisting = this.reporterMarkerByReportId.get(track.reportId);
-        if (reporterExisting) {
-          reporterExisting.setLatLng([track.reporterLocationLat, track.reporterLocationLng]);
-          reporterExisting.setPopupContent(reporterPopupContent);
-          if (typeof reporterExisting.setTooltipContent === 'function') {
-            reporterExisting.setTooltipContent(this.getReporterTooltipLabel(isReporterInside));
-          }
-        } else {
-          const reporterMarker = L.circleMarker(
-            [track.reporterLocationLat, track.reporterLocationLng],
-            this.getReporterMarkerStyle(false, isReporterInside),
-          );
-          reporterMarker.on('click', () => {
-            this.ngZone.run(() => this.focusResponder(track.reportId, 'reporter'));
-            reporterMarker.openPopup();
-          });
-          reporterMarker.bindPopup(reporterPopupContent, { maxWidth: 320, closeButton: true });
-          reporterMarker.bindTooltip(this.getReporterTooltipLabel(isReporterInside), {
-            direction: 'top',
-            offset: [0, -8],
-          });
-          reporterMarker.addTo(this.reporterLayer);
-          this.reporterMarkerByReportId.set(track.reportId, reporterMarker);
-        }
-      } else {
-        const existingReporter = this.reporterMarkerByReportId.get(track.reportId);
-        if (existingReporter) {
-          this.reporterLayer.removeLayer(existingReporter);
-          this.reporterMarkerByReportId.delete(track.reportId);
-        }
       }
 
       if (
@@ -1272,14 +1272,7 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
       const isSelected = reportId === this.selectedId;
       const track = tracksById.get(reportId);
       const isInside = track ? this.isReportInsideGeofence(track) : true;
-      marker.setStyle(this.getReportMarkerStyle(isSelected, isInside, track?.deploymentPriority));
-    }
-
-    for (const [reportId, marker] of this.reporterMarkerByReportId.entries()) {
-      const isSelected = reportId === this.selectedId;
-      const track = tracksById.get(reportId);
-      const isInside = track ? this.isReporterInsideGeofence(track) : null;
-      marker.setStyle(this.getReporterMarkerStyle(isSelected, isInside));
+      marker.setStyle(this.getReportMarkerStyle(isSelected, isInside, track ? this.getEffectivePriority(track) : undefined));
     }
 
     for (const [reportId, marker] of this.responderMarkerByReportId.entries()) {
@@ -1304,11 +1297,11 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
 
   private getReporterTooltipLabel(isInsideGeofence: boolean | null): string {
     if (isInsideGeofence === null) {
-      return 'Reporter location';
+      return 'Report location';
     }
     return isInsideGeofence
-      ? 'Reporter location'
-      : 'Reporter location (outside geofence)';
+      ? 'Report location'
+      : 'Report location (outside geofence)';
   }
 
   private getReportMarkerStyle(
@@ -1316,22 +1309,26 @@ export class ResponderMapComponent implements AfterViewInit, OnDestroy {
     isInsideGeofence: boolean,
     priority?: string | null,
   ): Record<string, number | string> {
-    // Priority-based border colors
-    const priorityColors: Record<string, string> = {
-      High: '#AC1B22',    // Red
-      Medium: '#EA580C',  // Orange
-      Low: '#FACC15',     // Yellow
+    // Fill colors matching the priority selector UI dots
+    const priorityFillColors: Record<string, string> = {
+      High: '#DC2626',
+      Medium: '#EA580C',
+      Low: '#FBBF24',
+    };
+    const priorityBorderColors: Record<string, string> = {
+      High: '#991B1B',
+      Medium: '#C2410C',
+      Low: '#D97706',
     };
 
-    // Default to white fill, border color based on priority
-    const borderColor = priority && priorityColors[priority]
-      ? priorityColors[priority]
-      : '#9CA3AF'; // Gray for no priority
+    const hasPriority = !!(priority && priorityFillColors[priority]);
+    const fillColor = hasPriority ? priorityFillColors[priority!] : '#FFFFFF';
+    const borderColor = hasPriority ? priorityBorderColors[priority!] : '#9CA3AF';
 
     return {
       radius: isSelected ? 9 : 7,
       color: borderColor,
-      fillColor: '#FFFFFF',
+      fillColor,
       fillOpacity: isSelected ? 1 : 0.95,
       weight: isSelected ? 4 : 3,
     };
