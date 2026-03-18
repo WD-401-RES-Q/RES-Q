@@ -954,7 +954,7 @@ class _ReportFormScreenState extends State<ReportFormScreen>
                               elevation: 2,
                             ),
                             child: const Text(
-                              'CAPTURE AN IMAGE (4MB max)',
+                              'CAPTURE AN IMAGE',
                               style: TextStyle(
                                 fontFamily: 'RobotoCondensed',
                                 fontSize: 12,
@@ -982,7 +982,7 @@ class _ReportFormScreenState extends State<ReportFormScreen>
                               elevation: 2,
                             ),
                             child: const Text(
-                              'CAPTURE A VIDEO (10s / 8MB max)',
+                              'CAPTURE A VIDEO',
                               style: TextStyle(
                                 fontFamily: 'RobotoCondensed',
                                 fontSize: 12,
